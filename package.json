@@ -1,0 +1,34 @@
+{
+  "name": "radial",
+  "version": "1.0.0",
+  "description": "An old school flight planner for flight sims",
+  "keywords": [],
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.tsx",
+  "scripts": {
+    "dev": "node --watch src/index.ts",
+    "start": "node src/index.ts",
+    "check": "pnpm run fmt:check && pnpm run lint && pnpm run typecheck",
+    "fix": "pnpm run fmt && pnpm run lint:fix",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "oxfmt": "^0.59.0",
+    "oxlint": "^1.74.0",
+    "oxlint-tsgolint": "^0.24.0",
+    "typescript": "^7.0.2"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "^11.4.0",
+      "onFail": "download"
+    }
+  }
+}
