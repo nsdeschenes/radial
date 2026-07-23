@@ -6,6 +6,9 @@
   "license": "MIT",
   "type": "module",
   "main": "src/index.tsx",
+  "imports": {
+    "#/*.js": "./src/*.ts"
+  },
   "scripts": {
     "dev": "node --watch src/index.ts",
     "start": "node src/index.ts",
