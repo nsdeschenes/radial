@@ -28,10 +28,17 @@
     "typescript": "^7.0.2"
   },
   "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "26.5.0"
+    },
     "packageManager": {
       "name": "pnpm",
       "version": "^11.4.0",
       "onFail": "download"
     }
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
   }
 }
