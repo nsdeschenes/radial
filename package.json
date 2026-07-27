@@ -20,6 +20,9 @@
     "lint:fix": "oxlint --fix",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
   "devDependencies": {
     "@types/node": "^26.1.1",
     "oxfmt": "^0.59.0",
@@ -28,17 +31,14 @@
     "typescript": "^7.0.2"
   },
   "devEngines": {
-    "runtime": {
-      "name": "node",
-      "version": "26.5.0"
-    },
     "packageManager": {
       "name": "pnpm",
       "version": "^11.4.0",
       "onFail": "download"
+    },
+    "runtime": {
+      "name": "node",
+      "version": "26.5.0"
     }
-  },
-  "dependencies": {
-    "zod": "^4.4.3"
   }
 }
