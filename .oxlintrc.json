@@ -1,10 +1,24 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "unicorn", "oxc", "node", "promise"],
+  "plugins": ["typescript", "unicorn", "oxc", "node", "promise", "import"],
   "categories": {
     "correctness": "error"
   },
   "rules": {
+    "import/no-named-export": "error",
+    "import/no-absolute-path": "error",
+    "import/no-relative-parent-imports": "error",
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": ["./*", "../*"],
+            "message": "Use the TypeScript path alias, such as #/utils/foo."
+          }
+        ]
+      }
+    ],
     "typescript/no-misused-spread": "off"
   },
   "env": {
