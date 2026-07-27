@@ -4,7 +4,9 @@
   "categories": {
     "correctness": "error"
   },
-  "rules": {},
+  "rules": {
+    "typescript/no-misused-spread": "off"
+  },
   "env": {
     "builtin": true
   },
