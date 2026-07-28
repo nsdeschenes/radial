@@ -3,7 +3,7 @@ import {z} from 'zod';
 import OpenAIPCountrySchema from '#/clients/OpenAIP/schemas/OpenAIPCountrySchema.js';
 
 const OpenAIPAirspaceSchema = z
-  .object({
+  .looseObject({
     _id: z
       .string()
       .optional()
@@ -101,21 +101,20 @@ const OpenAIPAirspaceSchema = z
         'An airspace that is most often not found in eAIPs but is defined by other regional/national authorities, e.g. natural reserves and monuments in the US. Those airspaces are not official but authorities request compliance of those if possible. In several cases, aircraft like UAVs are not allowed to enter those airspaces.',
     }),
     geometry: z
-      .object({
+      .strictObject({
         type: z.literal('Polygon'),
         coordinates: z
           .array(z.array(z.array(z.unknown()).min(2).max(2)).min(4))
           .min(1)
           .max(1),
       })
-      .strict()
       .optional(),
     country: OpenAIPCountrySchema.optional().meta({
       description:
         'A valid 2-digit ISO country code (ISO 3166-1 alpha-2), or, an array of valid ISO codes.',
     }),
     upperLimit: z
-      .object({
+      .strictObject({
         value: z.number().int(),
         unit: z.union([z.literal(1), z.literal(0), z.literal(6)]).meta({
           description:
@@ -126,14 +125,13 @@ const OpenAIPAirspaceSchema = z
             'The reference datum. Possible values: \n\n 0: GND\n\n1: MSL\n\n2: STD',
         }),
       })
-      .strict()
       .optional()
       .meta({
         description:
           'Defines an airspace vertical limit. The vertical limit is a combination of an integer value, a measurement unit and a reference datum.',
       }),
     lowerLimit: z
-      .object({
+      .strictObject({
         value: z.number().int(),
         unit: z.union([z.literal(1), z.literal(0), z.literal(6)]).meta({
           description:
@@ -144,14 +142,13 @@ const OpenAIPAirspaceSchema = z
             'The reference datum. Possible values: \n\n 0: GND\n\n1: MSL\n\n2: STD',
         }),
       })
-      .strict()
       .optional()
       .meta({
         description:
           'Defines an airspace vertical limit. The vertical limit is a combination of an integer value, a measurement unit and a reference datum.',
       }),
     upperLimitMax: z
-      .object({
+      .strictObject({
         value: z.number().int(),
         unit: z.union([z.literal(1), z.literal(0), z.literal(6)]).meta({
           description:
@@ -162,14 +159,13 @@ const OpenAIPAirspaceSchema = z
             'The reference datum. Possible values: \n\n 0: GND\n\n1: MSL\n\n2: STD',
         }),
       })
-      .strict()
       .optional()
       .meta({
         description:
           'Defines the airspace maximum upper vertical limit. This vertical limit is only rarely used in cases where an airspace is required to have a maximum upper vertical limit, e.g. "5000ft MSL but at most 8000ft MSL by request".',
       }),
     lowerLimitMin: z
-      .object({
+      .strictObject({
         value: z.number().int(),
         unit: z.union([z.literal(1), z.literal(0), z.literal(6)]).meta({
           description:
@@ -180,7 +176,6 @@ const OpenAIPAirspaceSchema = z
             'The reference datum. Possible values: \n\n 0: GND\n\n1: MSL\n\n2: STD',
         }),
       })
-      .strict()
       .optional()
       .meta({
         description:
@@ -188,202 +183,177 @@ const OpenAIPAirspaceSchema = z
       }),
     frequencies: z
       .array(
-        z
-          .object({
-            _id: z
-              .string()
-              .optional()
-              .meta({description: "The document's internal reference ID value."}),
-            value: z.string().regex(new RegExp('^\\d{3}\\.\\d{3}$')),
-            unit: z.literal(2).meta({description: "The frequency unit. Always 'MHz'."}),
-            name: z.string().optional(),
-            primary: z.boolean().optional(),
-            remarks: z.string().optional(),
-          })
-          .strict()
+        z.strictObject({
+          _id: z
+            .string()
+            .optional()
+            .meta({description: "The document's internal reference ID value."}),
+          value: z.string().regex(new RegExp('^\\d{3}\\.\\d{3}$')),
+          unit: z.literal(2).meta({description: "The frequency unit. Always 'MHz'."}),
+          name: z.string().optional(),
+          primary: z.boolean().optional(),
+          remarks: z.string().optional(),
+        })
       )
       .optional(),
     transponderSettings: z
       .array(
-        z
-          .object({
-            code: z.string().regex(new RegExp('^[0-7]{4}$')),
-            primary: z.boolean(),
-            remarks: z.string().optional(),
-          })
-          .strict()
+        z.strictObject({
+          code: z.string().regex(new RegExp('^[0-7]{4}$')),
+          primary: z.boolean(),
+          remarks: z.string().optional(),
+        })
       )
       .optional(),
     hoursOfOperation: z
-      .object({
+      .strictObject({
         operatingHours: z
           .array(
             z.union([
-              z
-                .object({
-                  dayOfWeek: z
-                    .union([
-                      z.literal(0),
-                      z.literal(1),
-                      z.literal(2),
-                      z.literal(3),
-                      z.literal(4),
-                      z.literal(5),
-                      z.literal(6),
-                    ])
-                    .meta({
-                      description:
-                        'Possible values: \n\n 0: Monday\n\n1: Tuesday\n\n2: Wednesday\n\n3: Thursday\n\n4: Friday\n\n5: Staturday\n\n6: Sunday',
-                    }),
-                  startTime: z
-                    .string()
-                    .regex(
-                      new RegExp('^(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9])?$')
-                    ),
-                  endTime: z
-                    .string()
-                    .regex(
-                      new RegExp('^(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9])?$')
-                    ),
-                  sunrise: z.literal(false),
-                  sunset: z.literal(false),
-                  byNotam: z.literal(false),
-                  publicHolidaysExcluded: z.boolean(),
-                  remarks: z.string().optional(),
-                })
-                .strict(),
-              z
-                .object({
-                  dayOfWeek: z
-                    .union([
-                      z.literal(0),
-                      z.literal(1),
-                      z.literal(2),
-                      z.literal(3),
-                      z.literal(4),
-                      z.literal(5),
-                      z.literal(6),
-                    ])
-                    .meta({
-                      description:
-                        'Possible values: \n\n 0: Monday\n\n1: Tuesday\n\n2: Wednesday\n\n3: Thursday\n\n4: Friday\n\n5: Staturday\n\n6: Sunday',
-                    }),
-                  startTime: z
-                    .string()
-                    .regex(
-                      new RegExp('^(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9])?$')
-                    ),
-                  sunrise: z.literal(false),
-                  sunset: z.literal(true),
-                  byNotam: z.literal(false),
-                  publicHolidaysExcluded: z.boolean(),
-                  remarks: z.string().optional(),
-                })
-                .strict(),
-              z
-                .object({
-                  dayOfWeek: z
-                    .union([
-                      z.literal(0),
-                      z.literal(1),
-                      z.literal(2),
-                      z.literal(3),
-                      z.literal(4),
-                      z.literal(5),
-                      z.literal(6),
-                    ])
-                    .meta({
-                      description:
-                        'Possible values: \n\n 0: Monday\n\n1: Tuesday\n\n2: Wednesday\n\n3: Thursday\n\n4: Friday\n\n5: Staturday\n\n6: Sunday',
-                    }),
-                  endTime: z
-                    .string()
-                    .regex(
-                      new RegExp('^(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9])?$')
-                    ),
-                  sunrise: z.literal(true),
-                  sunset: z.literal(false),
-                  byNotam: z.literal(false),
-                  publicHolidaysExcluded: z.boolean(),
-                  remarks: z.string().optional(),
-                })
-                .strict(),
-              z
-                .object({
-                  dayOfWeek: z
-                    .union([
-                      z.literal(0),
-                      z.literal(1),
-                      z.literal(2),
-                      z.literal(3),
-                      z.literal(4),
-                      z.literal(5),
-                      z.literal(6),
-                    ])
-                    .meta({
-                      description:
-                        'Possible values: \n\n 0: Monday\n\n1: Tuesday\n\n2: Wednesday\n\n3: Thursday\n\n4: Friday\n\n5: Staturday\n\n6: Sunday',
-                    }),
-                  sunrise: z.literal(true),
-                  sunset: z.literal(true),
-                  byNotam: z.literal(false),
-                  publicHolidaysExcluded: z.boolean(),
-                  remarks: z.string().optional(),
-                })
-                .strict(),
-              z
-                .object({
-                  dayOfWeek: z
-                    .union([
-                      z.literal(0),
-                      z.literal(1),
-                      z.literal(2),
-                      z.literal(3),
-                      z.literal(4),
-                      z.literal(5),
-                      z.literal(6),
-                    ])
-                    .meta({
-                      description:
-                        'Possible values: \n\n 0: Monday\n\n1: Tuesday\n\n2: Wednesday\n\n3: Thursday\n\n4: Friday\n\n5: Staturday\n\n6: Sunday',
-                    }),
-                  sunrise: z.literal(false),
-                  sunset: z.literal(false),
-                  byNotam: z.literal(false),
-                  publicHolidaysExcluded: z.boolean(),
-                  remarks: z.string().optional(),
-                })
-                .strict(),
-              z
-                .object({
-                  dayOfWeek: z
-                    .union([
-                      z.literal(0),
-                      z.literal(1),
-                      z.literal(2),
-                      z.literal(3),
-                      z.literal(4),
-                      z.literal(5),
-                      z.literal(6),
-                    ])
-                    .meta({
-                      description:
-                        'Possible values: \n\n 0: Monday\n\n1: Tuesday\n\n2: Wednesday\n\n3: Thursday\n\n4: Friday\n\n5: Staturday\n\n6: Sunday',
-                    }),
-                  sunrise: z.literal(false),
-                  sunset: z.literal(false),
-                  byNotam: z.literal(true),
-                  publicHolidaysExcluded: z.boolean(),
-                  remarks: z.string().optional(),
-                })
-                .strict(),
+              z.strictObject({
+                dayOfWeek: z
+                  .union([
+                    z.literal(0),
+                    z.literal(1),
+                    z.literal(2),
+                    z.literal(3),
+                    z.literal(4),
+                    z.literal(5),
+                    z.literal(6),
+                  ])
+                  .meta({
+                    description:
+                      'Possible values: \n\n 0: Monday\n\n1: Tuesday\n\n2: Wednesday\n\n3: Thursday\n\n4: Friday\n\n5: Saturday\n\n6: Sunday',
+                  }),
+                startTime: z
+                  .string()
+                  .regex(new RegExp('^(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9])?$')),
+                endTime: z
+                  .string()
+                  .regex(new RegExp('^(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9])?$')),
+                sunrise: z.literal(false),
+                sunset: z.literal(false),
+                byNotam: z.literal(false),
+                publicHolidaysExcluded: z.boolean(),
+                remarks: z.string().optional(),
+              }),
+              z.strictObject({
+                dayOfWeek: z
+                  .union([
+                    z.literal(0),
+                    z.literal(1),
+                    z.literal(2),
+                    z.literal(3),
+                    z.literal(4),
+                    z.literal(5),
+                    z.literal(6),
+                  ])
+                  .meta({
+                    description:
+                      'Possible values: \n\n 0: Monday\n\n1: Tuesday\n\n2: Wednesday\n\n3: Thursday\n\n4: Friday\n\n5: Saturday\n\n6: Sunday',
+                  }),
+                startTime: z
+                  .string()
+                  .regex(new RegExp('^(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9])?$')),
+                sunrise: z.literal(false),
+                sunset: z.literal(true),
+                byNotam: z.literal(false),
+                publicHolidaysExcluded: z.boolean(),
+                remarks: z.string().optional(),
+              }),
+              z.strictObject({
+                dayOfWeek: z
+                  .union([
+                    z.literal(0),
+                    z.literal(1),
+                    z.literal(2),
+                    z.literal(3),
+                    z.literal(4),
+                    z.literal(5),
+                    z.literal(6),
+                  ])
+                  .meta({
+                    description:
+                      'Possible values: \n\n 0: Monday\n\n1: Tuesday\n\n2: Wednesday\n\n3: Thursday\n\n4: Friday\n\n5: Saturday\n\n6: Sunday',
+                  }),
+                endTime: z
+                  .string()
+                  .regex(new RegExp('^(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9])?$')),
+                sunrise: z.literal(true),
+                sunset: z.literal(false),
+                byNotam: z.literal(false),
+                publicHolidaysExcluded: z.boolean(),
+                remarks: z.string().optional(),
+              }),
+              z.strictObject({
+                dayOfWeek: z
+                  .union([
+                    z.literal(0),
+                    z.literal(1),
+                    z.literal(2),
+                    z.literal(3),
+                    z.literal(4),
+                    z.literal(5),
+                    z.literal(6),
+                  ])
+                  .meta({
+                    description:
+                      'Possible values: \n\n 0: Monday\n\n1: Tuesday\n\n2: Wednesday\n\n3: Thursday\n\n4: Friday\n\n5: Saturday\n\n6: Sunday',
+                  }),
+                sunrise: z.literal(true),
+                sunset: z.literal(true),
+                byNotam: z.literal(false),
+                publicHolidaysExcluded: z.boolean(),
+                remarks: z.string().optional(),
+              }),
+              z.strictObject({
+                dayOfWeek: z
+                  .union([
+                    z.literal(0),
+                    z.literal(1),
+                    z.literal(2),
+                    z.literal(3),
+                    z.literal(4),
+                    z.literal(5),
+                    z.literal(6),
+                  ])
+                  .meta({
+                    description:
+                      'Possible values: \n\n 0: Monday\n\n1: Tuesday\n\n2: Wednesday\n\n3: Thursday\n\n4: Friday\n\n5: Saturday\n\n6: Sunday',
+                  }),
+                sunrise: z.literal(false),
+                sunset: z.literal(false),
+                byNotam: z.literal(false),
+                publicHolidaysExcluded: z.boolean(),
+                remarks: z.string().optional(),
+              }),
+              z.strictObject({
+                dayOfWeek: z
+                  .union([
+                    z.literal(0),
+                    z.literal(1),
+                    z.literal(2),
+                    z.literal(3),
+                    z.literal(4),
+                    z.literal(5),
+                    z.literal(6),
+                  ])
+                  .meta({
+                    description:
+                      'Possible values: \n\n 0: Monday\n\n1: Tuesday\n\n2: Wednesday\n\n3: Thursday\n\n4: Friday\n\n5: Saturday\n\n6: Sunday',
+                  }),
+                sunrise: z.literal(false),
+                sunset: z.literal(false),
+                byNotam: z.literal(true),
+                publicHolidaysExcluded: z.boolean(),
+                remarks: z.string().optional(),
+              }),
             ])
           )
           .min(1)
           .optional(),
         remarks: z.string().optional(),
       })
-      .strict()
       .optional()
       .meta({description: 'Defines the hours of operation for this airspace.'}),
     activeFrom: z.iso.datetime().optional(),
@@ -406,7 +376,6 @@ const OpenAIPAirspaceSchema = z
       .optional()
       .meta({description: 'The updated date for this document as ISO 8601 date.'}),
   })
-  .loose()
   .meta({description: 'Response payload of a airspace instance.'});
 
 export default OpenAIPAirspaceSchema;

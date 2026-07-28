@@ -3,7 +3,7 @@ import {z} from 'zod';
 import OpenAIPAirportSchema from '#/clients/OpenAIP/schemas/OpenAIPAirportSchema.js';
 
 const OpenAIPAirportListSchema = z
-  .object({
+  .looseObject({
     page: z
       .number()
       .int()
@@ -25,7 +25,6 @@ const OpenAIPAirportListSchema = z
       .array(OpenAIPAirportSchema)
       .meta({description: 'Contains the actual query result items in JSON format.'}),
   })
-  .loose()
   .meta({description: 'Response schema of a paginated list of airports.'});
 
 export default OpenAIPAirportListSchema;

@@ -3,7 +3,7 @@ import {z} from 'zod';
 import OpenAIPNavaidSchema from '#/clients/OpenAIP/schemas/OpenAIPNavaidSchema.js';
 
 const OpenAIPNavaidListSchema = z
-  .object({
+  .looseObject({
     page: z
       .number()
       .int()
@@ -25,7 +25,6 @@ const OpenAIPNavaidListSchema = z
       .array(OpenAIPNavaidSchema)
       .meta({description: 'Contains the actual query result items in JSON format.'}),
   })
-  .loose()
   .meta({description: 'Response schema of a paginated list of navaids.'});
 
 export default OpenAIPNavaidListSchema;

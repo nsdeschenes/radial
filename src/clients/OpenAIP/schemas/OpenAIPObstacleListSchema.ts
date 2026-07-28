@@ -3,7 +3,7 @@ import {z} from 'zod';
 import OpenAIPObstacleSchema from '#/clients/OpenAIP/schemas/OpenAIPObstacleSchema.js';
 
 const OpenAIPObstacleListSchema = z
-  .object({
+  .looseObject({
     page: z
       .number()
       .int()
@@ -25,7 +25,6 @@ const OpenAIPObstacleListSchema = z
       .array(OpenAIPObstacleSchema)
       .meta({description: 'Contains the actual query result items in JSON format.'}),
   })
-  .loose()
   .meta({description: 'Response schema of a paginated list of obstacles.'});
 
 export default OpenAIPObstacleListSchema;

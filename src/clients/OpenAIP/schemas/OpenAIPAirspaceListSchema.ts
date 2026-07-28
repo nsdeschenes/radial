@@ -3,7 +3,7 @@ import {z} from 'zod';
 import OpenAIPAirspaceSchema from '#/clients/OpenAIP/schemas/OpenAIPAirspaceSchema.js';
 
 const OpenAIPAirspaceListSchema = z
-  .object({
+  .looseObject({
     page: z
       .number()
       .int()
@@ -25,7 +25,6 @@ const OpenAIPAirspaceListSchema = z
       .array(OpenAIPAirspaceSchema)
       .meta({description: 'Contains the actual query result items in JSON format.'}),
   })
-  .loose()
   .meta({description: 'Response schema of a paginated list of airspaces.'});
 
 export default OpenAIPAirspaceListSchema;

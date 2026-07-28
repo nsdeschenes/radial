@@ -3,7 +3,7 @@ import {z} from 'zod';
 import OpenAIPHotspotSchema from '#/clients/OpenAIP/schemas/OpenAIPHotspotSchema.js';
 
 const OpenAIPHotspotListSchema = z
-  .object({
+  .looseObject({
     page: z
       .number()
       .int()
@@ -25,7 +25,6 @@ const OpenAIPHotspotListSchema = z
       .array(OpenAIPHotspotSchema)
       .meta({description: 'Contains the actual query result items in JSON format.'}),
   })
-  .loose()
   .meta({description: 'Response schema of a paginated list of hotspots.'});
 
 export default OpenAIPHotspotListSchema;

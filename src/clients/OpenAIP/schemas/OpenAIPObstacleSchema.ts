@@ -3,7 +3,7 @@ import {z} from 'zod';
 import OpenAIPCountrySchema from '#/clients/OpenAIP/schemas/OpenAIPCountrySchema.js';
 
 const OpenAIPObstacleSchema = z
-  .object({
+  .looseObject({
     _id: z
       .string()
       .optional()
@@ -23,14 +23,13 @@ const OpenAIPObstacleSchema = z
         'A valid 2-digit ISO country code (ISO 3166-1 alpha-2), or, an array of valid ISO codes.',
     }),
     geometry: z
-      .object({
+      .strictObject({
         type: z.literal('Point'),
         coordinates: z.array(z.unknown()).min(2).max(2),
       })
-      .strict()
       .optional(),
     elevation: z
-      .object({
+      .strictObject({
         value: z.number(),
         unit: z.literal(0).meta({description: "The elevation unit. Always 'meters'."}),
         referenceDatum: z
@@ -38,17 +37,15 @@ const OpenAIPObstacleSchema = z
           .optional()
           .meta({description: "The elevation reference datum. Always 'MSL'."}),
       })
-      .strict()
       .optional(),
     elevationGeoid: z
-      .object({
+      .strictObject({
         hae: z.number().meta({description: 'Height above ellipsoid in meters.'}),
         geoidHeight: z.number().meta({description: 'Height of geoid in meters.'}),
       })
-      .strict()
       .optional(),
     height: z
-      .object({
+      .strictObject({
         value: z.number(),
         unit: z.literal(0).meta({description: "The elevation unit. Always 'meters'."}),
         referenceDatum: z
@@ -56,7 +53,6 @@ const OpenAIPObstacleSchema = z
           .optional()
           .meta({description: "Reference datum is always 'GND'."}),
       })
-      .strict()
       .optional(),
     createdBy: z
       .string()
@@ -80,7 +76,6 @@ const OpenAIPObstacleSchema = z
       .optional()
       .meta({description: 'The time of the last OSM update.'}),
   })
-  .loose()
   .meta({description: 'Response payload of a obstacle instance.'});
 
 export default OpenAIPObstacleSchema;

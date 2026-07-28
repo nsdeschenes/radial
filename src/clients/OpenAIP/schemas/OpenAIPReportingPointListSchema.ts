@@ -3,7 +3,7 @@ import {z} from 'zod';
 import OpenAIPReportingPointSchema from '#/clients/OpenAIP/schemas/OpenAIPReportingPointSchema.js';
 
 const OpenAIPReportingPointListSchema = z
-  .object({
+  .looseObject({
     page: z
       .number()
       .int()
@@ -25,7 +25,6 @@ const OpenAIPReportingPointListSchema = z
       .array(OpenAIPReportingPointSchema)
       .meta({description: 'Contains the actual query result items in JSON format.'}),
   })
-  .loose()
   .meta({description: 'Response schema of a paginated list of reporting points.'});
 
 export default OpenAIPReportingPointListSchema;
