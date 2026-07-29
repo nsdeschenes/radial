@@ -1,0 +1,28 @@
+{
+  "page": 1,
+  "limit": 100,
+  "totalCount": 1,
+  "totalPages": 1,
+  "items": [
+    {
+      "_id": "obstacle-id",
+      "name": "Lakeshore Wind Turbine",
+      "type": 3,
+      "country": "CA",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-79.4522, 43.6334]
+      },
+      "elevation": {
+        "value": 75,
+        "unit": 0,
+        "referenceDatum": 1
+      },
+      "height": {
+        "value": 91,
+        "unit": 0,
+        "referenceDatum": 0
+      }
+    }
+  ]
+}

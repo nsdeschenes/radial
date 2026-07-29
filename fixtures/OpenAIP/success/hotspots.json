@@ -1,0 +1,27 @@
+{
+  "page": 1,
+  "limit": 100,
+  "totalCount": 1,
+  "totalPages": 1,
+  "items": [
+    {
+      "_id": "hotspot-id",
+      "name": "Blue Mountain Ridge",
+      "type": 0,
+      "reliability": 3,
+      "occurrence": 1,
+      "category": [0],
+      "country": "CA",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-80.3204, 44.5013]
+      },
+      "elevation": {
+        "value": 450,
+        "unit": 0,
+        "referenceDatum": 1
+      },
+      "timeOfDay": [1, 2, 3]
+    }
+  ]
+}

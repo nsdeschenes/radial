@@ -1,0 +1,27 @@
+{
+  "page": 1,
+  "limit": 100,
+  "totalCount": 1,
+  "totalPages": 1,
+  "items": [
+    {
+      "_id": "airport-id",
+      "name": "Toronto Pearson International Airport",
+      "icaoCode": "CYYZ",
+      "iataCode": "YYZ",
+      "type": 3,
+      "country": "CA",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-79.6306, 43.6777]
+      },
+      "elevation": {
+        "value": 173,
+        "unit": 0,
+        "referenceDatum": 1
+      },
+      "trafficType": [0, 1],
+      "private": false
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "page": 1,
+  "limit": 100,
+  "totalCount": 1,
+  "totalPages": 1,
+  "items": [
+    {
+      "_id": "reporting-point-id",
+      "name": "BRUNO",
+      "compulsory": true,
+      "country": "CA",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-79.9133, 43.4633]
+      },
+      "elevation": {
+        "value": 285,
+        "unit": 0,
+        "referenceDatum": 1
+      },
+      "airports": ["airport-id"],
+      "remarks": "VFR reporting point west of Toronto."
+    }
+  ]
+}
