@@ -1,37 +1,25 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import {http, HttpResponse} from 'msw';
+import {expect, test} from 'vitest';
 
+import emptyList from '#fixtures/OpenAIP/empty-list.json' with {type: 'json'};
+import errorResponse from '#fixtures/OpenAIP/error.json' with {type: 'json'};
+import invalidList from '#fixtures/OpenAIP/invalid-list.json' with {type: 'json'};
 import OpenAIP from '#radial/clients/OpenAIP/OpenAIP.js';
 import OpenAIPError from '#radial/clients/OpenAIP/OpenAIPError.js';
+import server from '#radial/test/server.js';
 
-const emptyList = {
-  page: 1,
-  limit: 100,
-  totalCount: 0,
-  totalPages: 0,
-  items: [],
-};
+const API_URL = 'https://api.core.openaip.net/api';
 
-function requestUrl(input: string | URL | Request) {
-  if (typeof input === 'string') {
-    return input;
-  }
-
-  return input instanceof URL ? input.href : input.url;
-}
-
-await test('fetches and validates an airport list with correctly encoded filters', async t => {
+test('fetches and validates an airport list with correctly encoded filters', async () => {
   let requestedUrl: string | undefined;
   let apiKey: string | null | undefined;
 
-  t.mock.method(
-    globalThis,
-    'fetch',
-    async (input: string | URL | Request, init?: RequestInit) => {
-      requestedUrl = requestUrl(input);
-      apiKey = new Headers(init?.headers).get('x-openaip-api-key');
-      return Response.json(emptyList);
-    }
+  server.use(
+    http.get(`${API_URL}/airports`, ({request}) => {
+      requestedUrl = request.url;
+      apiKey = request.headers.get('x-openaip-api-key');
+      return HttpResponse.json(emptyList);
+    })
   );
 
   const client = new OpenAIP('test-api-key');
@@ -41,23 +29,22 @@ await test('fetches and validates an airport list with correctly encoded filters
     private: false,
   });
 
-  assert.deepEqual(airports, emptyList);
-  assert.equal(
-    requestedUrl,
+  expect(airports).toEqual(emptyList);
+  expect(requestedUrl).toBe(
     'https://api.core.openaip.net/api/airports?country=CA&type=0&type=2&private=false'
   );
-  assert.equal(apiKey, 'test-api-key');
+  expect(apiKey).toBe('test-api-key');
 });
 
-await test('fetches every supported list and document endpoint', async t => {
+test('fetches every supported list and document endpoint', async () => {
   const requestedUrls: string[] = [];
 
-  t.mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
-    const requestedUrl = requestUrl(input);
-    requestedUrls.push(requestedUrl);
-
-    return Response.json(requestedUrl.includes('/document-id') ? {} : emptyList);
-  });
+  server.use(
+    http.get(`${API_URL}/*`, ({request}) => {
+      requestedUrls.push(request.url);
+      return HttpResponse.json(request.url.includes('/document-id') ? {} : emptyList);
+    })
+  );
 
   const client = new OpenAIP('test-api-key');
 
@@ -74,7 +61,7 @@ await test('fetches every supported list and document endpoint', async t => {
   await client.reportingPoints();
   await client.reportingPoint({id: 'document-id'});
 
-  assert.deepEqual(requestedUrls, [
+  expect(requestedUrls).toEqual([
     'https://api.core.openaip.net/api/airports',
     'https://api.core.openaip.net/api/airports/document-id?fields=name%2CicaoCode',
     'https://api.core.openaip.net/api/airspaces',
@@ -90,36 +77,26 @@ await test('fetches every supported list and document endpoint', async t => {
   ]);
 });
 
-await test('throws a typed error for an OpenAIP API error response', async t => {
-  t.mock.method(globalThis, 'fetch', async () =>
-    Response.json(
-      {
-        message: 'Permission denied',
-        code: 'auth/forbidden',
-        status: 403,
-      },
-      {status: 403}
+test('throws a typed error for an OpenAIP API error response', async () => {
+  server.use(
+    http.get(`${API_URL}/airports`, () =>
+      HttpResponse.json(errorResponse, {status: errorResponse.status})
     )
   );
 
   const client = new OpenAIP('invalid-api-key');
+  const request = client.airports();
 
-  await assert.rejects(client.airports(), error => {
-    assert(error instanceof OpenAIPError);
-    assert.equal(error.message, 'Permission denied');
-    assert.equal(error.code, 'auth/forbidden');
-    assert.equal(error.status, 403);
-    return true;
-  });
+  await expect(request).rejects.toBeInstanceOf(OpenAIPError);
+  await expect(request).rejects.toMatchObject(errorResponse);
 });
 
-await test('rejects a successful response that does not match its schema', async t => {
-  t.mock.method(globalThis, 'fetch', async () => Response.json({items: []}));
+test('rejects a successful response that does not match its schema', async () => {
+  server.use(http.get(`${API_URL}/airports`, () => HttpResponse.json(invalidList)));
 
   const client = new OpenAIP('test-api-key');
 
-  await assert.rejects(
-    client.airports(),
-    /OpenAIP response for "\/airports" did not match the expected schema/
+  await expect(client.airports()).rejects.toThrow(
+    'OpenAIP response for "/airports" did not match the expected schema'
   );
 });

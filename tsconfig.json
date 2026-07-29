@@ -5,6 +5,7 @@
     "rootDir": "./src",
     "outDir": "./dist",
     "paths": {
+      "#fixtures/*": ["./fixtures/*"],
       "#radial/*": ["./src/*"]
     },
 
@@ -40,6 +41,7 @@
     "isolatedModules": true,
     "noUncheckedSideEffectImports": true,
     "moduleDetection": "force",
+    "resolveJsonModule": true,
     "skipLibCheck": true
   }
 }
