@@ -1,6 +1,6 @@
 import {z} from 'zod';
 
-import OpenAIPNavaidSchema from '#/clients/OpenAIP/schemas/OpenAIPNavaidSchema.js';
+import OpenAIPNavaidSchema from '#radial/clients/OpenAIP/schemas/OpenAIPNavaidSchema.js';
 
 const OpenAIPNavaidListSchema = z
   .looseObject({

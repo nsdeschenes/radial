@@ -1,6 +1,6 @@
 import {z} from 'zod';
 
-import OpenAIPObstacleSchema from '#/clients/OpenAIP/schemas/OpenAIPObstacleSchema.js';
+import OpenAIPObstacleSchema from '#radial/clients/OpenAIP/schemas/OpenAIPObstacleSchema.js';
 
 const OpenAIPObstacleListSchema = z
   .looseObject({

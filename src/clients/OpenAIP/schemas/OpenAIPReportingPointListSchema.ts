@@ -1,6 +1,6 @@
 import {z} from 'zod';
 
-import OpenAIPReportingPointSchema from '#/clients/OpenAIP/schemas/OpenAIPReportingPointSchema.js';
+import OpenAIPReportingPointSchema from '#radial/clients/OpenAIP/schemas/OpenAIPReportingPointSchema.js';
 
 const OpenAIPReportingPointListSchema = z
   .looseObject({

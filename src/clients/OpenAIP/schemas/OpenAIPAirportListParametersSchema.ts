@@ -1,6 +1,6 @@
 import {z} from 'zod';
 
-import OpenAIPListParametersSchema from '#/clients/OpenAIP/schemas/OpenAIPListParametersSchema.js';
+import OpenAIPListParametersSchema from '#radial/clients/OpenAIP/schemas/OpenAIPListParametersSchema.js';
 
 const OpenAIPAirportListParametersSchema = OpenAIPListParametersSchema.extend({
   search: z.string().optional().meta({

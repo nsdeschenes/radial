@@ -1,6 +1,6 @@
 import {z} from 'zod';
 
-import OpenAIPAirportSchema from '#/clients/OpenAIP/schemas/OpenAIPAirportSchema.js';
+import OpenAIPAirportSchema from '#radial/clients/OpenAIP/schemas/OpenAIPAirportSchema.js';
 
 const OpenAIPAirportListSchema = z
   .looseObject({

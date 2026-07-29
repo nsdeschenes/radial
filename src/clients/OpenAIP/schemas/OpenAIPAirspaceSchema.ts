@@ -1,6 +1,6 @@
 import {z} from 'zod';
 
-import OpenAIPCountrySchema from '#/clients/OpenAIP/schemas/OpenAIPCountrySchema.js';
+import OpenAIPCountrySchema from '#radial/clients/OpenAIP/schemas/OpenAIPCountrySchema.js';
 
 const OpenAIPAirspaceSchema = z
   .looseObject({

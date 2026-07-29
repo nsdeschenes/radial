@@ -1,4 +1,4 @@
-import OpenAIPDocumentParametersSchema from '#/clients/OpenAIP/schemas/OpenAIPDocumentParametersSchema.js';
+import OpenAIPDocumentParametersSchema from '#radial/clients/OpenAIP/schemas/OpenAIPDocumentParametersSchema.js';
 
 const OpenAIPAirspaceParametersSchema = OpenAIPDocumentParametersSchema.meta({
   description: 'Parameters for an airspace.',

@@ -1,6 +1,6 @@
 import {z} from 'zod';
 
-import OpenAIPHotspotSchema from '#/clients/OpenAIP/schemas/OpenAIPHotspotSchema.js';
+import OpenAIPHotspotSchema from '#radial/clients/OpenAIP/schemas/OpenAIPHotspotSchema.js';
 
 const OpenAIPHotspotListSchema = z
   .looseObject({
