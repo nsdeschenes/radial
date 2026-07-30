@@ -1,0 +1,36 @@
+{
+  "page": 1,
+  "limit": 100,
+  "totalCount": 1,
+  "totalPages": 1,
+  "items": [
+    {
+      "_id": "airspace-id",
+      "name": "Toronto Control Zone",
+      "type": 4,
+      "icaoClass": 3,
+      "country": "CA",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-79.8, 43.55],
+            [-79.45, 43.55],
+            [-79.45, 43.8],
+            [-79.8, 43.55]
+          ]
+        ]
+      },
+      "upperLimit": {
+        "value": 3000,
+        "unit": 1,
+        "referenceDatum": 1
+      },
+      "lowerLimit": {
+        "value": 0,
+        "unit": 1,
+        "referenceDatum": 0
+      }
+    }
+  ]
+}

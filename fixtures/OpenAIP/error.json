@@ -1,0 +1,5 @@
+{
+  "message": "Permission denied",
+  "code": "auth/forbidden",
+  "status": 403
+}

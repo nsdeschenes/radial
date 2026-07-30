@@ -1,0 +1,32 @@
+{
+  "page": 1,
+  "limit": 100,
+  "totalCount": 1,
+  "totalPages": 1,
+  "items": [
+    {
+      "_id": "navaid-id",
+      "name": "Toronto VOR/DME",
+      "type": 4,
+      "identifier": "YYZ",
+      "country": "CA",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-79.6139, 43.6589]
+      },
+      "elevation": {
+        "value": 177,
+        "unit": 0,
+        "referenceDatum": 1
+      },
+      "frequency": {
+        "value": "112.150",
+        "unit": 2
+      },
+      "range": {
+        "value": 130,
+        "unit": 2
+      }
+    }
+  ]
+}
