@@ -13,8 +13,8 @@
   "scripts": {
     "dev": "node --watch src/index.ts",
     "start": "node src/index.ts",
-    "check": "pnpm run fmt:check && pnpm run lint && pnpm run typecheck",
-    "fix": "pnpm run fmt && pnpm run lint:fix",
+    "check": "nub run fmt:check && nub run lint && nub run typecheck",
+    "fix": "nub run fmt && nub run lint:fix",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "lint": "oxlint",
@@ -23,6 +23,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@duckdb/node-api": "1.5.5-r.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
