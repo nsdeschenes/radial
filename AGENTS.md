@@ -1,4 +1,5 @@
 ## Package Manager
+
 For this repo we're using nub to manage packages.
 
 ```bash
@@ -22,7 +23,7 @@ nubx prisma generate     # run a CLI from node_modules/.bin
 
 ## Where to next [#where-to-next]
 
-* Quick answers: the [FAQ](/docs/faq).
+- Quick answers: the [FAQ](/docs/faq).
 
 ## Agent skills
 

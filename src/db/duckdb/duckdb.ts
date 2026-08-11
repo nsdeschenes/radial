@@ -1,5 +1,6 @@
-import createDuckDBTables from '#radial/db/duckdb/createDuckDBTables.js';
 import {DuckDBInstance, DuckDBConnection} from '@duckdb/node-api';
+
+import createDuckDBTables from '#radial/db/duckdb/createDuckDBTables.js';
 
 class DuckDB {
   disposed: boolean;
@@ -34,7 +35,7 @@ class DuckDB {
       throw new Error('Unable to connect to DB.');
     }
 
-    await this.connection.run(createDuckDBTables())
+    await this.connection.run(createDuckDBTables());
   }
 }
 
