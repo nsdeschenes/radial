@@ -1,0 +1,49 @@
+# Radial
+
+Radial plans old-school, ground-based radio-navigation routes for flight simulation.
+
+## Language
+
+**Route Plan**:
+A geometric path from a departure airport to an arrival airport through an ordered sequence of ground-based navaids.
+_Avoid_: Flight plan, airway route
+
+**Route Point**:
+An airport or navaid that forms one endpoint of a route leg.
+_Avoid_: Fix, node, waypoint
+
+**Route Leg**:
+The segment of a route plan between two consecutive route points.
+_Avoid_: Hop, edge
+
+**Navigable Route Leg**:
+A route leg whose endpoints fall within continuous published navaid coverage, allowing navigation from one received signal to the next.
+_Avoid_: Connected leg, valid edge
+
+**Course**:
+The intended direction of travel over the ground, expressed relative to true or magnetic north without wind correction.
+_Avoid_: Heading
+
+**VOR Guidance**:
+An operational course or radial referenced to a VOR-family Navaid's Facility Variation of Record. At a Route Leg endpoint it is either an inbound course to the facility or an outbound radial from it.
+_Avoid_: Bearing, travel course
+
+**Route Search Mode**:
+The navaid-family policy under which a Route Plan was found: VOR-family only or NDB fallback after the VOR-family search was exhausted.
+_Avoid_: Route type, algorithm
+
+**Local Magnetic Declination**:
+The angle between true and magnetic north at a Route Point on the database snapshot's magnetic reference date, expressed in degrees east-positive.
+_Avoid_: Facility variation
+
+**Facility Variation of Record**:
+The published magnetic reference used by a VOR-family Navaid for operational radials and courses; it is not interchangeable with Local Magnetic Declination.
+_Avoid_: Local declination, current declination
+
+**VOR-family Navaid**:
+A navaid that supplies VOR guidance, including combined VOR/DME and VORTAC facilities.
+_Avoid_: VOR when referring to the whole family
+
+**Fallback Navaid**:
+An NDB admitted only when no route plan using VOR-family navaids can be found.
+_Avoid_: Secondary waypoint
