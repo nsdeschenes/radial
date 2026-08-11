@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PROTOTYPE — Radial CLI output contract</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        background: #0b0d10;
+        color: #e6edf3;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: 32px 24px 112px;
+      }
+      main {
+        width: min(1120px, 100%);
+        margin: 0 auto;
+      }
+      h1 {
+        margin: 0 0 6px;
+        font:
+          650 22px/1.3 ui-sans-serif,
+          system-ui,
+          sans-serif;
+      }
+      .lede {
+        margin: 0 0 26px;
+        color: #8b949e;
+        font:
+          14px/1.5 ui-sans-serif,
+          system-ui,
+          sans-serif;
+      }
+      .scenario-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 18px;
+      }
+      button,
+      a {
+        font: inherit;
+      }
+      .scenario-tabs button {
+        border: 1px solid #30363d;
+        border-radius: 6px;
+        background: #161b22;
+        color: #c9d1d9;
+        padding: 8px 11px;
+        cursor: pointer;
+      }
+      .scenario-tabs button[aria-selected='true'] {
+        border-color: #58a6ff;
+        color: #fff;
+        background: #1f2d3d;
+      }
+      .terminal {
+        overflow-x: auto;
+        border: 1px solid #30363d;
+        border-radius: 10px;
+        background: #010409;
+        box-shadow: 0 18px 60px #0008;
+      }
+      .terminal-bar {
+        padding: 10px 14px;
+        border-bottom: 1px solid #21262d;
+        color: #7d8590;
+        font-size: 12px;
+      }
+      pre {
+        min-height: 430px;
+        margin: 0;
+        padding: 22px;
+        font: 14px/1.55 inherit;
+        white-space: pre;
+      }
+      .caption {
+        margin-top: 14px;
+        color: #8b949e;
+        font:
+          13px/1.5 ui-sans-serif,
+          system-ui,
+          sans-serif;
+      }
+      .switcher {
+        position: fixed;
+        left: 50%;
+        bottom: 24px;
+        transform: translateX(-50%);
+        z-index: 10;
+        display: grid;
+        grid-template-columns: 42px minmax(220px, auto) 42px;
+        align-items: center;
+        border: 1px solid #6e7681;
+        border-radius: 999px;
+        background: #f0f6fc;
+        color: #0d1117;
+        box-shadow: 0 10px 35px #000a;
+        overflow: hidden;
+      }
+      .switcher button {
+        height: 44px;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+        font-size: 20px;
+      }
+      .switcher button:hover {
+        background: #d8dee4;
+      }
+      .variant-label {
+        padding: 0 14px;
+        text-align: center;
+        font:
+          650 13px/1.2 ui-sans-serif,
+          system-ui,
+          sans-serif;
+      }
+      .badge {
+        color: #f2cc60;
+      }
+      @media (max-width: 700px) {
+        body {
+          padding-inline: 12px;
+        }
+        pre {
+          font-size: 12px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>PROTOTYPE — Radial CLI output contract</h1>
+      <p class="lede">
+        Three output structures, switchable via <code>?variant=A</code>. Scenario choices
+        are illustrative, not real navigation data.
+      </p>
+      <nav class="scenario-tabs" aria-label="Output scenario"></nav>
+      <section class="terminal" aria-live="polite">
+        <div class="terminal-bar"></div>
+        <pre></pre>
+      </section>
+      <p class="caption"></p>
+    </main>
+    <nav class="switcher" aria-label="Prototype variant">
+      <button type="button" data-direction="-1" aria-label="Previous variant">
+        &#8592;
+      </button>
+      <span class="variant-label"></span>
+      <button type="button" data-direction="1" aria-label="Next variant">&#8594;</button>
+    </nav>
+
+    <script>
+      // Three variants of the CLI route output, switchable via ?variant=, in a throwaway standalone prototype.
+      const scenarios = {
+        success: {label: 'Successful route', command: 'radial CYYZ CYOW'},
+        degraded: {label: 'Fallback + warning', command: 'radial BGBW BIKF'},
+        invalid: {label: 'Invalid input', command: 'radial YYZ CYOW'},
+        noRoute: {label: 'No route', command: 'radial CYYZ NZAA'},
+      };
+
+      function formatTable(headers, rows, rightAligned = []) {
+        const widths = headers.map((header, column) =>
+          Math.max(header.length, ...rows.map(row => row[column].length))
+        );
+        const right = new Set(rightAligned);
+        const line = row =>
+          row
+            .map((cell, column) =>
+              right.has(column)
+                ? cell.padStart(widths[column])
+                : cell.padEnd(widths[column])
+            )
+            .join('  ')
+            .trimEnd();
+
+        return [line(headers), ...rows.map(line)].join('\n');
+      }
+
+      function wrapRoute(points, detail, width = 100) {
+        const lines = [];
+        let line = points[0];
+        for (const point of points.slice(1)) {
+          const next = ` → ${point}`;
+          if (`${line}${next}${detail}`.length > width && line.includes(' → ')) {
+            lines.push(line);
+            line = `  → ${point}`;
+          } else {
+            line += next;
+          }
+        }
+        lines.push(`${line}${detail}`);
+        return lines.join('\n');
+      }
+
+      function alignedRouteOutput({points, detail, legs, navaids, warnings = []}) {
+        const sections = [
+          wrapRoute(points, detail),
+          formatTable(
+            ['LEG', 'FROM', 'TO', 'DIST', 'TRUE COURSE', 'MAG COURSE', 'VOR GUIDANCE'],
+            legs,
+            [0, 3]
+          ),
+          `NAVAIDS\n${formatTable(['ID', 'TYPE', 'FREQUENCY', 'RANGE'], navaids, [3])}`,
+        ];
+        if (warnings.length)
+          sections.push(
+            `Warnings:\n${warnings.map(warning => `  • ${warning}`).join('\n')}`
+          );
+        return sections.join('\n\n');
+      }
+
+      const variants = {
+        A: {
+          name: 'Summary + route table',
+          caption:
+            'Selected contract: every table width is calculated from its header and all values; cells never wrap, truncate, or use tabs.',
+          output: {
+            success: () =>
+              alignedRouteOutput({
+                points: ['CYYZ', 'YYZ', 'YOW', 'CYOW'],
+                detail: '  •  223.6 NM  •  3 legs  •  VOR-family',
+                legs: [
+                  [
+                    '1',
+                    'CYYZ',
+                    'YYZ',
+                    '3.7 NM',
+                    '241°',
+                    '252°',
+                    'arrive on 061° inbound',
+                  ],
+                  [
+                    '2',
+                    'YYZ',
+                    'YOW',
+                    '196.2 NM',
+                    '072° out / 073° in',
+                    '083° out / 084° in',
+                    '252° radial → 253° inbound',
+                  ],
+                  [
+                    '3',
+                    'YOW',
+                    'CYOW',
+                    '23.7 NM',
+                    '061°',
+                    '073°',
+                    'depart on 241° radial',
+                  ],
+                ],
+                navaids: [
+                  ['YYZ', 'VOR/DME', '112.15 MHz', '130 NM'],
+                  ['YOW', 'VORTAC', '114.60 MHz', '130 NM'],
+                ],
+              }),
+            degraded: () =>
+              alignedRouteOutput({
+                points: ['BGBW', 'NA', 'RK', 'KEF', 'BIKF'],
+                detail: '  •  742.8 NM  •  4 legs  •  NDB fallback',
+                legs: [
+                  ['1', 'BGBW', 'NA', '18.4 NM', '118°', '—', '—'],
+                  ['2', 'NA', 'RK', '331.0 NM', '088° out / 096° in', '—', '—'],
+                  [
+                    '3',
+                    'RK',
+                    'KEF',
+                    '379.7 NM',
+                    '082° out / 091° in',
+                    '096° out / 105° in',
+                    '—',
+                  ],
+                  [
+                    '4',
+                    'KEF',
+                    'BIKF',
+                    '13.7 NM',
+                    '079°',
+                    '094°',
+                    'depart on 259° radial',
+                  ],
+                ],
+                navaids: [
+                  ['NA', 'NDB', '341 kHz', '50 NM'],
+                  ['RK', 'NDB', '355 kHz', '50 NM'],
+                  ['KEF', 'VOR/DME', '112.50 MHz', '130 NM'],
+                ],
+                warnings: [
+                  'Used NDB fallback because no VOR-family-only route was found.',
+                  'Magnetic course unavailable for legs 1–2: local declination is missing.',
+                ],
+              }),
+            invalid: `Error: expected two four-letter ICAO airport codes.
+
+Usage: radial <departure-icao> <arrival-icao>
+Example: radial CYYZ CYOW
+
+Received "YYZ" for departure. ICAO codes are exactly four letters.`,
+            noRoute: `No route found from CYYZ to NZAA.
+
+Radial considered every eligible VOR-family navaid, then allowed NDB fallback,
+within the 1.5× direct-distance limit. No connected route plan exists in the local data.`,
+          },
+        },
+        B: {
+          name: 'Leg-by-leg briefing',
+          caption:
+            'A narrative briefing optimizes for reading one leg at a time and repeats navaid tuning data at the point of use.',
+          output: {
+            success: `ROUTE PLAN  CYYZ → YYZ → YOW → CYOW
+223.6 NM · VOR-family route
+
+01  CYYZ → YYZ                                      3.7 NM
+    Fly 241° true / 252° magnetic.
+    YYZ · VOR/DME · 112.15 MHz · receive within 130 NM
+    Arrive on YYZ course 061° inbound.
+
+02  YYZ → YOW                                     196.2 NM
+    Depart 072° true / 083° magnetic; arrive 073° true / 084° magnetic.
+    Leave YYZ on radial 252°.
+    YOW · VORTAC · 114.60 MHz · receive within 130 NM
+    Join YOW course 253° inbound.
+
+03  YOW → CYOW                                     23.7 NM
+    Fly 061° true / 073° magnetic.
+    Leave YOW on radial 241°.
+
+ARRIVE  CYOW · total 223.6 NM · 3 legs`,
+            degraded: `ROUTE PLAN  BGBW → NA → RK → KEF → BIKF
+742.8 NM · NDB fallback route
+
+! No VOR-family-only route was found; NDBs were admitted.
+! Some magnetic courses are unavailable because local declination is missing.
+
+01  BGBW → NA                                      18.4 NM
+    Fly 118° true / — magnetic.
+    NA · NDB · 341 kHz · receive within 50 NM
+
+02  NA → RK                                       331.0 NM
+    Depart 088° true; arrive 096° true. Magnetic course: —.
+    RK · NDB · 355 kHz · receive within 50 NM
+
+03  RK → KEF                                      379.7 NM
+    Depart 082° true / 096° magnetic; arrive 091° true / 105° magnetic.
+    KEF · VOR/DME · 112.50 MHz · receive within 130 NM
+
+04  KEF → BIKF                                     13.7 NM
+    Fly 079° true / 094° magnetic. Leave KEF on radial 259°.`,
+            invalid: `RADIAL COULD NOT PLAN A ROUTE
+
+Departure must be a four-letter ICAO airport code; received "YYZ".
+
+  radial <departure-icao> <arrival-icao>
+  radial CYYZ CYOW`,
+            noRoute: `NO ROUTE PLAN  CYYZ → NZAA
+
+Search completed without finding continuous published navaid coverage.
+
+  VOR-family pass       no route
+  NDB fallback pass     no route
+  Distance limit        1.5× direct distance
+  Local database        fully considered`,
+          },
+        },
+        C: {
+          name: 'Scan-first compact',
+          caption:
+            'A dense, grep-friendly shape keeps every route point on one line and uses a separate diagnostic channel.',
+          output: {
+            success: `ROUTE CYYZ>YYZ>YOW>CYOW  DIST=223.6NM  LEGS=3  MODE=VOR
+
+01 CYYZ>YYZ   3.7NM  CRS-T=241  CRS-M=252  IN-YYZ=061  FREQ=112.15MHz
+02 YYZ>YOW  196.2NM  CRS-T=072/073  CRS-M=083/084  OUT-YYZ=252  IN-YOW=253  FREQ=114.60MHz
+03 YOW>CYOW  23.7NM  CRS-T=061  CRS-M=073  OUT-YOW=241
+
+OK 223.6NM`,
+            degraded: `ROUTE BGBW>NA>RK>KEF>BIKF  DIST=742.8NM  LEGS=4  MODE=NDB-FALLBACK
+
+01 BGBW>NA   18.4NM  CRS-T=118  CRS-M=-  FREQ=341kHz
+02 NA>RK    331.0NM  CRS-T=088/096  CRS-M=-/-  FREQ=355kHz
+03 RK>KEF   379.7NM  CRS-T=082/091  CRS-M=096/105  FREQ=112.50MHz
+04 KEF>BIKF  13.7NM  CRS-T=079  CRS-M=094  OUT-KEF=259
+
+WARN FALLBACK_NDB no VOR-family-only route found
+WARN MISSING_DECLINATION legs=1,2
+OK 742.8NM`,
+            invalid: `ERROR INVALID_ICAO field=departure value=YYZ expected=four_letters
+USAGE radial <departure-icao> <arrival-icao>`,
+            noRoute: `NO_ROUTE CYYZ>NZAA passes=VOR,NDB limit=1.5x database=complete`,
+          },
+        },
+      };
+
+      const keys = Object.keys(variants);
+      const params = new URLSearchParams(location.search);
+      let variant = keys.includes(params.get('variant')) ? params.get('variant') : 'A';
+      let scenario = Object.hasOwn(scenarios, params.get('scenario'))
+        ? params.get('scenario')
+        : 'success';
+
+      function setParams() {
+        const next = new URL(location.href);
+        next.searchParams.set('variant', variant);
+        next.searchParams.set('scenario', scenario);
+        history.replaceState(null, '', next);
+      }
+
+      function render() {
+        setParams();
+        document.querySelector('.terminal-bar').textContent =
+          `$ ${scenarios[scenario].command}`;
+        const output = variants[variant].output[scenario];
+        document.querySelector('pre').textContent =
+          typeof output === 'function' ? output() : output;
+        document.querySelector('.caption').textContent = variants[variant].caption;
+        document.querySelector('.variant-label').textContent =
+          `${variant} — ${variants[variant].name}`;
+        document.querySelector('.scenario-tabs').innerHTML = Object.entries(scenarios)
+          .map(
+            ([key, value]) =>
+              `<button type="button" data-scenario="${key}" aria-selected="${key === scenario}">${value.label}</button>`
+          )
+          .join('');
+        document.querySelectorAll('[data-scenario]').forEach(button => {
+          button.addEventListener('click', () => {
+            scenario = button.dataset.scenario;
+            render();
+          });
+        });
+      }
+
+      function cycle(direction) {
+        variant = keys[(keys.indexOf(variant) + direction + keys.length) % keys.length];
+        render();
+      }
+
+      document.querySelectorAll('[data-direction]').forEach(button => {
+        button.addEventListener('click', () => cycle(Number(button.dataset.direction)));
+      });
+      document.addEventListener('keydown', event => {
+        if (
+          ['INPUT', 'TEXTAREA'].includes(event.target.tagName) ||
+          event.target.isContentEditable
+        )
+          return;
+        if (event.key === 'ArrowLeft') cycle(-1);
+        if (event.key === 'ArrowRight') cycle(1);
+      });
+      render();
+    </script>
+  </body>
+</html>
