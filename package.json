@@ -20,13 +20,16 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "pre-commit:run": "prek run",
+    "pre-commit:install": "prek install"
   },
   "dependencies": {
     "@duckdb/node-api": "1.5.5-r.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@j178/prek": "^0.4.13",
     "@types/node": "^26.1.1",
     "msw": "^2.15.0",
     "oxfmt": "^0.59.0",
