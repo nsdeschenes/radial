@@ -1,0 +1,658 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PROTOTYPE — Route graph expansion</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #17212b;
+        --muted: #5e6a74;
+        --line: #d8dee4;
+        --paper: #ffffff;
+        --wash: #f4f7f8;
+        --accent: #146c72;
+        --accent-wash: #e4f2f1;
+        --warning: #8a4b08;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--wash);
+        color: var(--ink);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.45;
+      }
+
+      main {
+        width: min(1040px, calc(100% - 32px));
+        margin: 40px auto 80px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        margin-bottom: 8px;
+        font-size: clamp(1.8rem, 4vw, 2.8rem);
+        letter-spacing: -0.035em;
+      }
+
+      h2 {
+        margin-bottom: 16px;
+        font-size: 1.2rem;
+      }
+
+      .eyebrow {
+        margin-bottom: 8px;
+        color: var(--accent);
+        font-size: 0.75rem;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .intro {
+        max-width: 800px;
+        color: var(--muted);
+        font-size: 1.05rem;
+      }
+
+      .card {
+        margin-top: 24px;
+        padding: 24px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--paper);
+        box-shadow: 0 8px 24px rgb(23 33 43 / 5%);
+      }
+
+      .state-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 12px;
+      }
+
+      .datum {
+        min-height: 92px;
+        padding: 14px;
+        border-radius: 8px;
+        background: var(--wash);
+      }
+
+      .datum dt {
+        margin-bottom: 6px;
+        color: var(--muted);
+        font-size: 0.76rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .datum dd {
+        margin: 0;
+        font-weight: 700;
+      }
+
+      .wide {
+        grid-column: 1 / -1;
+      }
+
+      .status {
+        padding: 14px 16px;
+        border-left: 4px solid var(--accent);
+        background: var(--accent-wash);
+      }
+
+      .controls,
+      .tabs,
+      .steps {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      button {
+        min-height: 42px;
+        padding: 9px 14px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--paper);
+        color: var(--ink);
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      button:hover:not(:disabled),
+      button:focus-visible {
+        border-color: var(--accent);
+        outline: 2px solid transparent;
+        background: var(--accent-wash);
+      }
+
+      button.primary,
+      button[aria-selected="true"] {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: white;
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.45;
+      }
+
+      .scenario-description,
+      .explanation {
+        color: var(--muted);
+      }
+
+      .route {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        overflow-wrap: anywhere;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.92rem;
+      }
+
+      th,
+      td {
+        padding: 10px 8px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+      }
+
+      th {
+        color: var(--muted);
+        font-size: 0.75rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .log {
+        max-height: 240px;
+        margin: 0;
+        padding-left: 22px;
+        overflow: auto;
+      }
+
+      .log li + li {
+        margin-top: 7px;
+      }
+
+      .warning {
+        color: var(--warning);
+      }
+
+      @media (max-width: 640px) {
+        main {
+          width: min(100% - 20px, 1040px);
+          margin-top: 20px;
+        }
+
+        .card {
+          padding: 18px;
+        }
+
+        .table-wrap {
+          overflow-x: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">Throwaway logic prototype</p>
+      <h1>Route graph expansion</h1>
+      <p class="intro">
+        This demo asks whether staged endpoint-ellipse queries can construct a complete route graph,
+        prove the shortest deterministic route plan, and delay fallback navaids until VOR-family
+        exhaustion—without querying the entire 1.5-times-detour region up front.
+      </p>
+
+      <section class="card" aria-labelledby="current-state-heading">
+        <h2 id="current-state-heading">Current planning state</h2>
+        <div id="status" class="status"></div>
+        <dl id="state-grid" class="state-grid"></dl>
+      </section>
+
+      <section class="card" aria-labelledby="free-play-heading">
+        <h2 id="free-play-heading">Free play</h2>
+        <p class="explanation">
+          Each query widens the admissible endpoint ellipse. “Run to verdict” repeats that same
+          transition so the intermediate states remain inspectable in the log.
+        </p>
+        <div class="controls">
+          <button id="advance" class="primary" type="button">Query next window</button>
+          <button id="finish" type="button">Run to verdict</button>
+          <button id="reset" type="button">Reset scenario</button>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="walkthrough-heading">
+        <h2 id="walkthrough-heading">Guided walkthroughs</h2>
+        <div id="tabs" class="tabs" role="tablist"></div>
+        <div id="scenario" role="tabpanel"></div>
+      </section>
+
+      <section class="card" aria-labelledby="stations-heading">
+        <h2 id="stations-heading">Discovered route points</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Stable identifier</th>
+                <th>Kind</th>
+                <th>Endpoint lower bound</th>
+                <th>Discovery status</th>
+              </tr>
+            </thead>
+            <tbody id="stations"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="log-heading">
+        <h2 id="log-heading">Decision log</h2>
+        <ol id="log" class="log"></ol>
+      </section>
+    </main>
+
+    <script>
+      // Portable prototype module. It has no DOM dependencies and can be lifted out independently.
+      const RouteGraphExpansion = (() => {
+        const DISCOVERY_FACTORS = [1.1, 1.25, 1.5];
+
+        const scenarios = {
+          proof: {
+            name: 'Do not stop at the first route',
+            description:
+              'A narrow query finds a 145 NM VOR-family route. A wider station, still inside that incumbent length, produces a 135 NM route. Watch the planner use the first route as a proof boundary instead of returning it immediately.',
+            directDistance: 100,
+            stations: [
+              {id: 'V-NEAR', kind: 'VOR-family', lowerBound: 108},
+              {id: 'V-OUTER-A', kind: 'VOR-family', lowerBound: 132},
+              {id: 'V-OUTER-B', kind: 'VOR-family', lowerBound: 134},
+            ],
+            legs: [
+              {from: 'DEP', to: 'V-NEAR', distance: 72.5},
+              {from: 'V-NEAR', to: 'ARR', distance: 72.5},
+              {from: 'DEP', to: 'V-OUTER-A', distance: 45},
+              {from: 'V-OUTER-A', to: 'V-OUTER-B', distance: 45},
+              {from: 'V-OUTER-B', to: 'ARR', distance: 45},
+            ],
+          },
+          fallback: {
+            name: 'Exhaust VOR-family before fallback',
+            description:
+              'No VOR-family route exists in the complete permitted region. Only after proving that negative result does the planner admit an NDB and find a mixed route plan.',
+            directDistance: 100,
+            stations: [
+              {id: 'V-WEST', kind: 'VOR-family', lowerBound: 105},
+              {id: 'V-EAST', kind: 'VOR-family', lowerBound: 108},
+              {id: 'N-BRIDGE', kind: 'Fallback', lowerBound: 121},
+            ],
+            legs: [
+              {from: 'DEP', to: 'V-WEST', distance: 35},
+              {from: 'V-EAST', to: 'ARR', distance: 35},
+              {from: 'V-WEST', to: 'N-BRIDGE', distance: 35},
+              {from: 'N-BRIDGE', to: 'V-EAST', distance: 35},
+            ],
+          },
+          tie: {
+            name: 'Resolve equal routes deterministically',
+            description:
+              'Three 120 NM route plans are available. The planner first prefers fewer route legs, then the lexicographically smaller sequence of stable identifiers.',
+            directDistance: 100,
+            stations: [
+              {id: 'V-ALFA', kind: 'VOR-family', lowerBound: 110},
+              {id: 'V-BRAVO', kind: 'VOR-family', lowerBound: 110},
+              {id: 'V-CHARLIE', kind: 'VOR-family', lowerBound: 108},
+              {id: 'V-DELTA', kind: 'VOR-family', lowerBound: 109},
+            ],
+            legs: [
+              {from: 'DEP', to: 'V-ALFA', distance: 60},
+              {from: 'V-ALFA', to: 'ARR', distance: 60},
+              {from: 'DEP', to: 'V-BRAVO', distance: 60},
+              {from: 'V-BRAVO', to: 'ARR', distance: 60},
+              {from: 'DEP', to: 'V-CHARLIE', distance: 40},
+              {from: 'V-CHARLIE', to: 'V-DELTA', distance: 40},
+              {from: 'V-DELTA', to: 'ARR', distance: 40},
+            ],
+          },
+          capped: {
+            name: 'Terminate at the detour cap',
+            description:
+              'A possible station sits outside the complete 1.5-times-detour ellipse. The planner terminates with no route after both search phases exhaust the permitted region.',
+            directDistance: 100,
+            stations: [
+              {id: 'V-TOO-FAR', kind: 'VOR-family', lowerBound: 156},
+              {id: 'N-TOO-FAR', kind: 'Fallback', lowerBound: 158},
+            ],
+            legs: [
+              {from: 'DEP', to: 'V-TOO-FAR', distance: 80},
+              {from: 'V-TOO-FAR', to: 'ARR', distance: 80},
+              {from: 'DEP', to: 'N-TOO-FAR', distance: 80},
+              {from: 'N-TOO-FAR', to: 'ARR', distance: 80},
+            ],
+          },
+        };
+
+        function initialState(scenarioId) {
+          const scenario = scenarios[scenarioId];
+          return {
+            scenarioId,
+            phase: 'VOR_DISCOVERY',
+            phaseQueryLimit: scenario.directDistance,
+            discoveredStationIds: [],
+            incumbent: null,
+            verdict: null,
+            lastChange: 'Ready to query the first VOR-family candidate window.',
+            log: ['Started with VOR-family navaids only.'],
+          };
+        }
+
+        function compareLabels(left, right) {
+          if (left.distance !== right.distance) return left.distance - right.distance;
+          if (left.legCount !== right.legCount) return left.legCount - right.legCount;
+          return left.route.join('\u0000').localeCompare(right.route.join('\u0000'), 'en');
+        }
+
+        function findBestRoute(scenario, discoveredStationIds, includesFallback) {
+          const admitted = new Set(['DEP', 'ARR', ...discoveredStationIds]);
+          const stationById = new Map(scenario.stations.map((station) => [station.id, station]));
+          const graph = new Map([...admitted].map((id) => [id, []]));
+
+          for (const leg of scenario.legs) {
+            if (!admitted.has(leg.from) || !admitted.has(leg.to)) continue;
+            const endpointKinds = [stationById.get(leg.from)?.kind, stationById.get(leg.to)?.kind];
+            if (!includesFallback && endpointKinds.includes('Fallback')) continue;
+            graph.get(leg.from).push({to: leg.to, distance: leg.distance});
+            graph.get(leg.to).push({to: leg.from, distance: leg.distance});
+          }
+
+          const frontier = [{node: 'DEP', distance: 0, legCount: 0, route: ['DEP']}];
+          const bestByNode = new Map();
+
+          while (frontier.length > 0) {
+            frontier.sort(compareLabels);
+            const current = frontier.shift();
+            const previous = bestByNode.get(current.node);
+            if (previous && compareLabels(previous, current) <= 0) continue;
+            bestByNode.set(current.node, current);
+
+            if (current.node === 'ARR') {
+              return current.distance <= scenario.directDistance * 1.5 ? current : null;
+            }
+
+            for (const leg of graph.get(current.node) ?? []) {
+              if (current.route.includes(leg.to)) continue;
+              frontier.push({
+                node: leg.to,
+                distance: current.distance + leg.distance,
+                legCount: current.legCount + 1,
+                route: [...current.route, leg.to],
+              });
+            }
+          }
+
+          return null;
+        }
+
+        function nextDiscoveryLimit(scenario, currentLimit) {
+          const cap = scenario.directDistance * 1.5;
+          return (
+            DISCOVERY_FACTORS.map((factor) => scenario.directDistance * factor).find(
+              (limit) => limit > currentLimit,
+            ) ?? cap
+          );
+        }
+
+        function isFallbackPhase(phase) {
+          return phase.startsWith('FALLBACK');
+        }
+
+        function transition(state) {
+          if (state.verdict) return state;
+
+          const scenario = scenarios[state.scenarioId];
+          const cap = scenario.directDistance * 1.5;
+          const includesFallback = isFallbackPhase(state.phase);
+          const proofLimit = state.incumbent ? Math.min(state.incumbent.distance, cap) : null;
+          const nextLimit = state.phase.endsWith('PROOF')
+            ? proofLimit
+            : nextDiscoveryLimit(scenario, state.phaseQueryLimit);
+          const allowedKinds = includesFallback ? ['Fallback'] : ['VOR-family'];
+          const newlyDiscovered = scenario.stations.filter(
+            (station) =>
+              allowedKinds.includes(station.kind) &&
+              station.lowerBound <= nextLimit &&
+              !state.discoveredStationIds.includes(station.id),
+          );
+          const discoveredStationIds = [
+            ...state.discoveredStationIds,
+            ...newlyDiscovered.map((station) => station.id),
+          ];
+          const route = findBestRoute(scenario, discoveredStationIds, includesFallback);
+          const log = [
+            ...state.log,
+            `Queried ${includesFallback ? 'fallback-NDB' : 'VOR-family'} candidates through ${nextLimit.toFixed(0)} NM; discovered ${newlyDiscovered.length}.`,
+          ];
+
+          if (route) {
+            log.push(
+              `Incumbent is ${route.distance.toFixed(0)} NM via ${route.route.join(' → ')}.`,
+            );
+            const allPotentiallyBetterCandidatesLoaded = nextLimit >= Math.min(route.distance, cap);
+            if (allPotentiallyBetterCandidatesLoaded) {
+              log.push('The incumbent-length ellipse is complete, so no shorter route is hidden.');
+              return {
+                ...state,
+                phase: includesFallback ? 'FALLBACK_PROOF' : 'VOR_PROOF',
+                phaseQueryLimit: nextLimit,
+                discoveredStationIds,
+                incumbent: route,
+                verdict: 'ROUTE_PROVEN',
+                lastChange: 'Shortest route plan proven.',
+                log,
+              };
+            }
+
+            log.push('The route is provisional; widen through its length before returning it.');
+            return {
+              ...state,
+              phase: includesFallback ? 'FALLBACK_PROOF' : 'VOR_PROOF',
+              phaseQueryLimit: nextLimit,
+              discoveredStationIds,
+              incumbent: route,
+              lastChange: 'Found a provisional route; proof query still required.',
+              log,
+            };
+          }
+
+          if (nextLimit >= cap && !includesFallback) {
+            log.push('The full VOR-family region is exhausted; fallback NDBs may now be admitted.');
+            return {
+              ...state,
+              phase: 'FALLBACK_DISCOVERY',
+              phaseQueryLimit: scenario.directDistance,
+              discoveredStationIds,
+              incumbent: null,
+              lastChange: 'VOR-family search exhausted; starting fallback discovery.',
+              log,
+            };
+          }
+
+          if (nextLimit >= cap && includesFallback) {
+            log.push('The full mixed-navaid region is exhausted with no permitted route plan.');
+            return {
+              ...state,
+              phaseQueryLimit: nextLimit,
+              discoveredStationIds,
+              incumbent: null,
+              verdict: 'NO_ROUTE',
+              lastChange: 'Both search phases exhausted the complete permitted region.',
+              log,
+            };
+          }
+
+          return {
+            ...state,
+            phaseQueryLimit: nextLimit,
+            discoveredStationIds,
+            incumbent: null,
+            lastChange: 'No route yet; a wider query is required.',
+            log,
+          };
+        }
+
+        function reduce(state, action) {
+          switch (action.type) {
+            case 'RESET':
+              return initialState(action.scenarioId ?? state.scenarioId);
+            case 'ADVANCE':
+              return transition(state);
+            case 'FINISH': {
+              let finished = state;
+              let guard = 0;
+              while (!finished.verdict && guard < 20) {
+                finished = transition(finished);
+                guard += 1;
+              }
+              return finished;
+            }
+            default:
+              return state;
+          }
+        }
+
+        return {scenarios, initialState, reduce};
+      })();
+
+      const scenarioOrder = ['proof', 'fallback', 'tie', 'capped'];
+      let state = RouteGraphExpansion.initialState(scenarioOrder[0]);
+
+      const elements = {
+        status: document.querySelector('#status'),
+        stateGrid: document.querySelector('#state-grid'),
+        stations: document.querySelector('#stations'),
+        log: document.querySelector('#log'),
+        tabs: document.querySelector('#tabs'),
+        scenario: document.querySelector('#scenario'),
+        advance: document.querySelector('#advance'),
+        finish: document.querySelector('#finish'),
+        reset: document.querySelector('#reset'),
+      };
+
+      function phaseLabel(phase) {
+        return {
+          VOR_DISCOVERY: 'VOR-family discovery',
+          VOR_PROOF: 'VOR-family optimality proof',
+          FALLBACK_DISCOVERY: 'Fallback-NDB discovery',
+          FALLBACK_PROOF: 'Mixed-route optimality proof',
+        }[phase];
+      }
+
+      function render() {
+        const scenario = RouteGraphExpansion.scenarios[state.scenarioId];
+        const cap = scenario.directDistance * 1.5;
+        const discovered = new Set(state.discoveredStationIds);
+
+        elements.status.textContent = state.lastChange;
+        elements.stateGrid.innerHTML = `
+          <div class="datum"><dt>Search phase</dt><dd>${phaseLabel(state.phase)}</dd></div>
+          <div class="datum"><dt>Current query limit</dt><dd>${state.phaseQueryLimit.toFixed(0)} NM lower bound</dd></div>
+          <div class="datum"><dt>Permitted maximum</dt><dd>${cap.toFixed(0)} NM route distance</dd></div>
+          <div class="datum"><dt>Stations loaded</dt><dd>${state.discoveredStationIds.length} of ${scenario.stations.length}</dd></div>
+          <div class="datum wide"><dt>Incumbent route</dt><dd class="route">${
+            state.incumbent
+              ? `${state.incumbent.route.join(' → ')} · ${state.incumbent.distance.toFixed(0)} NM · ${state.incumbent.legCount} legs`
+              : 'None'
+          }</dd></div>
+          <div class="datum wide"><dt>Verdict</dt><dd>${
+            state.verdict === 'ROUTE_PROVEN'
+              ? 'Shortest deterministic route plan proven'
+              : state.verdict === 'NO_ROUTE'
+                ? 'No permitted route plan exists'
+                : 'Not yet proven'
+          }</dd></div>
+        `;
+
+        elements.stations.innerHTML = scenario.stations
+          .map(
+            (station) => `
+              <tr>
+                <td class="route">${station.id}</td>
+                <td>${station.kind === 'Fallback' ? 'NDB fallback' : station.kind}</td>
+                <td>${station.lowerBound.toFixed(0)} NM</td>
+                <td>${discovered.has(station.id) ? 'Loaded' : 'Outside current query'}</td>
+              </tr>`,
+          )
+          .join('');
+
+        elements.log.innerHTML = state.log.map((entry) => `<li>${entry}</li>`).join('');
+        elements.advance.disabled = Boolean(state.verdict);
+        elements.finish.disabled = Boolean(state.verdict);
+
+        elements.tabs.innerHTML = scenarioOrder
+          .map((scenarioId) => {
+            const tabScenario = RouteGraphExpansion.scenarios[scenarioId];
+            return `<button type="button" role="tab" data-scenario="${scenarioId}" aria-selected="${
+              scenarioId === state.scenarioId
+            }">${tabScenario.name}</button>`;
+          })
+          .join('');
+
+        elements.scenario.innerHTML = `
+          <p class="scenario-description">${scenario.description}</p>
+          <div class="steps">
+            <button type="button" data-step="reset">1. Start from the known state</button>
+            <button type="button" data-step="advance">2. Query one candidate window</button>
+            <button type="button" data-step="finish">3. Continue to a proof</button>
+          </div>
+        `;
+
+        elements.log.lastElementChild?.scrollIntoView({block: 'nearest'});
+      }
+
+      function dispatch(action) {
+        state = RouteGraphExpansion.reduce(state, action);
+        render();
+      }
+
+      elements.advance.addEventListener('click', () => dispatch({type: 'ADVANCE'}));
+      elements.finish.addEventListener('click', () => dispatch({type: 'FINISH'}));
+      elements.reset.addEventListener('click', () => dispatch({type: 'RESET'}));
+      elements.tabs.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-scenario]');
+        if (button) dispatch({type: 'RESET', scenarioId: button.dataset.scenario});
+      });
+      elements.scenario.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-step]');
+        if (!button) return;
+        const action = {
+          reset: {type: 'RESET'},
+          advance: {type: 'ADVANCE'},
+          finish: {type: 'FINISH'},
+        }[button.dataset.step];
+        dispatch(action);
+      });
+
+      render();
+    </script>
+  </body>
+</html>
