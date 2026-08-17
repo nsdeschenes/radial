@@ -15,6 +15,9 @@
     "./types": "./src/application/RadialApplicationTypes.ts"
   },
   "scripts": {
+    "acceptance:benchmark": "nub src/acceptance/runRoutePlannerBenchmark.ts",
+    "acceptance:smoke": "nub src/acceptance/checkRoutePlannerSmoke.ts",
+    "acceptance:stress": "vitest run src/acceptance/syntheticStressCorpus.test.ts",
     "dev": "node --watch src/radial.ts",
     "start": "node src/radial.ts",
     "check": "nub run fmt:check && nub run lint && nub run typecheck",
@@ -24,6 +27,8 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "test": "vitest run",
+    "test:acceptance": "vitest run src/acceptance",
+    "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "pre-commit:run": "prek run",
     "pre-commit:install": "prek install"
@@ -35,6 +40,7 @@
   "devDependencies": {
     "@j178/prek": "^0.4.13",
     "@types/node": "^26.1.1",
+    "@vitest/coverage-v8": "4.1.10",
     "msw": "^2.15.0",
     "oxfmt": "^0.59.0",
     "oxlint": "^1.74.0",
