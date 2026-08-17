@@ -1,8 +1,8 @@
-import type {
-  InvalidRequestFailure,
-  PlannerOpenFailure,
-  RoutePlanningFailure,
-} from '#radial/route-planner/index.js';
+import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
+
+type InvalidRequestFailure = RoutePlannerTypes['InvalidRequestFailure'];
+type PlannerOpenFailure = RoutePlannerTypes['PlannerOpenFailure'];
+type RoutePlanningFailure = RoutePlannerTypes['RoutePlanningFailure'];
 
 const USAGE =
   'Usage: radial <departure-icao> <arrival-icao>\n' + 'Example: radial CYYZ CYOW\n';

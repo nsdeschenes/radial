@@ -1,10 +1,11 @@
-import type {
-  InvalidRequestFailure,
-  PlannerOpenFailure,
-  Result,
-  RoutePlannerConfig,
-  RoutePlanningRequest,
-} from '#radial/route-planner/types.js';
+import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
+
+type InvalidRequestFailure = RoutePlannerTypes['InvalidRequestFailure'];
+type PlannerOpenFailure = RoutePlannerTypes['PlannerOpenFailure'];
+type RoutePlannerConfig = RoutePlannerTypes['RoutePlannerConfig'];
+type RoutePlanningRequest = RoutePlannerTypes['RoutePlanningRequest'];
+
+type Result<Value, Failure> = {ok: true; value: Value} | {ok: false; failure: Failure};
 
 type ValidatedPlannerConfig = Readonly<{
   databasePath: string;

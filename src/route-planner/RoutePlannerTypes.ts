@@ -1,5 +1,3 @@
-/* eslint-disable import/no-named-export -- The approved public planner contract requires named types. */
-
 type Coordinates = {
   latitude: number;
   longitude: number;
@@ -32,26 +30,24 @@ type VorGuidance = {
   magneticCourseDeg: number | null;
 };
 
-export type Result<Value, Failure> =
-  | {ok: true; value: Value}
-  | {ok: false; failure: Failure};
+type Result<Value, Failure> = {ok: true; value: Value} | {ok: false; failure: Failure};
 
-export type RoutePlannerConfig = {
+type RoutePlannerConfig = {
   readonly databasePath: string;
   readonly maxRouteFactor?: number;
 };
 
-export type RoutePlanningRequest = {
+type RoutePlanningRequest = {
   departureIcao: string;
   arrivalIcao: string;
 };
 
-export type AirportRoutePoint = RoutePointBase & {
+type AirportRoutePoint = RoutePointBase & {
   kind: 'airport';
   icao: string;
 };
 
-export type VorFamilyRoutePoint = RoutePointBase & {
+type VorFamilyRoutePoint = RoutePointBase & {
   kind: 'vor-family';
   identifier: string;
   family: VorFamily;
@@ -60,16 +56,16 @@ export type VorFamilyRoutePoint = RoutePointBase & {
   facilityVariation: FacilityVariation | null;
 };
 
-export type NdbRoutePoint = RoutePointBase & {
+type NdbRoutePoint = RoutePointBase & {
   kind: 'ndb';
   identifier: string;
   frequency: {unit: 'kHz'; value: number};
   publishedRangeNm: number;
 };
 
-export type RoutePoint = AirportRoutePoint | VorFamilyRoutePoint | NdbRoutePoint;
+type RoutePoint = AirportRoutePoint | VorFamilyRoutePoint | NdbRoutePoint;
 
-export type RouteLeg = {
+type RouteLeg = {
   departure: RoutePoint;
   arrival: RoutePoint;
   distanceNm: number;
@@ -81,7 +77,7 @@ export type RouteLeg = {
   arrivalVorGuidance: VorGuidance | null;
 };
 
-export type RoutePlan = {
+type RoutePlan = {
   totalDistanceNm: number;
   searchMode: 'vor-family' | 'ndb-fallback';
   routePoints: readonly RoutePoint[];
@@ -89,7 +85,7 @@ export type RoutePlan = {
   magneticReference: MagneticReferenceMetadata | null;
 };
 
-export type RoutePlanningWarning =
+type RoutePlanningWarning =
   | {code: 'ndb-fallback-used'}
   | {
       code: 'magnetic-course-unavailable';
@@ -107,12 +103,12 @@ export type RoutePlanningWarning =
       endpoint: 'departure' | 'arrival';
     };
 
-export type RoutePlanningSuccess = {
+type RoutePlanningSuccess = {
   plan: RoutePlan;
   warnings: readonly RoutePlanningWarning[];
 };
 
-export type InvalidRequestFailure = {
+type InvalidRequestFailure = {
   code: 'invalid-request';
   field: 'departureIcao' | 'arrivalIcao';
   reason: 'invalid-icao' | 'identical-airports';
@@ -120,7 +116,7 @@ export type InvalidRequestFailure = {
   normalizedIcao: string;
 };
 
-export type RoutePlanningFailure =
+type RoutePlanningFailure =
   | InvalidRequestFailure
   | {code: 'airport-not-found'; role: 'departure' | 'arrival'; normalizedIcao: string}
   | {code: 'airport-ambiguous'; role: 'departure' | 'arrival'; normalizedIcao: string}
@@ -133,7 +129,7 @@ export type RoutePlanningFailure =
       completedSearchLimits: readonly number[];
     };
 
-export type PlannerOpenFailure =
+type PlannerOpenFailure =
   | {
       code: 'invalid-configuration';
       field: 'databasePath';
@@ -149,9 +145,28 @@ export type PlannerOpenFailure =
   | {code: 'database-unavailable'; databasePath: string}
   | {code: 'database-contract-invalid'; violations: readonly string[]};
 
-export interface RoutePlanner {
+interface RoutePlanner {
   planRoute(
     request: RoutePlanningRequest
   ): Promise<Result<RoutePlanningSuccess, RoutePlanningFailure>>;
   [Symbol.asyncDispose](): Promise<void>;
+}
+
+export default interface RoutePlannerTypes {
+  AirportRoutePoint: AirportRoutePoint;
+  InvalidRequestFailure: InvalidRequestFailure;
+  NdbRoutePoint: NdbRoutePoint;
+  PlannerOpenFailure: PlannerOpenFailure;
+  PlannerOpenResult: Result<RoutePlanner, PlannerOpenFailure>;
+  RouteLeg: RouteLeg;
+  RoutePlan: RoutePlan;
+  RoutePlanner: RoutePlanner;
+  RoutePlannerConfig: RoutePlannerConfig;
+  RoutePlanningFailure: RoutePlanningFailure;
+  RoutePlanningRequest: RoutePlanningRequest;
+  RoutePlanningResult: Result<RoutePlanningSuccess, RoutePlanningFailure>;
+  RoutePlanningSuccess: RoutePlanningSuccess;
+  RoutePlanningWarning: RoutePlanningWarning;
+  RoutePoint: RoutePoint;
+  VorFamilyRoutePoint: VorFamilyRoutePoint;
 }

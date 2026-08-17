@@ -3,15 +3,12 @@ import {stat} from 'node:fs/promises';
 import {DuckDBInstance} from '@duckdb/node-api';
 
 import validation from '#radial/route-planner/internal/validation.js';
-import type {
-  PlannerOpenFailure,
-  Result,
-  RoutePlanner,
-  RoutePlannerConfig,
-  RoutePlanningFailure,
-  RoutePlanningRequest,
-  RoutePlanningSuccess,
-} from '#radial/route-planner/types.js';
+import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
+
+type RoutePlanner = RoutePlannerTypes['RoutePlanner'];
+type RoutePlannerConfig = RoutePlannerTypes['RoutePlannerConfig'];
+type RoutePlanningRequest = RoutePlannerTypes['RoutePlanningRequest'];
+type RoutePlanningResult = RoutePlannerTypes['RoutePlanningResult'];
 
 class DuckDbRoutePlanner implements RoutePlanner {
   readonly #instance: DuckDBInstance;
@@ -21,9 +18,7 @@ class DuckDbRoutePlanner implements RoutePlanner {
     this.#instance = instance;
   }
 
-  async planRoute(
-    request: RoutePlanningRequest
-  ): Promise<Result<RoutePlanningSuccess, RoutePlanningFailure>> {
+  async planRoute(request: RoutePlanningRequest): Promise<RoutePlanningResult> {
     const validatedRequest = validation.validateRoutePlanningRequest(request);
     if (!validatedRequest.ok) {
       return validatedRequest;
@@ -62,7 +57,7 @@ class DuckDbRoutePlanner implements RoutePlanner {
 
 async function openRoutePlanner(
   config: RoutePlannerConfig
-): Promise<Result<RoutePlanner, PlannerOpenFailure>> {
+): Promise<RoutePlannerTypes['PlannerOpenResult']> {
   const validatedConfig = validation.validatePlannerConfig(config);
   if (!validatedConfig.ok) {
     return validatedConfig;

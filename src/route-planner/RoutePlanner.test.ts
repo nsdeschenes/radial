@@ -4,11 +4,7 @@ import {join} from 'node:path';
 
 import {expect, test} from 'vitest';
 
-import * as routePlannerEntryPoint from '#radial/route-planner/index.js';
-
-test('exports only the planner opening function at runtime', () => {
-  expect(Object.keys(routePlannerEntryPoint)).toEqual(['openRoutePlanner']);
-});
+import openRoutePlanner from '#radial/route-planner/RoutePlanner.js';
 
 test.each([
   {
@@ -41,7 +37,7 @@ test.each([
 ])(
   'rejects invalid planner configuration as a structured failure',
   async ({config, failure}) => {
-    await expect(routePlannerEntryPoint.openRoutePlanner(config)).resolves.toEqual({
+    await expect(openRoutePlanner(config)).resolves.toEqual({
       ok: false,
       failure,
     });
@@ -53,7 +49,7 @@ test('rejects a database path that does not identify an existing file', async ()
   const databasePath = join(temporaryDirectory, 'missing.duckdb');
 
   try {
-    const opened = await routePlannerEntryPoint.openRoutePlanner({databasePath});
+    const opened = await openRoutePlanner({databasePath});
 
     if (opened.ok) {
       await opened.value[Symbol.asyncDispose]();
@@ -102,7 +98,7 @@ test.each([
 ])(
   'normalizes and rejects invalid route requests through the public boundary',
   async ({request, failure}) => {
-    const opened = await routePlannerEntryPoint.openRoutePlanner({
+    const opened = await openRoutePlanner({
       databasePath: ':memory:',
     });
     expect(opened.ok).toBe(true);

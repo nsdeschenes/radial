@@ -1,6 +1,6 @@
 import diagnostics from '#radial/cli/formatDiagnostics.js';
-import {openRoutePlanner} from '#radial/route-planner/index.js';
 import validation from '#radial/route-planner/internal/validation.js';
+import openRoutePlanner from '#radial/route-planner/RoutePlanner.js';
 
 type CliIo = {
   writeStdout(text: string): void;

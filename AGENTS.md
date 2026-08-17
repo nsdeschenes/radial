@@ -3,7 +3,7 @@
 For this repo we're using nub to manage packages.
 
 ```bash
-nub index.ts             # run a TypeScript file
+nub script.ts            # run a TypeScript file
 nub install              # install dependencies (pnpm-compatible)
 nub run dev              # run a package.json script
 nubx prisma generate     # run a CLI from node_modules/.bin
@@ -20,6 +20,11 @@ nubx prisma generate     # run a CLI from node_modules/.bin
 | `nub watch`        | `nodemon`, `node --watch`, `tsx watch`     |
 | `nub node`         | `nvm`, `fnm`, `n`, `volta`                 |
 | `nub pm`           | `corepack`                                 |
+
+## TypeScript conventions
+
+- Treat every ESLint and Oxlint rule as a hard constraint. Never add disable comments, ignored files, or configuration exceptions; change the implementation to comply.
+- Give every module a descriptive filename and import it directly. Never create or use `index` files, including barrel files.
 
 ## Where to next [#where-to-next]
 
