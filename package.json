@@ -5,10 +5,14 @@
   "keywords": [],
   "license": "MIT",
   "type": "module",
-  "main": "src/radial.ts",
+  "main": "src/application/RadialApplication.ts",
   "imports": {
     "#fixtures/*.json": "./fixtures/*.json",
     "#radial/*.js": "./src/*.ts"
+  },
+  "exports": {
+    ".": "./src/application/RadialApplication.ts",
+    "./types": "./src/application/RadialApplicationTypes.ts"
   },
   "scripts": {
     "dev": "node --watch src/radial.ts",

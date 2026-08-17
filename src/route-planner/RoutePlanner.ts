@@ -26,9 +26,13 @@ type VorFamilyCandidate = Awaited<
 type VorFamilySearchResult =
   | Readonly<{status: 'route-found'; route: NonNullable<SelectedVorFamilyRoute>}>
   | Readonly<{status: 'exhausted'}>;
-type DatabaseQueryOperation = 'resolve-airports' | 'find-vor-family-route';
+type DatabaseQueryOperation =
+  | 'validate-contract'
+  | 'resolve-airports'
+  | 'find-vor-family-route';
 
 class DuckDbRoutePlanner implements RoutePlanner {
+  readonly #closeInstanceOnDispose: boolean;
   readonly #instance: DuckDBInstance;
   readonly #maxRouteFactor: number;
   readonly #repository: PlannerRepository;
@@ -37,8 +41,10 @@ class DuckDbRoutePlanner implements RoutePlanner {
   constructor(
     instance: DuckDBInstance,
     maxRouteFactor: number,
-    repository: PlannerRepository
+    repository: PlannerRepository,
+    closeInstanceOnDispose: boolean
   ) {
+    this.#closeInstanceOnDispose = closeInstanceOnDispose;
     this.#instance = instance;
     this.#maxRouteFactor = maxRouteFactor;
     this.#repository = repository;
@@ -54,7 +60,12 @@ class DuckDbRoutePlanner implements RoutePlanner {
       throw new Error('Cannot plan a route after the Route Planner has been disposed.');
     }
 
-    return this.#repository.withConnection(async connection => {
+    return this.#repository.withReadTransaction(async connection => {
+      const contract = await validateContract(connection);
+      if (!contract.ok) {
+        return databaseQueryFailed('validate-contract');
+      }
+
       let airportResolution;
       try {
         airportResolution = await this.#repository.resolveAirports(
@@ -185,7 +196,7 @@ class DuckDbRoutePlanner implements RoutePlanner {
             searchMode: 'vor-family',
             routePoints,
             routeLegs,
-            magneticReference: this.#repository.magneticReference,
+            magneticReference: contract.magneticReference,
           },
           warnings: deriveWarnings(routeLegs),
         },
@@ -199,12 +210,15 @@ class DuckDbRoutePlanner implements RoutePlanner {
     }
 
     this.#isDisposed = true;
-    this.#instance.closeSync();
+    if (this.#closeInstanceOnDispose) {
+      this.#instance.closeSync();
+    }
   }
 }
 
 async function openRoutePlanner(
-  config: RoutePlannerConfig
+  config: RoutePlannerConfig,
+  sharedInstance?: () => Promise<DuckDBInstance>
 ): Promise<RoutePlannerTypes['PlannerOpenResult']> {
   const validatedConfig = validation.validatePlannerConfig(config);
   if (!validatedConfig.ok) {
@@ -224,7 +238,10 @@ async function openRoutePlanner(
 
   let instance: DuckDBInstance;
   try {
-    instance = await DuckDBInstance.create(validatedConfig.value.databasePath);
+    instance =
+      sharedInstance === undefined
+        ? await DuckDBInstance.create(validatedConfig.value.databasePath)
+        : await sharedInstance();
   } catch {
     return databaseUnavailable(validatedConfig.value.databasePath);
   }
@@ -259,14 +276,15 @@ async function openRoutePlanner(
       };
     }
 
-    const repository = new PlannerRepository(instance, contract.magneticReference);
+    const repository = new PlannerRepository(instance);
     keepInstanceOpen = true;
     return {
       ok: true,
       value: new DuckDbRoutePlanner(
         instance,
         validatedConfig.value.maxRouteFactor,
-        repository
+        repository,
+        sharedInstance === undefined
       ),
     };
   } catch (error) {
@@ -281,7 +299,7 @@ async function openRoutePlanner(
     };
   } finally {
     connection?.closeSync();
-    if (!keepInstanceOpen) {
+    if (!keepInstanceOpen && sharedInstance === undefined) {
       instance.closeSync();
     }
   }

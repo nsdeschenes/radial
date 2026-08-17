@@ -5,7 +5,6 @@ import type RouteSearchTypes from '#radial/route-planner/internal/RouteSearchTyp
 import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
 
 type AirportRoutePoint = RoutePlannerTypes['AirportRoutePoint'];
-type MagneticReferenceMetadata = RoutePlannerTypes['RoutePlan']['magneticReference'];
 type VorFamilyRoutePoint = RoutePlannerTypes['VorFamilyRoutePoint'];
 type NavaidPairDistance = RouteSearchTypes['NavaidPairDistance'];
 
@@ -24,19 +23,25 @@ const VOR_FAMILIES = ['VOR', 'VOR-DME', 'VORTAC', 'DVOR', 'DVOR-DME', 'DVORTAC']
 
 class PlannerRepository {
   readonly #instance: DuckDBInstance;
-  readonly magneticReference: MagneticReferenceMetadata;
 
-  constructor(instance: DuckDBInstance, magneticReference: MagneticReferenceMetadata) {
+  constructor(instance: DuckDBInstance) {
     this.#instance = instance;
-    this.magneticReference = magneticReference;
   }
 
-  async withConnection<Value>(
+  async withReadTransaction<Value>(
     operation: (connection: DuckDBConnection) => Promise<Value>
   ): Promise<Value> {
     const connection = await this.#instance.connect();
     try {
-      return await operation(connection);
+      await connection.run('BEGIN TRANSACTION');
+      try {
+        const value = await operation(connection);
+        await connection.run('COMMIT');
+        return value;
+      } catch (error) {
+        await connection.run('ROLLBACK');
+        throw error;
+      }
     } finally {
       connection.closeSync();
     }
