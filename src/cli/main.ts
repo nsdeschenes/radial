@@ -1,5 +1,7 @@
 import openRadialApplication from '#radial/application/RadialApplication.js';
 import diagnostics from '#radial/cli/formatDiagnostics.js';
+import formatRoutePlan from '#radial/cli/formatRoutePlan.js';
+import formatRoutePlanningWarnings from '#radial/cli/formatRoutePlanningWarnings.js';
 import validation from '#radial/route-planner/internal/validation.js';
 
 type CliIo = {
@@ -11,9 +13,15 @@ type CliInput = {
   args: readonly string[];
   env: Readonly<Record<string, string | undefined>>;
   io: CliIo;
+  openApplication?: typeof openRadialApplication;
 };
 
-async function runCli({args, env, io}: CliInput): Promise<number> {
+async function runCli({
+  args,
+  env,
+  io,
+  openApplication = openRadialApplication,
+}: CliInput): Promise<number> {
   if (args.length !== 2) {
     io.writeStderr(diagnostics.formatArgumentCountDiagnostic(args.length));
     return 2;
@@ -27,7 +35,7 @@ async function runCli({args, env, io}: CliInput): Promise<number> {
   }
 
   const configuredFactor = env['RADIAL_MAX_ROUTE_FACTOR'];
-  const openedApplication = await openRadialApplication({
+  const openedApplication = await openApplication({
     databasePath: env['RADIAL_DATABASE_PATH'] ?? '',
     ...(configuredFactor === undefined ? {} : {maxRouteFactor: Number(configuredFactor)}),
   });
@@ -51,9 +59,9 @@ async function runCli({args, env, io}: CliInput): Promise<number> {
         return result.failure.code === 'invalid-request' ? 2 : 1;
       }
 
-      throw new Error(
-        'Route Plan presentation is not available in this implementation slice.'
-      );
+      io.writeStdout(formatRoutePlan(result.value.plan));
+      io.writeStderr(formatRoutePlanningWarnings(result.value));
+      return 0;
     } finally {
       await openedPlanner.value[Symbol.asyncDispose]();
     }
