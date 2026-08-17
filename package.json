@@ -5,14 +5,14 @@
   "keywords": [],
   "license": "MIT",
   "type": "module",
-  "main": "src/index.tsx",
+  "main": "src/radial.ts",
   "imports": {
     "#fixtures/*.json": "./fixtures/*.json",
     "#radial/*.js": "./src/*.ts"
   },
   "scripts": {
-    "dev": "node --watch src/index.ts",
-    "start": "node src/index.ts",
+    "dev": "node --watch src/radial.ts",
+    "start": "node src/radial.ts",
     "check": "nub run fmt:check && nub run lint && nub run typecheck",
     "fix": "nub run fmt && nub run lint:fix",
     "fmt": "oxfmt",
