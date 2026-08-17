@@ -167,6 +167,40 @@ test('rejects a partial producer schema without repairing it', async () => {
   }
 });
 
+test('rejects a malformed private producer table without repairing it', async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-producer-table-'));
+  const databasePath = join(temporaryDirectory, 'radial.duckdb');
+  const instance = await DuckDBInstance.create(databasePath);
+
+  try {
+    await initializeProducerSchema(instance);
+    const connection = await instance.connect();
+    await connection.run(`
+      DROP TABLE radial_producer.raw_navaids;
+      CREATE TABLE radial_producer.raw_navaids (legacy_value INTEGER);
+      INSERT INTO radial_producer.raw_navaids VALUES (47);
+    `);
+    connection.closeSync();
+
+    await expect(initializeProducerSchema(instance)).rejects.toThrow(
+      'Producer Schema objects do not match version 1/1/1.'
+    );
+
+    const inspectedConnection = await instance.connect();
+    try {
+      const rows = await inspectedConnection.runAndReadAll(
+        'SELECT * FROM radial_producer.raw_navaids'
+      );
+      expect(rows.getRowObjectsJS()).toEqual([{legacy_value: 47}]);
+    } finally {
+      inspectedConnection.closeSync();
+    }
+  } finally {
+    instance.closeSync();
+    await rm(temporaryDirectory, {recursive: true});
+  }
+});
+
 test('rejects a partial public planner view without repairing it', async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-producer-view-'));
   const databasePath = join(temporaryDirectory, 'radial.duckdb');

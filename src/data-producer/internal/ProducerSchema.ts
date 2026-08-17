@@ -156,6 +156,17 @@ const CURRENT_OBJECTS = [
   'radial_producer.raw_navaids:BASE TABLE',
 ];
 
+const CURRENT_PRIVATE_TABLE_DEFINITIONS = [
+  'cached_airports:CREATE TABLE radial_producer.cached_airports(icao VARCHAR PRIMARY KEY, database_id VARCHAR NOT NULL UNIQUE, "name" VARCHAR NOT NULL, longitude DOUBLE NOT NULL, latitude DOUBLE NOT NULL, canonical_record JSON NOT NULL, record_checksum VARCHAR NOT NULL, source_identity VARCHAR NOT NULL, retrieved_at TIMESTAMP WITH TIME ZONE NOT NULL, published_at TIMESTAMP WITH TIME ZONE NOT NULL);',
+  'facility_variation_audits:CREATE TABLE radial_producer.facility_variation_audits(snapshot_id UUID, source_record_id VARCHAR, outcome VARCHAR NOT NULL, source_identity VARCHAR, PRIMARY KEY(snapshot_id, source_record_id));',
+  'navaid_exclusions:CREATE TABLE radial_producer.navaid_exclusions(snapshot_id UUID, source_record_id VARCHAR, reason VARCHAR NOT NULL, PRIMARY KEY(snapshot_id, source_record_id));',
+  'navaid_snapshots:CREATE TABLE radial_producer.navaid_snapshots(snapshot_id UUID PRIMARY KEY, snapshot_checksum VARCHAR NOT NULL UNIQUE, retrieved_at TIMESTAMP WITH TIME ZONE NOT NULL, published_at TIMESTAMP WITH TIME ZONE NOT NULL, source_identity VARCHAR NOT NULL, magnetic_model VARCHAR NOT NULL, magnetic_model_version VARCHAR NOT NULL, magnetic_model_epoch_year DOUBLE NOT NULL, magnetic_reference_date DATE NOT NULL, magnetic_model_source VARCHAR NOT NULL);',
+  'planner_airports:CREATE TABLE radial_producer.planner_airports(snapshot_id UUID, icao VARCHAR, database_id VARCHAR NOT NULL, "name" VARCHAR NOT NULL, longitude DOUBLE NOT NULL, latitude DOUBLE NOT NULL, magnetic_declination_deg_east DOUBLE, PRIMARY KEY(snapshot_id, icao));',
+  'planner_navaids:CREATE TABLE radial_producer.planner_navaids(snapshot_id UUID, database_id VARCHAR, source_record_id VARCHAR NOT NULL, identifier VARCHAR NOT NULL, "name" VARCHAR NOT NULL, "family" VARCHAR NOT NULL, longitude DOUBLE NOT NULL, latitude DOUBLE NOT NULL, frequency_value DOUBLE NOT NULL, frequency_unit VARCHAR NOT NULL, published_range_nm DOUBLE NOT NULL, magnetic_declination_deg_east DOUBLE, facility_variation_deg_east DOUBLE, facility_variation_source VARCHAR, facility_variation_effective_date DATE, PRIMARY KEY(snapshot_id, database_id));',
+  'producer_state:CREATE TABLE radial_producer.producer_state(singleton BOOLEAN PRIMARY KEY, producer_schema_version INTEGER NOT NULL, planner_contract_version INTEGER NOT NULL, checksum_manifest_version INTEGER NOT NULL, active_navaid_snapshot_id UUID, CHECK(singleton), CHECK((producer_schema_version > 0)), CHECK((planner_contract_version > 0)), CHECK((checksum_manifest_version > 0)));',
+  'raw_navaids:CREATE TABLE radial_producer.raw_navaids(snapshot_id UUID, source_record_id VARCHAR, canonical_record JSON NOT NULL, record_checksum VARCHAR NOT NULL, PRIMARY KEY(snapshot_id, source_record_id));',
+];
+
 const CURRENT_PUBLIC_VIEW_DEFINITIONS = [
   'planner_airports:CREATE VIEW planner_airports AS SELECT airports.snapshot_id, airports.database_id, airports.icao, airports."name", airports.longitude, airports.latitude, st_point(airports.longitude, airports.latitude) AS point, airports.magnetic_declination_deg_east FROM radial_producer.planner_airports AS airports INNER JOIN radial_producer.producer_state AS state ON ((state.singleton AND (airports.snapshot_id = state.active_navaid_snapshot_id)));',
   'planner_metadata:CREATE VIEW planner_metadata AS SELECT snapshots.snapshot_id, snapshots.snapshot_checksum, snapshots.magnetic_model, snapshots.magnetic_model_version, snapshots.magnetic_model_epoch_year, snapshots.magnetic_reference_date, snapshots.magnetic_model_source FROM radial_producer.navaid_snapshots AS snapshots INNER JOIN radial_producer.producer_state AS state ON ((state.singleton AND (snapshots.snapshot_id = state.active_navaid_snapshot_id)));',
@@ -260,6 +271,24 @@ async function hasCurrentObjects(
       )
       .join('\n') === CURRENT_OBJECTS.join('\n');
   if (!objectManifestMatches) {
+    return false;
+  }
+
+  const tables = await connection.runAndReadAll(`
+    SELECT table_name, sql
+    FROM duckdb_tables()
+    WHERE schema_name = 'radial_producer'
+    ORDER BY table_name
+  `);
+  const privateDefinitionsMatch =
+    tables
+      .getRowObjectsJS()
+      .map(
+        table =>
+          `${readCatalogString(table, 'table_name')}:${readCatalogString(table, 'sql')}`
+      )
+      .join('\n') === CURRENT_PRIVATE_TABLE_DEFINITIONS.join('\n');
+  if (!privateDefinitionsMatch) {
     return false;
   }
 
