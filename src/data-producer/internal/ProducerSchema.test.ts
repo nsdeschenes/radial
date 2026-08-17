@@ -37,6 +37,15 @@ test('initializes versioned producer storage and three empty planner views', asy
         },
       ]);
 
+      const publicationTimestampColumn = await connection.runAndReadAll(`
+        SELECT is_nullable
+        FROM information_schema.columns
+        WHERE table_schema = 'radial_producer'
+          AND table_name = 'navaid_snapshots'
+          AND column_name = 'published_at'
+      `);
+      expect(publicationTimestampColumn.getRowObjectsJS()).toEqual([{is_nullable: 'NO'}]);
+
       const privateTables = await connection.runAndReadAll(`
         SELECT table_name
         FROM information_schema.tables

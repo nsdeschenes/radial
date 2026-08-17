@@ -13,15 +13,27 @@ const INITIAL_SCHEMA_SQL = `
 
   CREATE TABLE radial_producer.navaid_snapshots (
     snapshot_id UUID PRIMARY KEY,
-    snapshot_checksum VARCHAR NOT NULL UNIQUE,
+    snapshot_checksum VARCHAR NOT NULL,
+    raw_navaids_checksum VARCHAR NOT NULL,
+    planner_navaids_checksum VARCHAR NOT NULL,
+    exclusions_checksum VARCHAR NOT NULL,
+    facility_variation_audits_checksum VARCHAR NOT NULL,
     retrieved_at TIMESTAMPTZ NOT NULL,
+    retrieval_completed_at TIMESTAMPTZ NOT NULL,
     published_at TIMESTAMPTZ NOT NULL,
     source_identity VARCHAR NOT NULL,
+    derivation_policy_identity VARCHAR NOT NULL,
+    matching_policy_identity VARCHAR NOT NULL,
+    raw_navaid_count INTEGER NOT NULL CHECK (raw_navaid_count >= 0),
+    planner_navaid_count INTEGER NOT NULL CHECK (planner_navaid_count >= 0),
+    exclusion_count INTEGER NOT NULL CHECK (exclusion_count >= 0),
     magnetic_model VARCHAR NOT NULL,
     magnetic_model_version VARCHAR NOT NULL,
     magnetic_model_epoch_year DOUBLE NOT NULL,
     magnetic_reference_date DATE NOT NULL,
-    magnetic_model_source VARCHAR NOT NULL
+    magnetic_model_source VARCHAR NOT NULL,
+    magnetic_model_checksum VARCHAR NOT NULL,
+    CHECK (planner_navaid_count + exclusion_count = raw_navaid_count)
   );
 
   CREATE TABLE radial_producer.raw_navaids (
@@ -39,29 +51,44 @@ const INITIAL_SCHEMA_SQL = `
     identifier VARCHAR NOT NULL,
     name VARCHAR NOT NULL,
     family VARCHAR NOT NULL,
-    longitude DOUBLE NOT NULL,
-    latitude DOUBLE NOT NULL,
-    frequency_value DOUBLE NOT NULL,
-    frequency_unit VARCHAR NOT NULL,
-    published_range_nm DOUBLE NOT NULL,
+    longitude DOUBLE NOT NULL CHECK (isfinite(longitude) AND longitude BETWEEN -180 AND 180),
+    latitude DOUBLE NOT NULL CHECK (isfinite(latitude) AND latitude BETWEEN -90 AND 90),
+    frequency_value DOUBLE NOT NULL CHECK (isfinite(frequency_value) AND frequency_value > 0),
+    frequency_unit VARCHAR NOT NULL CHECK (frequency_unit IN ('kHz', 'MHz')),
+    published_range_nm DOUBLE NOT NULL CHECK (isfinite(published_range_nm) AND published_range_nm > 0),
     magnetic_declination_deg_east DOUBLE,
     facility_variation_deg_east DOUBLE,
     facility_variation_source VARCHAR,
     facility_variation_effective_date DATE,
-    PRIMARY KEY (snapshot_id, database_id)
+    PRIMARY KEY (snapshot_id, database_id),
+    UNIQUE (snapshot_id, source_record_id),
+    CHECK (family IN ('NDB', 'VOR', 'VOR-DME', 'VORTAC', 'DVOR', 'DVOR-DME', 'DVORTAC')),
+    CHECK (magnetic_declination_deg_east IS NULL OR
+      (isfinite(magnetic_declination_deg_east) AND
+       magnetic_declination_deg_east >= -180 AND magnetic_declination_deg_east < 180)),
+    CHECK ((facility_variation_deg_east IS NULL AND facility_variation_source IS NULL AND
+      facility_variation_effective_date IS NULL) OR
+      (facility_variation_deg_east IS NOT NULL AND isfinite(facility_variation_deg_east) AND
+       facility_variation_deg_east >= -180 AND facility_variation_deg_east < 180 AND
+       facility_variation_source IS NOT NULL AND facility_variation_effective_date IS NOT NULL))
   );
 
   CREATE TABLE radial_producer.navaid_exclusions (
     snapshot_id UUID NOT NULL,
     source_record_id VARCHAR NOT NULL,
-    reason VARCHAR NOT NULL,
+    reason VARCHAR NOT NULL CHECK (reason IN (
+      'missing-stable-identity', 'unsupported-navaid-type', 'invalid-coordinates',
+      'missing-identifier', 'invalid-frequency', 'invalid-published-range'
+    )),
     PRIMARY KEY (snapshot_id, source_record_id)
   );
 
   CREATE TABLE radial_producer.facility_variation_audits (
     snapshot_id UUID NOT NULL,
     source_record_id VARCHAR NOT NULL,
-    outcome VARCHAR NOT NULL,
+    outcome VARCHAR NOT NULL CHECK (outcome IN (
+      'matched', 'outside-source-coverage', 'no-unique-match', 'unusable-source-value'
+    )),
     source_identity VARCHAR,
     PRIMARY KEY (snapshot_id, source_record_id)
   );
@@ -70,8 +97,8 @@ const INITIAL_SCHEMA_SQL = `
     icao VARCHAR PRIMARY KEY,
     database_id VARCHAR NOT NULL UNIQUE,
     name VARCHAR NOT NULL,
-    longitude DOUBLE NOT NULL,
-    latitude DOUBLE NOT NULL,
+    longitude DOUBLE NOT NULL CHECK (isfinite(longitude) AND longitude BETWEEN -180 AND 180),
+    latitude DOUBLE NOT NULL CHECK (isfinite(latitude) AND latitude BETWEEN -90 AND 90),
     canonical_record JSON NOT NULL,
     record_checksum VARCHAR NOT NULL,
     source_identity VARCHAR NOT NULL,
@@ -84,8 +111,8 @@ const INITIAL_SCHEMA_SQL = `
     icao VARCHAR NOT NULL,
     database_id VARCHAR NOT NULL,
     name VARCHAR NOT NULL,
-    longitude DOUBLE NOT NULL,
-    latitude DOUBLE NOT NULL,
+    longitude DOUBLE NOT NULL CHECK (isfinite(longitude) AND longitude BETWEEN -180 AND 180),
+    latitude DOUBLE NOT NULL CHECK (isfinite(latitude) AND latitude BETWEEN -90 AND 90),
     magnetic_declination_deg_east DOUBLE,
     PRIMARY KEY (snapshot_id, icao)
   );
