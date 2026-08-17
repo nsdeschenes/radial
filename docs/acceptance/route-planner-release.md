@@ -37,7 +37,7 @@ baseline's checksum, route, machine, timing, or output values.
 3. Run `RP-REAL-SMOKE`:
 
    ```bash
-   nub run acceptance:smoke -- <baseline.json> <planner.duckdb>
+   nub run acceptance:smoke <baseline.json> <planner.duckdb>
    ```
 
    The CLI checksum preserves channel boundaries by hashing the JSON encoding of
@@ -48,7 +48,7 @@ baseline's checksum, route, machine, timing, or output values.
 
    ```bash
    RADIAL_BENCHMARK_MACHINE_ID=<id> \
-     nub run acceptance:benchmark -- <baseline.json> <planner.duckdb>
+     nub run acceptance:benchmark <baseline.json> <planner.duckdb>
    ```
 
    The command opens one planner, performs one warm-up, then times five sequential
