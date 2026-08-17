@@ -65,7 +65,7 @@ jobs:
         run: nub run typecheck
 
   test:
-    name: Test
+    name: Deterministic acceptance evidence
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -79,5 +79,27 @@ jobs:
       - name: Install dependencies
         run: nub install --frozen-lockfile
 
-      - name: Test
+      - name: Run acceptance tooling evidence
+        run: nub run test:acceptance
+
+      - name: Run complete deterministic test suite
         run: nub run test
+
+  coverage:
+    name: Diagnostic coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Nub
+        uses: nubjs/setup-nub@v0
+
+      - name: Install dependencies
+        run: nub install --frozen-lockfile
+
+      - name: Report percentage coverage without an acceptance threshold
+        run: nub run test:coverage
