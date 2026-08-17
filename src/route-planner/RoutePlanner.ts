@@ -2,20 +2,36 @@ import {stat} from 'node:fs/promises';
 
 import {DuckDBInstance} from '@duckdb/node-api';
 
+import coverage from '#radial/route-planner/internal/coverage.js';
+import validateContract from '#radial/route-planner/internal/duckdb/contract.js';
+import PlannerRepository from '#radial/route-planner/internal/duckdb/repository.js';
+import navigation from '#radial/route-planner/internal/navigation.js';
 import validation from '#radial/route-planner/internal/validation.js';
+import deriveWarnings from '#radial/route-planner/internal/warnings.js';
 import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
 
+type AirportRoutePoint = RoutePlannerTypes['AirportRoutePoint'];
 type RoutePlanner = RoutePlannerTypes['RoutePlanner'];
 type RoutePlannerConfig = RoutePlannerTypes['RoutePlannerConfig'];
+type RoutePlanningFailure = RoutePlannerTypes['RoutePlanningFailure'];
 type RoutePlanningRequest = RoutePlannerTypes['RoutePlanningRequest'];
 type RoutePlanningResult = RoutePlannerTypes['RoutePlanningResult'];
+type DatabaseQueryOperation = 'resolve-airports' | 'find-vor-family-route';
 
 class DuckDbRoutePlanner implements RoutePlanner {
   readonly #instance: DuckDBInstance;
+  readonly #maxRouteFactor: number;
+  readonly #repository: PlannerRepository;
   #isDisposed = false;
 
-  constructor(instance: DuckDBInstance) {
+  constructor(
+    instance: DuckDBInstance,
+    maxRouteFactor: number,
+    repository: PlannerRepository
+  ) {
     this.#instance = instance;
+    this.#maxRouteFactor = maxRouteFactor;
+    this.#repository = repository;
   }
 
   async planRoute(request: RoutePlanningRequest): Promise<RoutePlanningResult> {
@@ -28,21 +44,120 @@ class DuckDbRoutePlanner implements RoutePlanner {
       throw new Error('Cannot plan a route after the Route Planner has been disposed.');
     }
 
-    const connection = await this.#instance.connect();
-    try {
-      await connection.run('SELECT 1 FROM planner_airports LIMIT 0');
-    } catch {
-      return {
-        ok: false,
-        failure: {code: 'database-query-failed', operation: 'resolve-airports'},
-      };
-    } finally {
-      connection.closeSync();
-    }
+    return this.#repository.withConnection(async connection => {
+      let airportResolution;
+      try {
+        airportResolution = await this.#repository.resolveAirports(
+          connection,
+          validatedRequest.value.departureIcao,
+          validatedRequest.value.arrivalIcao
+        );
+      } catch {
+        return databaseQueryFailed('resolve-airports');
+      }
 
-    throw new Error(
-      'Route search is not available until the planner-ready adapter is installed.'
-    );
+      const departure = resolveAirport(
+        airportResolution.departure,
+        'departure',
+        validatedRequest.value.departureIcao
+      );
+      if (!departure.ok) {
+        return departure;
+      }
+      const arrival = resolveAirport(
+        airportResolution.arrival,
+        'arrival',
+        validatedRequest.value.arrivalIcao
+      );
+      if (!arrival.ok) {
+        return arrival;
+      }
+
+      let directDistanceNm: number;
+      let candidates: Awaited<ReturnType<PlannerRepository['findVorCandidates']>>;
+      try {
+        directDistanceNm = await this.#repository.directDistanceNm(
+          connection,
+          departure.value,
+          arrival.value
+        );
+        candidates = await this.#repository.findVorCandidates(
+          connection,
+          departure.value,
+          arrival.value
+        );
+      } catch {
+        return databaseQueryFailed('find-vor-family-route');
+      }
+
+      const selectedCandidate = candidates
+        .filter(
+          candidate =>
+            coverage.isAirportToNavaidNavigable(
+              candidate.departureDistanceNm,
+              candidate.routePoint.publishedRangeNm
+            ) &&
+            coverage.isAirportToNavaidNavigable(
+              candidate.arrivalDistanceNm,
+              candidate.routePoint.publishedRangeNm
+            ) &&
+            candidate.departureDistanceNm + candidate.arrivalDistanceNm <=
+              directDistanceNm * this.#maxRouteFactor
+        )
+        .toSorted(
+          (first, second) =>
+            first.departureDistanceNm +
+              first.arrivalDistanceNm -
+              (second.departureDistanceNm + second.arrivalDistanceNm) ||
+            first.routePoint.identifier.localeCompare(second.routePoint.identifier) ||
+            first.routePoint.databaseId.localeCompare(second.routePoint.databaseId)
+        )[0];
+
+      if (selectedCandidate === undefined) {
+        return {
+          ok: false,
+          failure: {
+            code: 'no-route',
+            departureIcao: validatedRequest.value.departureIcao,
+            arrivalIcao: validatedRequest.value.arrivalIcao,
+            maxRouteFactor: this.#maxRouteFactor,
+            completedSearchLimits: completedSearchLimits(this.#maxRouteFactor),
+          },
+        };
+      }
+
+      const routePoints = [
+        departure.value,
+        selectedCandidate.routePoint,
+        arrival.value,
+      ] as const;
+      const routeLegs = [
+        navigation.createRouteLeg(
+          departure.value,
+          selectedCandidate.routePoint,
+          selectedCandidate.departureDistanceNm
+        ),
+        navigation.createRouteLeg(
+          selectedCandidate.routePoint,
+          arrival.value,
+          selectedCandidate.arrivalDistanceNm
+        ),
+      ] as const;
+
+      return {
+        ok: true,
+        value: {
+          plan: {
+            totalDistanceNm: routeLegs[0].distanceNm + routeLegs[1].distanceNm,
+            searchMode: 'vor-family',
+            routePoints,
+            routeLegs,
+            magneticReference: this.#repository.magneticReference,
+          },
+          warnings: deriveWarnings(routeLegs),
+        },
+      };
+    });
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
@@ -63,19 +178,113 @@ async function openRoutePlanner(
     return validatedConfig;
   }
 
-  try {
-    if (validatedConfig.value.databasePath !== ':memory:') {
+  if (validatedConfig.value.databasePath !== ':memory:') {
+    try {
       const databaseFile = await stat(validatedConfig.value.databasePath);
       if (!databaseFile.isFile()) {
         return databaseUnavailable(validatedConfig.value.databasePath);
       }
+    } catch {
+      return databaseUnavailable(validatedConfig.value.databasePath);
     }
+  }
 
-    const instance = await DuckDBInstance.create(validatedConfig.value.databasePath);
-    return {ok: true, value: new DuckDbRoutePlanner(instance)};
+  let instance: DuckDBInstance;
+  try {
+    instance = await DuckDBInstance.create(validatedConfig.value.databasePath);
   } catch {
     return databaseUnavailable(validatedConfig.value.databasePath);
   }
+
+  let connection: Awaited<ReturnType<DuckDBInstance['connect']>> | undefined;
+  let keepInstanceOpen = false;
+  try {
+    connection = await instance.connect();
+    await connection.run('LOAD spatial');
+    await connection.run('SET geometry_always_xy = true');
+    const spatialProbe = await connection.runAndReadAll(`
+      SELECT
+        (SELECT loaded FROM duckdb_extensions()
+          WHERE extension_name = 'spatial') AS loaded,
+        ST_Distance_Sphere(ST_Point(0, 0), ST_Point(0, 1)) AS distance_metres
+    `);
+    const probe = spatialProbe.getRowObjectsJS()[0];
+    if (
+      probe?.['loaded'] !== true ||
+      typeof probe['distance_metres'] !== 'number' ||
+      !Number.isFinite(probe['distance_metres']) ||
+      probe['distance_metres'] <= 0
+    ) {
+      throw new Error('DuckDB Spatial validation failed.');
+    }
+
+    const contract = await validateContract(connection);
+    if (!contract.ok) {
+      return {
+        ok: false,
+        failure: {code: 'database-contract-invalid', violations: contract.violations},
+      };
+    }
+
+    const repository = new PlannerRepository(instance, contract.magneticReference);
+    keepInstanceOpen = true;
+    return {
+      ok: true,
+      value: new DuckDbRoutePlanner(
+        instance,
+        validatedConfig.value.maxRouteFactor,
+        repository
+      ),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      failure: {
+        code: 'database-contract-invalid',
+        violations: [
+          error instanceof Error ? error.message : 'Database validation failed',
+        ],
+      },
+    };
+  } finally {
+    connection?.closeSync();
+    if (!keepInstanceOpen) {
+      instance.closeSync();
+    }
+  }
+}
+
+function resolveAirport(
+  matches: readonly AirportRoutePoint[],
+  role: 'departure' | 'arrival',
+  normalizedIcao: string
+): {ok: true; value: AirportRoutePoint} | {ok: false; failure: RoutePlanningFailure} {
+  if (matches.length === 0) {
+    return {ok: false, failure: {code: 'airport-not-found', role, normalizedIcao}};
+  }
+  if (matches.length > 1) {
+    return {ok: false, failure: {code: 'airport-ambiguous', role, normalizedIcao}};
+  }
+
+  const airport = matches[0];
+  if (airport === undefined) {
+    throw new Error('Airport resolution invariant failed.');
+  }
+  return {ok: true, value: airport};
+}
+
+function databaseQueryFailed(operation: DatabaseQueryOperation): RoutePlanningResult {
+  return {ok: false, failure: {code: 'database-query-failed', operation}};
+}
+
+function completedSearchLimits(maxRouteFactor: number): readonly number[] {
+  return [
+    ...new Set([
+      Math.min(1.1, maxRouteFactor),
+      Math.min(1.25, maxRouteFactor),
+      maxRouteFactor,
+    ]),
+  ];
 }
 
 function databaseUnavailable(databasePath: string) {

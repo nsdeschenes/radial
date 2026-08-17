@@ -132,7 +132,7 @@ test('reports an unavailable database on stderr and exits 1', async () => {
   }
 });
 
-test('delegates a valid request to the planner and reports query failures on stderr', async () => {
+test('reports an invalid planner-ready database contract on stderr', async () => {
   const capture = captureOutput();
 
   const exitCode = await runCli({
@@ -144,6 +144,6 @@ test('delegates a valid request to the planner and reports query failures on std
   expect(exitCode).toBe(1);
   expect(capture.output()).toEqual({
     stdout: '',
-    stderr: 'Unable to plan route: the airport lookup query failed.\n',
+    stderr: 'Unable to initialize Route Planner: the database contract is invalid.\n',
   });
 });
