@@ -28,6 +28,16 @@ test.each([
     expectedViolation:
       'planner_metadata magnetic reference bundle must be all null or complete',
   },
+  {
+    name: 'non-finite magnetic model epoch',
+    metadata: [
+      {
+        ...completeMetadata(),
+        magneticModelEpochYear: Number.POSITIVE_INFINITY,
+      },
+    ],
+    expectedViolation: 'planner_metadata magnetic reference bundle is invalid',
+  },
 ])('rejects $name before route search', async ({metadata, expectedViolation}) => {
   await using database = await syntheticPlannerDatabase.create({metadata});
 
@@ -138,6 +148,154 @@ test('rejects non-finite Navaid coordinates as invalid geometry before route sea
   });
 });
 
+test.each([
+  {referenceDate: '2025-07-03', opens: true},
+  {referenceDate: '2030-07-03', opens: false},
+])(
+  'validates reference date $referenceDate against a fractional magnetic-model epoch',
+  async ({referenceDate, opens}) => {
+    await using database = await syntheticPlannerDatabase.create({
+      metadata: [
+        {
+          magneticModel: 'SYNTHETIC',
+          magneticModelVersion: '2025.5',
+          magneticModelEpochYear: 2025.5,
+          magneticReferenceDate: referenceDate,
+          magneticModelSource: 'https://example.test/magnetic-model',
+        },
+      ],
+    });
+
+    const result = await openRoutePlanner({databasePath: database.databasePath});
+    if (opens) {
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        await result.value[Symbol.asyncDispose]();
+      }
+    } else {
+      expect(result).toEqual({
+        ok: false,
+        failure: {
+          code: 'database-contract-invalid',
+          violations: [
+            'planner_metadata reference date is outside the model validity period',
+          ],
+        },
+      });
+    }
+  }
+);
+
+test('requires complete magnetic metadata when any Local Magnetic Declination exists', async () => {
+  await using database = await syntheticPlannerDatabase.create({
+    airports: [
+      {
+        databaseId: 'airport',
+        icao: 'AAAA',
+        name: 'Airport',
+        longitude: 0,
+        latitude: 0,
+        magneticDeclinationDegEast: 1,
+      },
+    ],
+  });
+
+  await expect(openRoutePlanner({databasePath: database.databasePath})).resolves.toEqual({
+    ok: false,
+    failure: {
+      code: 'database-contract-invalid',
+      violations: ['local magnetic declination requires complete planner_metadata'],
+    },
+  });
+});
+
+test.each([
+  {
+    name: 'unnormalized Local Magnetic Declination',
+    magneticDeclinationDegEast: 180,
+    facilityVariationDegEast: null,
+    facilityVariationSource: null,
+    family: 'VOR',
+    violation: 'planner data contains an invalid Local Magnetic Declination',
+  },
+  {
+    name: 'non-finite Local Magnetic Declination',
+    magneticDeclinationDegEast: Number.POSITIVE_INFINITY,
+    facilityVariationDegEast: null,
+    facilityVariationSource: null,
+    family: 'VOR',
+    violation: 'planner data contains an invalid Local Magnetic Declination',
+  },
+  {
+    name: 'Facility Variation of Record without a source',
+    magneticDeclinationDegEast: null,
+    facilityVariationDegEast: 3,
+    facilityVariationSource: null,
+    family: 'VOR',
+    violation: 'planner_navaids contains invalid Facility Variation of Record data',
+  },
+  {
+    name: 'non-finite Facility Variation of Record',
+    magneticDeclinationDegEast: null,
+    facilityVariationDegEast: Number.NEGATIVE_INFINITY,
+    facilityVariationSource: 'Synthetic record',
+    family: 'VOR',
+    violation: 'planner_navaids contains invalid Facility Variation of Record data',
+  },
+  {
+    name: 'Facility Variation source without a variation',
+    magneticDeclinationDegEast: null,
+    facilityVariationDegEast: null,
+    facilityVariationSource: 'Synthetic record',
+    family: 'VOR',
+    violation: 'planner_navaids contains invalid Facility Variation of Record data',
+  },
+  {
+    name: 'Facility Variation of Record on an NDB',
+    magneticDeclinationDegEast: null,
+    facilityVariationDegEast: 3,
+    facilityVariationSource: 'Synthetic record',
+    family: 'NDB',
+    violation: 'planner_navaids contains invalid Facility Variation of Record data',
+  },
+])(
+  'rejects $name before route search',
+  async ({
+    magneticDeclinationDegEast,
+    facilityVariationDegEast,
+    facilityVariationSource,
+    family,
+    violation,
+  }) => {
+    await using database = await syntheticPlannerDatabase.create({
+      navaids: [
+        {
+          databaseId: 'navaid',
+          identifier: 'TEST',
+          name: 'Test Navaid',
+          family,
+          longitude: 0,
+          latitude: 0,
+          frequencyValue: family === 'NDB' ? 365 : 113,
+          frequencyUnit: family === 'NDB' ? 'kHz' : 'MHz',
+          publishedRangeNm: 40,
+          magneticDeclinationDegEast,
+          facilityVariationDegEast,
+          facilityVariationSource,
+        },
+      ],
+      metadata: [completeMetadata()],
+    });
+
+    await expect(
+      openRoutePlanner({databasePath: database.databasePath})
+    ).resolves.toEqual({
+      ok: false,
+      failure: {code: 'database-contract-invalid', violations: [violation]},
+    });
+  }
+);
+
 function nullMetadata() {
   return {
     magneticModel: null,
@@ -145,5 +303,15 @@ function nullMetadata() {
     magneticModelEpochYear: null,
     magneticReferenceDate: null,
     magneticModelSource: null,
+  } as const;
+}
+
+function completeMetadata() {
+  return {
+    magneticModel: 'WMM',
+    magneticModelVersion: 'WMM2025',
+    magneticModelEpochYear: 2025,
+    magneticReferenceDate: '2025-01-01',
+    magneticModelSource: 'https://example.test/wmm2025',
   } as const;
 }

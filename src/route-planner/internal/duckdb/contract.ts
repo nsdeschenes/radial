@@ -148,7 +148,7 @@ async function validateContract(
     ) {
       violations.push('planner_metadata magnetic reference bundle is invalid');
     } else {
-      const referenceYear = Number(referenceDate.slice(0, 4));
+      const referenceYear = dateToDecimalYear(referenceDate);
       if (referenceYear < epochYear || referenceYear >= epochYear + 5) {
         violations.push(
           'planner_metadata reference date is outside the model validity period'
@@ -257,6 +257,15 @@ async function validateMagneticAngles(
 async function queryBoolean(connection: DuckDBConnection, sql: string): Promise<boolean> {
   const reader = await connection.runAndReadAll(sql);
   return reader.getRowObjectsJS()[0]?.['value'] === true;
+}
+
+function dateToDecimalYear(date: string): number {
+  const instant = new Date(`${date}T00:00:00Z`).getTime();
+  const year = Number(date.slice(0, 4));
+  const yearStart = Date.UTC(year, 0, 1);
+  const nextYearStart = Date.UTC(year + 1, 0, 1);
+
+  return year + (instant - yearStart) / (nextYearStart - yearStart);
 }
 
 function requireString(value: unknown): string {
