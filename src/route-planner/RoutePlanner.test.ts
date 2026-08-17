@@ -264,6 +264,116 @@ test('discovers a VOR-family candidate across the antimeridian', async () => {
   ]);
 });
 
+test('keeps the completed VOR-family Route Plan when an NDB Route Plan would be shorter', async () => {
+  const airports = [
+    syntheticAirport('departure', 'AAAA', 0),
+    syntheticAirport('arrival', 'BBBB', 4),
+  ];
+  const vorFamilyNavaids = [
+    syntheticNavaid('vor-first', 'VOR-A', 'VOR', 1, 100, 1),
+    syntheticNavaid('vor-second', 'VOR-B', 'VOR', 3, 100, 1),
+  ];
+  const ndb = syntheticNdb('ndb-shortcut', 'NDB', 2, 125);
+
+  const resultWithoutNdb = await planSyntheticRoute({
+    airports,
+    navaids: vorFamilyNavaids,
+  });
+  const resultWithNdb = await planSyntheticRoute({
+    airports,
+    navaids: [...vorFamilyNavaids, ndb],
+  });
+  const ndbOnlyResult = await planSyntheticRoute({airports, navaids: [ndb]});
+
+  expect(resultWithNdb).toEqual(resultWithoutNdb);
+  if (!resultWithNdb.ok) {
+    throw new Error(`Expected the VOR-family Route Plan: ${resultWithNdb.failure.code}`);
+  }
+  if (!ndbOnlyResult.ok) {
+    throw new Error(`Expected the shorter NDB Route Plan: ${ndbOnlyResult.failure.code}`);
+  }
+  expect(ndbOnlyResult.value.plan.totalDistanceNm).toBeLessThan(
+    resultWithNdb.value.plan.totalDistanceNm
+  );
+  expect(resultWithNdb.value.plan.searchMode).toBe('vor-family');
+  expect(
+    resultWithNdb.value.plan.routePoints.map(routePoint => routePoint.databaseId)
+  ).toEqual(['departure', 'vor-first', 'vor-second', 'arrival']);
+});
+
+test('returns a successful NDB-fallback Route Plan only after VOR-family exhaustion', async () => {
+  const result = await planSyntheticRoute({
+    airports: [
+      syntheticAirport('departure', 'AAAA', 0),
+      syntheticAirport('arrival', 'BBBB', 4),
+    ],
+    navaids: [
+      syntheticNdb('ndb-first', 'NDB-A', 1, 90, 1),
+      syntheticNdb('ndb-second', 'NDB-B', 3, 90, 1),
+    ],
+  });
+
+  if (!result.ok) {
+    throw new Error(`Expected an NDB-fallback Route Plan: ${result.failure.code}`);
+  }
+  expect(result.value.plan.searchMode).toBe('ndb-fallback');
+  expect(result.value.plan.routePoints.map(routePoint => routePoint.databaseId)).toEqual([
+    'departure',
+    'ndb-first',
+    'ndb-second',
+    'arrival',
+  ]);
+  expect(result.value.plan.routePoints.slice(1, -1)).toEqual([
+    expect.objectContaining({
+      kind: 'ndb',
+      identifier: 'NDB-A',
+      frequency: {unit: 'kHz', value: 365},
+    }),
+    expect.objectContaining({
+      kind: 'ndb',
+      identifier: 'NDB-B',
+      frequency: {unit: 'kHz', value: 365},
+    }),
+  ]);
+  expect(result.value.warnings).toContainEqual({code: 'ndb-fallback-used'});
+});
+
+test('selects the same stable mixed-family Route Plan for ten database row permutations', async () => {
+  const oneDegreeNm = 111_194.926_644_558_74 / 1_852;
+  const airports = [
+    syntheticAirport('departure', 'AAAA', 0),
+    syntheticAirport('arrival', 'BBBB', 4),
+  ];
+  const navaids = [
+    syntheticNavaid('vor', 'VOR', 'VOR', 1, oneDegreeNm + 1),
+    syntheticNdb('ndb-z', 'SAME', 3, oneDegreeNm + 1),
+    syntheticNdb('ndb-a', 'SAME', 3, oneDegreeNm + 1),
+  ];
+  let expected:
+    | Awaited<ReturnType<RoutePlannerTypes['RoutePlanner']['planRoute']>>
+    | undefined;
+
+  for (let permutation = 0; permutation < 10; permutation += 1) {
+    const result = await planSyntheticRoute({
+      airports: deterministicPermutation(airports, permutation),
+      navaids: deterministicPermutation(navaids, permutation),
+    });
+    if (expected === undefined) {
+      expected = result;
+    } else {
+      expect(result).toEqual(expected);
+    }
+  }
+
+  if (expected === undefined || !expected.ok) {
+    throw new Error('Expected a deterministic mixed-family Route Plan.');
+  }
+  expect(expected.value.plan.searchMode).toBe('ndb-fallback');
+  expect(
+    expected.value.plan.routePoints.map(routePoint => routePoint.databaseId)
+  ).toEqual(['departure', 'vor', 'ndb-a', 'arrival']);
+});
+
 test('rejects a database path that does not identify an existing file', async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-planner-'));
   const databasePath = join(temporaryDirectory, 'missing.duckdb');
@@ -551,7 +661,7 @@ test.each([
   await opened.value[Symbol.asyncDispose]();
 });
 
-test('filters ineligible facilities and never creates an airport-to-airport Route Leg', async () => {
+test('exhausts the mixed graph after excluding ineligible facilities', async () => {
   const oneDegreeNm = 111_194.926_644_558_74 / 1_852;
   await using database = await syntheticPlannerDatabase.create({
     airports: [
@@ -585,6 +695,25 @@ test('filters ineligible facilities and never creates an airport-to-airport Rout
       },
       {
         ...syntheticNavaid('zero-range', 'ZER', 'VOR', 1, oneDegreeNm),
+        publishedRangeNm: 0,
+      },
+      syntheticNdb('eligible-but-unreachable', 'NDB', 1, 1),
+      {...syntheticNdb('blank-ndb-id', 'NDB', 1, oneDegreeNm), databaseId: ''},
+      syntheticNdb('blank-ndb-identifier', '', 1, oneDegreeNm),
+      {
+        ...syntheticNdb('fractional-ndb-frequency', 'FRA', 1, oneDegreeNm),
+        frequencyValue: 365.5,
+      },
+      {
+        ...syntheticNdb('wrong-ndb-frequency-unit', 'WRG', 1, oneDegreeNm),
+        frequencyUnit: 'MHz',
+      },
+      {
+        ...syntheticNdb('nonfinite-ndb-frequency', 'INF', 1, oneDegreeNm),
+        frequencyValue: Number.POSITIVE_INFINITY,
+      },
+      {
+        ...syntheticNdb('zero-ndb-range', 'ZER', 1, oneDegreeNm),
         publishedRangeNm: 0,
       },
     ],
@@ -690,6 +819,22 @@ function syntheticAirport(databaseId: string, icao: string, longitude: number) {
   } as const;
 }
 
+async function planSyntheticRoute(
+  definition: NonNullable<Parameters<typeof syntheticPlannerDatabase.create>[0]>
+) {
+  await using database = await syntheticPlannerDatabase.create(definition);
+  const opened = await openRoutePlanner({databasePath: database.databasePath});
+  if (!opened.ok) {
+    throw new Error(`Expected the synthetic database to open: ${opened.failure.code}`);
+  }
+  const result = await opened.value.planRoute({
+    departureIcao: 'AAAA',
+    arrivalIcao: 'BBBB',
+  });
+  await opened.value[Symbol.asyncDispose]();
+  return result;
+}
+
 function syntheticNavaid(
   databaseId: string,
   identifier: string,
@@ -708,5 +853,26 @@ function syntheticNavaid(
     frequencyValue: 113,
     frequencyUnit: 'MHz',
     publishedRangeNm,
+  } as const;
+}
+
+function syntheticNdb(
+  databaseId: string,
+  identifier: string,
+  longitude: number,
+  publishedRangeNm: number,
+  latitude = 0
+) {
+  return {
+    ...syntheticNavaid(
+      databaseId,
+      identifier,
+      'NDB',
+      longitude,
+      publishedRangeNm,
+      latitude
+    ),
+    frequencyValue: 365,
+    frequencyUnit: 'kHz',
   } as const;
 }

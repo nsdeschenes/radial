@@ -1,9 +1,13 @@
 import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
 
 type RouteLeg = RoutePlannerTypes['RouteLeg'];
+type RouteSearchMode = RoutePlannerTypes['RoutePlan']['searchMode'];
 type RoutePlanningWarning = RoutePlannerTypes['RoutePlanningWarning'];
 
-function deriveWarnings(routeLegs: readonly RouteLeg[]): readonly RoutePlanningWarning[] {
+function deriveWarnings(
+  routeLegs: readonly RouteLeg[],
+  searchMode: RouteSearchMode
+): readonly RoutePlanningWarning[] {
   const magneticCourseWarnings: RoutePlanningWarning[] = [];
   const vorGuidanceWarnings: RoutePlanningWarning[] = [];
   const facilityDateWarnings: RoutePlanningWarning[] = [];
@@ -43,7 +47,12 @@ function deriveWarnings(routeLegs: readonly RouteLeg[]): readonly RoutePlanningW
     }
   }
 
-  return [...magneticCourseWarnings, ...vorGuidanceWarnings, ...facilityDateWarnings];
+  return [
+    ...(searchMode === 'ndb-fallback' ? ([{code: 'ndb-fallback-used'}] as const) : []),
+    ...magneticCourseWarnings,
+    ...vorGuidanceWarnings,
+    ...facilityDateWarnings,
+  ];
 }
 
 export default deriveWarnings;

@@ -1,6 +1,7 @@
 import {stat} from 'node:fs/promises';
 
 import {DuckDBInstance} from '@duckdb/node-api';
+import type {DuckDBConnection} from '@duckdb/node-api';
 
 import validateContract from '#radial/route-planner/internal/duckdb/contract.js';
 import PlannerRepository from '#radial/route-planner/internal/duckdb/repository.js';
@@ -17,19 +18,24 @@ type RoutePlannerConfig = RoutePlannerTypes['RoutePlannerConfig'];
 type RoutePlanningFailure = RoutePlannerTypes['RoutePlanningFailure'];
 type RoutePlanningRequest = RoutePlannerTypes['RoutePlanningRequest'];
 type RoutePlanningResult = RoutePlannerTypes['RoutePlanningResult'];
-type SelectedVorFamilyRoute = ReturnType<
-  ReturnType<typeof routeSearch.createGraph>['selectOptimalRoute']
->;
+type RouteSearchMode = RoutePlannerTypes['RoutePlan']['searchMode'];
+type IncrementalRouteGraph = ReturnType<typeof routeSearch.createGraph>;
+type SelectedNavaidRoute = ReturnType<IncrementalRouteGraph['selectOptimalRoute']>;
+type NdbCandidate = Awaited<
+  ReturnType<PlannerRepository['findNewNdbCandidates']>
+>[number];
 type VorFamilyCandidate = Awaited<
   ReturnType<PlannerRepository['findNewVorFamilyCandidates']>
 >[number];
-type VorFamilySearchResult =
-  | Readonly<{status: 'route-found'; route: NonNullable<SelectedVorFamilyRoute>}>
-  | Readonly<{status: 'exhausted'}>;
+type NavaidCandidate = NdbCandidate | VorFamilyCandidate;
+type ProgressiveSearchResult =
+  | Readonly<{ok: true; route: SelectedNavaidRoute}>
+  | Readonly<{ok: false}>;
 type DatabaseQueryOperation =
   | 'validate-contract'
   | 'resolve-airports'
-  | 'find-vor-family-route';
+  | 'find-vor-family-route'
+  | 'find-ndb-fallback-route';
 
 class DuckDbRoutePlanner implements RoutePlanner {
   readonly #closeInstanceOnDispose: boolean;
@@ -104,67 +110,54 @@ class DuckDbRoutePlanner implements RoutePlanner {
       } catch {
         return databaseQueryFailed('find-vor-family-route');
       }
-      const discoverySession =
-        progressiveVorFamilyDiscovery.createSession<VorFamilyCandidate>(
-          directDistanceNm,
-          this.#maxRouteFactor
-        );
       const graph = routeSearch.createGraph();
       const maximumRouteDistanceNm = directDistanceNm * this.#maxRouteFactor;
       const admittedDatabaseIds: string[] = [];
-      let provisionalRoute: SelectedVorFamilyRoute;
-
-      for (;;) {
-        const nextLimitNm = discoverySession.nextLimitNm(
-          provisionalRoute?.totalDistanceNm
-        );
-        if (nextLimitNm === undefined) {
-          break;
-        }
-
-        let measuredCandidates: Awaited<
-          ReturnType<PlannerRepository['findNewVorFamilyCandidates']>
-        >;
-        try {
-          measuredCandidates = await this.#repository.findNewVorFamilyCandidates(
+      const vorFamilySearch = await this.#searchProgressively(
+        connection,
+        directDistanceNm,
+        maximumRouteDistanceNm,
+        graph,
+        admittedDatabaseIds,
+        (nextLimitNm, measuredDatabaseIds) =>
+          this.#repository.findNewVorFamilyCandidates(
             connection,
             departure.value,
             arrival.value,
             nextLimitNm,
-            discoverySession.measuredDatabaseIds
-          );
-        } catch {
-          return databaseQueryFailed('find-vor-family-route');
-        }
-        const candidates = discoverySession.admitMeasuredCandidates(
-          measuredCandidates,
-          nextLimitNm
-        );
-
-        let navaidPairDistances: Awaited<
-          ReturnType<PlannerRepository['findNewVorFamilyNavaidPairs']>
-        >;
-        try {
-          navaidPairDistances = await this.#repository.findNewVorFamilyNavaidPairs(
-            connection,
-            candidates,
-            admittedDatabaseIds
-          );
-        } catch {
-          return databaseQueryFailed('find-vor-family-route');
-        }
-        graph.admit(candidates, navaidPairDistances);
-        admittedDatabaseIds.push(
-          ...candidates.map(candidate => candidate.routePoint.databaseId)
-        );
-        provisionalRoute = graph.selectOptimalRoute(maximumRouteDistanceNm);
+            measuredDatabaseIds
+          )
+      );
+      if (!vorFamilySearch.ok) {
+        return databaseQueryFailed('find-vor-family-route');
       }
-      const vorFamilySearchResult: VorFamilySearchResult =
-        provisionalRoute === undefined
-          ? {status: 'exhausted'}
-          : {status: 'route-found', route: provisionalRoute};
+      let selectedRoute = vorFamilySearch.route;
+      let searchMode: RouteSearchMode = 'vor-family';
 
-      if (vorFamilySearchResult.status === 'exhausted') {
+      if (selectedRoute === undefined) {
+        searchMode = 'ndb-fallback';
+        const ndbSearch = await this.#searchProgressively(
+          connection,
+          directDistanceNm,
+          maximumRouteDistanceNm,
+          graph,
+          admittedDatabaseIds,
+          (nextLimitNm, measuredDatabaseIds) =>
+            this.#repository.findNewNdbCandidates(
+              connection,
+              departure.value,
+              arrival.value,
+              nextLimitNm,
+              measuredDatabaseIds
+            )
+        );
+        if (!ndbSearch.ok) {
+          return databaseQueryFailed('find-ndb-fallback-route');
+        }
+        selectedRoute = ndbSearch.route;
+      }
+
+      if (selectedRoute === undefined) {
         return {
           ok: false,
           failure: {
@@ -177,7 +170,6 @@ class DuckDbRoutePlanner implements RoutePlanner {
         };
       }
 
-      const selectedRoute = vorFamilySearchResult.route;
       const routePoints = [departure.value, ...selectedRoute.navaids, arrival.value];
       const routeLegs = selectedRoute.legDistancesNm.map((distanceNm, index) => {
         const legDeparture = routePoints[index];
@@ -193,15 +185,72 @@ class DuckDbRoutePlanner implements RoutePlanner {
         value: {
           plan: {
             totalDistanceNm: selectedRoute.totalDistanceNm,
-            searchMode: 'vor-family',
+            searchMode,
             routePoints,
             routeLegs,
             magneticReference: contract.magneticReference,
           },
-          warnings: deriveWarnings(routeLegs),
+          warnings: deriveWarnings(routeLegs, searchMode),
         },
       };
     });
+  }
+
+  async #searchProgressively<Candidate extends NavaidCandidate>(
+    connection: DuckDBConnection,
+    directDistanceNm: number,
+    maximumRouteDistanceNm: number,
+    graph: IncrementalRouteGraph,
+    admittedDatabaseIds: string[],
+    findNewCandidates: (
+      nextLimitNm: number,
+      measuredDatabaseIds: readonly string[]
+    ) => Promise<readonly Candidate[]>
+  ): Promise<ProgressiveSearchResult> {
+    const discoverySession = progressiveVorFamilyDiscovery.createSession<Candidate>(
+      directDistanceNm,
+      this.#maxRouteFactor
+    );
+    let selectedRoute: SelectedNavaidRoute;
+
+    for (;;) {
+      const nextLimitNm = discoverySession.nextLimitNm(selectedRoute?.totalDistanceNm);
+      if (nextLimitNm === undefined) {
+        return {ok: true, route: selectedRoute};
+      }
+
+      let measuredCandidates: readonly Candidate[];
+      try {
+        measuredCandidates = await findNewCandidates(
+          nextLimitNm,
+          discoverySession.measuredDatabaseIds
+        );
+      } catch {
+        return {ok: false};
+      }
+      const candidates = discoverySession.admitMeasuredCandidates(
+        measuredCandidates,
+        nextLimitNm
+      );
+
+      let navaidPairDistances: Awaited<
+        ReturnType<PlannerRepository['findNewNavaidPairs']>
+      >;
+      try {
+        navaidPairDistances = await this.#repository.findNewNavaidPairs(
+          connection,
+          candidates,
+          admittedDatabaseIds
+        );
+      } catch {
+        return {ok: false};
+      }
+      graph.admit(candidates, navaidPairDistances);
+      admittedDatabaseIds.push(
+        ...candidates.map(candidate => candidate.routePoint.databaseId)
+      );
+      selectedRoute = graph.selectOptimalRoute(maximumRouteDistanceNm);
+    }
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
