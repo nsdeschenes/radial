@@ -4,6 +4,7 @@ The representative planner-ready DuckDB snapshot stays outside version control.
 Its single authoritative baseline is a reviewed JSON file accepted by
 `src/acceptance/readAcceptanceBaseline.ts`; procedure text must never copy the
 baseline's checksum, route, machine, timing, or output values.
+The selected baseline is `docs/acceptance/route-planner-baseline.json`.
 
 ## Named manual checks
 
