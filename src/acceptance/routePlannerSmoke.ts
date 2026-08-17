@@ -79,16 +79,21 @@ async function verifySnapshotRecordCounts(
     const result = await connection.runAndReadAll(`
       SELECT
         (SELECT count(*) FROM planner_airports) AS airport_count,
-        (SELECT count(*) FROM planner_navaids) AS navaid_count
+        (SELECT count(*) FROM planner_navaids
+          WHERE family = 'NDB') AS fallback_navaid_count,
+        (SELECT count(*) FROM planner_navaids
+          WHERE family != 'NDB') AS vor_family_navaid_count
     `);
     const row = result.getRowObjectsJS()[0];
     const actualCounts = {
       airports: Number(row?.['airport_count']),
-      navaids: Number(row?.['navaid_count']),
+      vorFamilyNavaids: Number(row?.['vor_family_navaid_count']),
+      fallbackNavaids: Number(row?.['fallback_navaid_count']),
     };
     if (
       actualCounts.airports !== baseline.snapshot.recordCounts.airports ||
-      actualCounts.navaids !== baseline.snapshot.recordCounts.navaids
+      actualCounts.vorFamilyNavaids !== baseline.snapshot.recordCounts.vorFamilyNavaids ||
+      actualCounts.fallbackNavaids !== baseline.snapshot.recordCounts.fallbackNavaids
     ) {
       throw new Error(
         `Snapshot record counts do not match the baseline: expected ${JSON.stringify(baseline.snapshot.recordCounts)}, received ${JSON.stringify(actualCounts)}.`
