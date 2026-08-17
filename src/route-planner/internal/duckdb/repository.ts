@@ -5,6 +5,7 @@ import type RouteSearchTypes from '#radial/route-planner/internal/RouteSearchTyp
 import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
 
 type AirportRoutePoint = RoutePlannerTypes['AirportRoutePoint'];
+type NdbRoutePoint = RoutePlannerTypes['NdbRoutePoint'];
 type VorFamilyRoutePoint = RoutePlannerTypes['VorFamilyRoutePoint'];
 type NavaidPairDistance = RouteSearchTypes['NavaidPairDistance'];
 
@@ -18,6 +19,14 @@ type VorFamilyCandidate = Readonly<{
   departureDistanceNm: number;
   arrivalDistanceNm: number;
 }>;
+
+type NdbCandidate = Readonly<{
+  routePoint: NdbRoutePoint;
+  departureDistanceNm: number;
+  arrivalDistanceNm: number;
+}>;
+
+type NavaidCandidate = VorFamilyCandidate | NdbCandidate;
 
 const VOR_FAMILIES = ['VOR', 'VOR-DME', 'VORTAC', 'DVOR', 'DVOR-DME', 'DVORTAC'] as const;
 
@@ -117,9 +126,36 @@ class PlannerRepository {
     }));
   }
 
-  async findNewVorFamilyNavaidPairs(
+  async findNewNdbCandidates(
     connection: DuckDBConnection,
-    newlyAdmittedCandidates: readonly VorFamilyCandidate[],
+    departure: AirportRoutePoint,
+    arrival: AirportRoutePoint,
+    nextLimitNm: number,
+    previouslyMeasuredDatabaseIds: readonly string[]
+  ): Promise<readonly NdbCandidate[]> {
+    const candidateQuery = ndbCandidateQuery(
+      departure,
+      arrival,
+      nextLimitNm,
+      previouslyMeasuredDatabaseIds
+    );
+    const reader = await connection.runAndReadAll(
+      `${candidateQuery.sql}
+      SELECT * EXCLUDE endpoint_distance_sum_nm
+      FROM candidate_distances`,
+      candidateQuery.parameters
+    );
+
+    return reader.getRowObjectsJS().map(row => ({
+      routePoint: toNdbRoutePoint(row),
+      departureDistanceNm: Number(row['departure_distance_nm']),
+      arrivalDistanceNm: Number(row['arrival_distance_nm']),
+    }));
+  }
+
+  async findNewNavaidPairs(
+    connection: DuckDBConnection,
+    newlyAdmittedCandidates: readonly NavaidCandidate[],
     previouslyAdmittedDatabaseIds: readonly string[]
   ): Promise<readonly NavaidPairDistance[]> {
     if (newlyAdmittedCandidates.length === 0) {
@@ -173,6 +209,37 @@ function vorFamilyCandidateQuery(
   nextLimitNm: number,
   excludedDatabaseIds: readonly string[]
 ): {sql: string; parameters: (string | number)[]} {
+  return navaidCandidateQuery(
+    departure,
+    arrival,
+    nextLimitNm,
+    excludedDatabaseIds,
+    vorFamilyCandidateFilter()
+  );
+}
+
+function ndbCandidateQuery(
+  departure: AirportRoutePoint,
+  arrival: AirportRoutePoint,
+  nextLimitNm: number,
+  excludedDatabaseIds: readonly string[]
+): {sql: string; parameters: (string | number)[]} {
+  return navaidCandidateQuery(
+    departure,
+    arrival,
+    nextLimitNm,
+    excludedDatabaseIds,
+    ndbCandidateFilter()
+  );
+}
+
+function navaidCandidateQuery(
+  departure: AirportRoutePoint,
+  arrival: AirportRoutePoint,
+  nextLimitNm: number,
+  excludedDatabaseIds: readonly string[],
+  candidateFilter: string
+): {sql: string; parameters: (string | number)[]} {
   const departureBounds = progressiveVorFamilyDiscovery.conservativeBounds(
     departure,
     nextLimitNm
@@ -185,7 +252,7 @@ function vorFamilyCandidateQuery(
     sql: `WITH spatial_candidates AS (
       SELECT *
       FROM planner_navaids
-      WHERE ${vorFamilyCandidateFilter()}
+      WHERE ${candidateFilter}
         AND ${spatialBoundsFilter(departureBounds)}
         AND ${spatialBoundsFilter(arrivalBounds)}
         ${excludedDatabaseIds.length === 0 ? '' : `AND database_id NOT IN (${excludedDatabaseIds.map(() => '?').join(', ')})`}
@@ -254,6 +321,21 @@ function vorFamilyCandidateFilter(alias?: string): string {
     AND ${prefix}published_range_nm > 0`;
 }
 
+function ndbCandidateFilter(): string {
+  return `family = 'NDB'
+    AND database_id IS NOT NULL AND trim(database_id) <> ''
+    AND identifier IS NOT NULL AND trim(identifier) <> ''
+    AND name IS NOT NULL AND trim(name) <> ''
+    AND longitude IS NOT NULL AND isfinite(longitude)
+    AND latitude IS NOT NULL AND isfinite(latitude)
+    AND frequency_unit = 'kHz'
+    AND frequency_value IS NOT NULL AND isfinite(frequency_value)
+    AND frequency_value > 0 AND frequency_value = trunc(frequency_value)
+    AND published_range_nm IS NOT NULL
+    AND isfinite(published_range_nm)
+    AND published_range_nm > 0`;
+}
+
 function toAirportRoutePoint(row: Readonly<Record<string, unknown>>): AirportRoutePoint {
   return {
     kind: 'airport',
@@ -294,6 +376,20 @@ function toVorFamilyRoutePoint(
             source: String(row['facility_variation_source']),
             effectiveDate: nullableString(row['facility_variation_effective_date']),
           },
+  };
+}
+
+function toNdbRoutePoint(row: Readonly<Record<string, unknown>>): NdbRoutePoint {
+  return {
+    kind: 'ndb',
+    databaseId: String(row['database_id']),
+    identifier: String(row['identifier']),
+    name: String(row['name']),
+    longitude: Number(row['longitude']),
+    latitude: Number(row['latitude']),
+    frequency: {unit: 'kHz', value: Number(row['frequency_value'])},
+    publishedRangeNm: Number(row['published_range_nm']),
+    magneticDeclinationDegEast: nullableNumber(row['magnetic_declination_deg_east']),
   };
 }
 

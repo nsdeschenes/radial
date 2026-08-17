@@ -2,10 +2,12 @@ import coverage from '#radial/route-planner/internal/coverage.js';
 import type RouteSearchTypes from '#radial/route-planner/internal/RouteSearchTypes.js';
 import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
 
-type VorFamilyRoutePoint = RoutePlannerTypes['VorFamilyRoutePoint'];
+type NavaidRoutePoint =
+  | RoutePlannerTypes['VorFamilyRoutePoint']
+  | RoutePlannerTypes['NdbRoutePoint'];
 
 type RouteCandidate = Readonly<{
-  routePoint: VorFamilyRoutePoint;
+  routePoint: NavaidRoutePoint;
   departureDistanceNm: number;
   arrivalDistanceNm: number;
 }>;
@@ -13,7 +15,7 @@ type RouteCandidate = Readonly<{
 type NavaidPairDistance = RouteSearchTypes['NavaidPairDistance'];
 
 type SelectedRoute = Readonly<{
-  navaids: readonly VorFamilyRoutePoint[];
+  navaids: readonly NavaidRoutePoint[];
   legDistancesNm: readonly number[];
   totalDistanceNm: number;
 }>;
@@ -213,8 +215,8 @@ function compareSelectedRoutes(first: SelectedRoute, second: SelectedRoute): num
 }
 
 function compareNavaidSequences(
-  first: readonly VorFamilyRoutePoint[],
-  second: readonly VorFamilyRoutePoint[]
+  first: readonly NavaidRoutePoint[],
+  second: readonly NavaidRoutePoint[]
 ): number {
   for (let index = 0; index < Math.min(first.length, second.length); index += 1) {
     const firstNavaid = first[index];
