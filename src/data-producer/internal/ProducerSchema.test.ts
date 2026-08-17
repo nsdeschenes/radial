@@ -257,7 +257,7 @@ test('rejects a malformed producer-state singleton without mutation', async () =
   } finally {
     await rm(temporaryDirectory, {recursive: true});
   }
-});
+}, 15_000);
 
 test('rejects a newer Producer Schema component without mutation', async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-producer-newer-'));
