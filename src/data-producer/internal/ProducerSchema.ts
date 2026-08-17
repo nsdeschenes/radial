@@ -145,6 +145,7 @@ const INITIAL_SCHEMA_SQL = `
 async function initializeProducerSchema(instance: DuckDBInstance): Promise<void> {
   const connection = await instance.connect();
   try {
+    await connection.run('INSTALL spatial');
     await connection.run('LOAD spatial');
     await connection.run('BEGIN TRANSACTION');
     try {
