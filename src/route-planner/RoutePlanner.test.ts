@@ -150,6 +150,120 @@ test('returns the same continuous multi-Navaid Route Plan for ten database row p
   expect(resultWithoutIrrelevantCandidate).toEqual(expected);
 });
 
+test('replaces an early provisional Route Plan after completing its improving ellipse', async () => {
+  await using database = await syntheticPlannerDatabase.create({
+    airports: [
+      syntheticAirport('departure', 'AAAA', 0),
+      syntheticAirport('arrival', 'BBBB', 10),
+    ],
+    navaids: [
+      syntheticNavaid('early-first', 'EARLY-A', 'VOR', 3, 250, 2),
+      syntheticNavaid('early-second', 'EARLY-B', 'VOR', 7, 250, -2),
+      syntheticNavaid('later-shortcut', 'LATER', 'VOR', 7, 250, 2.4),
+    ],
+  });
+  const opened = await openRoutePlanner({databasePath: database.databasePath});
+  if (!opened.ok) {
+    throw new Error(`Expected the synthetic database to open: ${opened.failure.code}`);
+  }
+
+  const result = await opened.value.planRoute({
+    departureIcao: 'AAAA',
+    arrivalIcao: 'BBBB',
+  });
+  await opened.value[Symbol.asyncDispose]();
+
+  if (!result.ok) {
+    throw new Error(
+      `Expected the provisional Route Plan to improve: ${result.failure.code}`
+    );
+  }
+  expect(result.value.plan.routePoints.map(routePoint => routePoint.databaseId)).toEqual([
+    'departure',
+    'early-first',
+    'later-shortcut',
+    'arrival',
+  ]);
+});
+
+test.each([
+  {name: 'inclusive 1.10 boundary', navaidLongitude: 10.5, succeeds: true},
+  {name: 'inclusive 1.25 boundary', navaidLongitude: 11.25, succeeds: true},
+  {name: 'inclusive 1.50 boundary', navaidLongitude: 12.5, succeeds: true},
+  {
+    name: 'immediately outside the completed 1.50 ellipse',
+    navaidLongitude: 12.5 + 1e-12,
+    succeeds: false,
+  },
+])(
+  'discovers a VOR-family candidate at the $name',
+  async ({navaidLongitude, succeeds}) => {
+    const oneDegreeNm = 111_194.926_644_558_74 / 1_852;
+    await using database = await syntheticPlannerDatabase.create({
+      airports: [
+        syntheticAirport('departure', 'AAAA', 0),
+        syntheticAirport('arrival', 'BBBB', 10),
+      ],
+      navaids: [
+        syntheticNavaid(
+          'candidate',
+          'CANDIDATE',
+          'VOR',
+          navaidLongitude,
+          oneDegreeNm * 13
+        ),
+      ],
+    });
+    const opened = await openRoutePlanner({databasePath: database.databasePath});
+    if (!opened.ok) {
+      throw new Error(`Expected the synthetic database to open: ${opened.failure.code}`);
+    }
+
+    const result = await opened.value.planRoute({
+      departureIcao: 'AAAA',
+      arrivalIcao: 'BBBB',
+    });
+    await opened.value[Symbol.asyncDispose]();
+
+    expect(result.ok).toBe(succeeds);
+    if (result.ok) {
+      expect(
+        result.value.plan.routePoints.map(routePoint => routePoint.databaseId)
+      ).toEqual(['departure', 'candidate', 'arrival']);
+    }
+  }
+);
+
+test('discovers a VOR-family candidate across the antimeridian', async () => {
+  const oneDegreeNm = 111_194.926_644_558_74 / 1_852;
+  await using database = await syntheticPlannerDatabase.create({
+    airports: [
+      syntheticAirport('departure', 'AAAA', 179),
+      syntheticAirport('arrival', 'BBBB', -179),
+    ],
+    navaids: [syntheticNavaid('dateline', 'DATE', 'VOR', 180, oneDegreeNm + 1)],
+  });
+  const opened = await openRoutePlanner({databasePath: database.databasePath});
+  if (!opened.ok) {
+    throw new Error(`Expected the synthetic database to open: ${opened.failure.code}`);
+  }
+
+  const result = await opened.value.planRoute({
+    departureIcao: 'AAAA',
+    arrivalIcao: 'BBBB',
+  });
+  await opened.value[Symbol.asyncDispose]();
+
+  if (!result.ok) {
+    throw new Error(`Expected an antimeridian Route Plan: ${result.failure.code}`);
+  }
+  expect(result.value.plan.routePoints.map(routePoint => routePoint.databaseId)).toEqual([
+    'departure',
+    'dateline',
+    'arrival',
+  ]);
+});
+
 test('rejects a database path that does not identify an existing file', async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-planner-'));
   const databasePath = join(temporaryDirectory, 'missing.duckdb');
@@ -581,7 +695,8 @@ function syntheticNavaid(
   identifier: string,
   family: string,
   longitude: number,
-  publishedRangeNm: number
+  publishedRangeNm: number,
+  latitude = 0
 ) {
   return {
     databaseId,
@@ -589,7 +704,7 @@ function syntheticNavaid(
     name: `Navaid ${databaseId}`,
     family,
     longitude,
-    latitude: 0,
+    latitude,
     frequencyValue: 113,
     frequencyUnit: 'MHz',
     publishedRangeNm,
