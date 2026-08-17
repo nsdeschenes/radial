@@ -5,6 +5,8 @@ import {join} from 'node:path';
 import {expect, test} from 'vitest';
 
 import openRoutePlanner from '#radial/route-planner/RoutePlanner.js';
+import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
+import deterministicPermutation from '#radial/test/deterministicPermutation.js';
 import syntheticPlannerDatabase from '#radial/test/route-planner/createSyntheticPlannerDatabase.js';
 
 test.each([
@@ -44,6 +46,109 @@ test.each([
     });
   }
 );
+
+test('returns the same continuous multi-Navaid Route Plan for ten database row permutations and an irrelevant candidate', async () => {
+  const oneDegreeNm = 111_194.926_644_558_74 / 1_852;
+  const airports = [
+    syntheticAirport('departure', 'AAAA', 0),
+    syntheticAirport('arrival', 'BBBB', 4),
+  ];
+  const routeNavaids = [
+    syntheticNavaid('navaid-a', 'ALFA', 'VOR', 1, oneDegreeNm + 1),
+    syntheticNavaid('navaid-b', 'BRAVO', 'VOR', 3, oneDegreeNm + 1),
+  ];
+  const irrelevantNavaids = [
+    syntheticNavaid('navaid-x', 'XRAY', 'VOR', 50, 1),
+    syntheticNavaid('navaid-y', 'YANKEE', 'VOR', 60, 1),
+    syntheticNavaid('navaid-z', 'ZULU', 'VOR', 70, 1),
+  ];
+  let expected:
+    | Awaited<ReturnType<RoutePlannerTypes['RoutePlanner']['planRoute']>>
+    | undefined;
+
+  for (let permutation = 0; permutation < 10; permutation += 1) {
+    await using database = await syntheticPlannerDatabase.create({
+      airports: deterministicPermutation(airports, permutation),
+      navaids: deterministicPermutation(
+        [...routeNavaids, ...irrelevantNavaids],
+        permutation
+      ),
+    });
+    const opened = await openRoutePlanner({databasePath: database.databasePath});
+    if (!opened.ok) {
+      throw new Error(`Expected the synthetic database to open: ${opened.failure.code}`);
+    }
+    const result = await opened.value.planRoute({
+      departureIcao: 'AAAA',
+      arrivalIcao: 'BBBB',
+    });
+    await opened.value[Symbol.asyncDispose]();
+
+    if (expected === undefined) {
+      expected = result;
+    } else {
+      expect(result).toEqual(expected);
+    }
+  }
+
+  if (expected === undefined || !expected.ok) {
+    throw new Error('Expected a deterministic multi-Navaid Route Plan.');
+  }
+  const {plan} = expected.value;
+  expect(plan.routePoints.map(routePoint => routePoint.databaseId)).toEqual([
+    'departure',
+    'navaid-a',
+    'navaid-b',
+    'arrival',
+  ]);
+  expect(plan.routeLegs).toHaveLength(3);
+  for (const routeLeg of plan.routeLegs) {
+    if (
+      routeLeg.departure.kind === 'vor-family' &&
+      routeLeg.arrival.kind === 'vor-family'
+    ) {
+      expect(routeLeg.distanceNm).toBeLessThanOrEqual(
+        routeLeg.departure.publishedRangeNm + routeLeg.arrival.publishedRangeNm
+      );
+    } else {
+      const navaid =
+        routeLeg.departure.kind === 'vor-family'
+          ? routeLeg.departure
+          : routeLeg.arrival.kind === 'vor-family'
+            ? routeLeg.arrival
+            : undefined;
+      if (navaid === undefined) {
+        throw new Error('Expected every Route Leg to include a Navaid.');
+      }
+      expect(routeLeg.distanceNm).toBeLessThanOrEqual(navaid.publishedRangeNm);
+    }
+  }
+  for (let index = 0; index < plan.routeLegs.length - 1; index += 1) {
+    expect(plan.routeLegs[index]?.arrival).toEqual(plan.routeLegs[index + 1]?.departure);
+  }
+  expect(plan.totalDistanceNm).toBe(
+    plan.routeLegs.reduce((total, routeLeg) => total + routeLeg.distanceNm, 0)
+  );
+  expect(plan.totalDistanceNm).toBeLessThanOrEqual(oneDegreeNm * 4 * 1.5);
+
+  await using databaseWithoutIrrelevantCandidate = await syntheticPlannerDatabase.create({
+    airports,
+    navaids: routeNavaids,
+  });
+  const openedWithoutIrrelevantCandidate = await openRoutePlanner({
+    databasePath: databaseWithoutIrrelevantCandidate.databasePath,
+  });
+  if (!openedWithoutIrrelevantCandidate.ok) {
+    throw new Error('Expected the comparison synthetic database to open.');
+  }
+  const resultWithoutIrrelevantCandidate =
+    await openedWithoutIrrelevantCandidate.value.planRoute({
+      departureIcao: 'AAAA',
+      arrivalIcao: 'BBBB',
+    });
+  await openedWithoutIrrelevantCandidate.value[Symbol.asyncDispose]();
+  expect(resultWithoutIrrelevantCandidate).toEqual(expected);
+});
 
 test('rejects a database path that does not identify an existing file', async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-planner-'));

@@ -14,3 +14,21 @@ test.each([
     );
   }
 );
+
+test.each([
+  {distanceNm: 69.999, firstRangeNm: 30, secondRangeNm: 40, expected: true},
+  {distanceNm: 70, firstRangeNm: 30, secondRangeNm: 40, expected: true},
+  {
+    distanceNm: 70.000_000_000_000_01,
+    firstRangeNm: 30,
+    secondRangeNm: 40,
+    expected: false,
+  },
+])(
+  'makes a Navaid–Navaid Route Leg navigable within their inclusive combined published coverage',
+  ({distanceNm, firstRangeNm, secondRangeNm, expected}) => {
+    expect(
+      coverage.isNavaidToNavaidNavigable(distanceNm, firstRangeNm, secondRangeNm)
+    ).toBe(expected);
+  }
+);

@@ -1,17 +1,19 @@
 import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 
+import type RouteSearchTypes from '#radial/route-planner/internal/RouteSearchTypes.js';
 import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
 
 type AirportRoutePoint = RoutePlannerTypes['AirportRoutePoint'];
 type MagneticReferenceMetadata = RoutePlannerTypes['RoutePlan']['magneticReference'];
 type VorFamilyRoutePoint = RoutePlannerTypes['VorFamilyRoutePoint'];
+type NavaidPairDistance = RouteSearchTypes['NavaidPairDistance'];
 
 type AirportResolution = Readonly<{
   departure: readonly AirportRoutePoint[];
   arrival: readonly AirportRoutePoint[];
 }>;
 
-type VorCandidate = Readonly<{
+type VorFamilyCandidate = Readonly<{
   routePoint: VorFamilyRoutePoint;
   departureDistanceNm: number;
   arrivalDistanceNm: number;
@@ -82,11 +84,11 @@ class PlannerRepository {
     return Number(reader.getRowObjectsJS()[0]?.['distance_nm']);
   }
 
-  async findVorCandidates(
+  async findVorFamilyCandidates(
     connection: DuckDBConnection,
     departure: AirportRoutePoint,
     arrival: AirportRoutePoint
-  ): Promise<readonly VorCandidate[]> {
+  ): Promise<readonly VorFamilyCandidate[]> {
     const reader = await connection.runAndReadAll(
       `SELECT
         database_id,
@@ -111,15 +113,7 @@ class PlannerRepository {
           ST_Point(?, ?)
         ) / 1852.0 AS arrival_distance_nm
       FROM planner_navaids
-      WHERE family IN ('VOR', 'VOR-DME', 'VORTAC', 'DVOR', 'DVOR-DME', 'DVORTAC')
-        AND database_id IS NOT NULL AND trim(database_id) <> ''
-        AND identifier IS NOT NULL AND trim(identifier) <> ''
-        AND name IS NOT NULL AND trim(name) <> ''
-        AND frequency_unit = 'MHz'
-        AND frequency_value IS NOT NULL AND isfinite(frequency_value)
-        AND frequency_value > 0
-        AND published_range_nm IS NOT NULL AND isfinite(published_range_nm)
-        AND published_range_nm > 0`,
+      WHERE ${vorFamilyCandidateFilter()}`,
       [departure.latitude, departure.longitude, arrival.latitude, arrival.longitude]
     );
 
@@ -129,6 +123,45 @@ class PlannerRepository {
       arrivalDistanceNm: Number(row['arrival_distance_nm']),
     }));
   }
+
+  async findVorFamilyNavaidPairs(
+    connection: DuckDBConnection
+  ): Promise<readonly NavaidPairDistance[]> {
+    const reader = await connection.runAndReadAll(`
+      SELECT
+        first.database_id AS first_database_id,
+        second.database_id AS second_database_id,
+        ST_Distance_Sphere(
+          ST_Point(first.latitude, first.longitude),
+          ST_Point(second.latitude, second.longitude)
+        ) / 1852.0 AS distance_nm
+      FROM planner_navaids AS first
+      JOIN planner_navaids AS second
+        ON first.database_id < second.database_id
+      WHERE ${vorFamilyCandidateFilter('first')}
+        AND ${vorFamilyCandidateFilter('second')}
+    `);
+
+    return reader.getRowObjectsJS().map(row => ({
+      firstDatabaseId: requiredString(row['first_database_id']),
+      secondDatabaseId: requiredString(row['second_database_id']),
+      distanceNm: Number(row['distance_nm']),
+    }));
+  }
+}
+
+function vorFamilyCandidateFilter(alias?: string): string {
+  const prefix = alias === undefined ? '' : `${alias}.`;
+  return `${prefix}family IN ('VOR', 'VOR-DME', 'VORTAC', 'DVOR', 'DVOR-DME', 'DVORTAC')
+    AND ${prefix}database_id IS NOT NULL AND trim(${prefix}database_id) <> ''
+    AND ${prefix}identifier IS NOT NULL AND trim(${prefix}identifier) <> ''
+    AND ${prefix}name IS NOT NULL AND trim(${prefix}name) <> ''
+    AND ${prefix}frequency_unit = 'MHz'
+    AND ${prefix}frequency_value IS NOT NULL AND isfinite(${prefix}frequency_value)
+    AND ${prefix}frequency_value > 0
+    AND ${prefix}published_range_nm IS NOT NULL
+    AND isfinite(${prefix}published_range_nm)
+    AND ${prefix}published_range_nm > 0`;
 }
 
 function toAirportRoutePoint(row: Readonly<Record<string, unknown>>): AirportRoutePoint {
@@ -184,6 +217,13 @@ function nullableString(value: unknown): string | null {
   }
   if (typeof value !== 'string') {
     throw new Error('Expected a nullable database string value.');
+  }
+  return value;
+}
+
+function requiredString(value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new Error('Expected a database string value.');
   }
   return value;
 }

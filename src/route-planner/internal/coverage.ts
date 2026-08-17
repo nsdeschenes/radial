@@ -5,4 +5,12 @@ function isAirportToNavaidNavigable(
   return distanceNm <= publishedRangeNm;
 }
 
-export default {isAirportToNavaidNavigable};
+function isNavaidToNavaidNavigable(
+  distanceNm: number,
+  firstPublishedRangeNm: number,
+  secondPublishedRangeNm: number
+): boolean {
+  return distanceNm <= firstPublishedRangeNm + secondPublishedRangeNm;
+}
+
+export default {isAirportToNavaidNavigable, isNavaidToNavaidNavigable};
