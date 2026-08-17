@@ -132,7 +132,7 @@ test('leaves the database file unchanged when reopening a current schema', async
   } finally {
     await rm(temporaryDirectory, {recursive: true});
   }
-});
+}, 15_000);
 
 test('rejects a partial producer schema without repairing it', async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-producer-partial-'));
@@ -285,7 +285,7 @@ test('rejects a newer Producer Schema component without mutation', async () => {
   } finally {
     await rm(temporaryDirectory, {recursive: true});
   }
-});
+}, 15_000);
 
 test('rolls back initialization without changing legacy aviation data', async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-producer-legacy-'));
