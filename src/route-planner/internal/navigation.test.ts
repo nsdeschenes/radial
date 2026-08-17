@@ -32,3 +32,38 @@ test('normalizes endpoint courses across the antimeridian', () => {
   expect(westbound.departureTrueCourseDeg).toBeCloseTo(243.2308795909907, 12);
   expect(westbound.arrivalTrueCourseDeg).toBeCloseTo(242.86635887707865, 12);
 });
+
+test.each([
+  {
+    name: 'subtracts east-positive declination',
+    trueCourseDeg: 100,
+    degreesEast: 7,
+    magneticCourseDeg: 93,
+  },
+  {
+    name: 'adds west-positive declination',
+    trueCourseDeg: 100,
+    degreesEast: -7,
+    magneticCourseDeg: 107,
+  },
+  {
+    name: 'wraps below zero',
+    trueCourseDeg: 2,
+    degreesEast: 7,
+    magneticCourseDeg: 355,
+  },
+  {
+    name: 'wraps above 360',
+    trueCourseDeg: 358,
+    degreesEast: -7,
+    magneticCourseDeg: 5,
+  },
+])('$name when calculating a magnetic course', scenario => {
+  expect(navigation.toMagneticCourse(scenario.trueCourseDeg, scenario.degreesEast)).toBe(
+    scenario.magneticCourseDeg
+  );
+});
+
+test('leaves a magnetic course unavailable when Local Magnetic Declination is unavailable', () => {
+  expect(navigation.toMagneticCourse(100, null)).toBeNull();
+});

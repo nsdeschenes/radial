@@ -38,11 +38,13 @@ type DatabaseQueryOperation =
   | 'find-ndb-fallback-route';
 
 class DuckDbRoutePlanner implements RoutePlanner {
+  readonly #activePlanning = new Set<Promise<RoutePlanningResult>>();
   readonly #closeInstanceOnDispose: boolean;
   readonly #instance: DuckDBInstance;
   readonly #maxRouteFactor: number;
   readonly #repository: PlannerRepository;
-  #isDisposed = false;
+  #lifecycleState: 'open' | 'closing' | 'disposed' = 'open';
+  #disposePromise: Promise<void> | undefined;
 
   constructor(
     instance: DuckDBInstance,
@@ -56,14 +58,26 @@ class DuckDbRoutePlanner implements RoutePlanner {
     this.#repository = repository;
   }
 
-  async planRoute(request: RoutePlanningRequest): Promise<RoutePlanningResult> {
+  planRoute(request: RoutePlanningRequest): Promise<RoutePlanningResult> {
+    if (this.#lifecycleState !== 'open') {
+      return Promise.reject(
+        new Error('Cannot plan a route while the Route Planner is closing or disposed.')
+      );
+    }
+
+    const planning = this.#planRoute(request);
+    this.#activePlanning.add(planning);
+    void planning.then(
+      () => this.#activePlanning.delete(planning),
+      () => this.#activePlanning.delete(planning)
+    );
+    return planning;
+  }
+
+  async #planRoute(request: RoutePlanningRequest): Promise<RoutePlanningResult> {
     const validatedRequest = validation.validateRoutePlanningRequest(request);
     if (!validatedRequest.ok) {
       return validatedRequest;
-    }
-
-    if (this.#isDisposed) {
-      throw new Error('Cannot plan a route after the Route Planner has been disposed.');
     }
 
     return this.#repository.withReadTransaction(async connection => {
@@ -253,14 +267,20 @@ class DuckDbRoutePlanner implements RoutePlanner {
     }
   }
 
-  async [Symbol.asyncDispose](): Promise<void> {
-    if (this.#isDisposed) {
-      return;
-    }
+  [Symbol.asyncDispose](): Promise<void> {
+    this.#disposePromise ??= this.#dispose();
+    return this.#disposePromise;
+  }
 
-    this.#isDisposed = true;
-    if (this.#closeInstanceOnDispose) {
-      this.#instance.closeSync();
+  async #dispose(): Promise<void> {
+    this.#lifecycleState = 'closing';
+    await Promise.allSettled(this.#activePlanning);
+    try {
+      if (this.#closeInstanceOnDispose) {
+        this.#instance.closeSync();
+      }
+    } finally {
+      this.#lifecycleState = 'disposed';
     }
   }
 }

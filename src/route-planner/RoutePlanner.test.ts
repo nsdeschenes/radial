@@ -336,6 +336,12 @@ test('returns a successful NDB-fallback Route Plan only after VOR-family exhaust
     }),
   ]);
   expect(result.value.warnings).toContainEqual({code: 'ndb-fallback-used'});
+  expect(
+    result.value.plan.routeLegs.every(
+      routeLeg =>
+        routeLeg.departureVorGuidance === null && routeLeg.arrivalVorGuidance === null
+    )
+  ).toBe(true);
 });
 
 test('selects the same stable mixed-family Route Plan for ten database row permutations', async () => {
@@ -631,6 +637,145 @@ test('plans a complete two-leg Route Plan using a VOR-family Navaid from a fresh
       },
     },
   });
+});
+
+test('preserves true-course routing and deterministically warns for unavailable magnetic references', async () => {
+  await using database = await syntheticPlannerDatabase.create({
+    airports: [
+      syntheticAirport('departure', 'AAAA', 0),
+      {
+        ...syntheticAirport('arrival', 'BBBB', 4),
+        magneticDeclinationDegEast: 2,
+      },
+    ],
+    navaids: [
+      {
+        ...syntheticNavaid('vor-first', 'FIRST', 'VOR', 1, 70),
+        magneticDeclinationDegEast: 5,
+      },
+      {
+        ...syntheticNavaid('vor-second', 'SECOND', 'VOR', 3, 70),
+        facilityVariationDegEast: -4,
+        facilityVariationSource: 'Synthetic facility record',
+      },
+    ],
+    metadata: [
+      {
+        magneticModel: 'WMM',
+        magneticModelVersion: 'WMM2025',
+        magneticModelEpochYear: 2025,
+        magneticReferenceDate: '2025-01-01',
+        magneticModelSource: 'https://example.test/wmm2025',
+      },
+    ],
+  });
+  const opened = await openRoutePlanner({databasePath: database.databasePath});
+  if (!opened.ok) {
+    throw new Error(`Expected the synthetic database to open: ${opened.failure.code}`);
+  }
+
+  const result = await opened.value.planRoute({
+    departureIcao: 'AAAA',
+    arrivalIcao: 'BBBB',
+  });
+  await opened.value[Symbol.asyncDispose]();
+
+  if (!result.ok) {
+    throw new Error(`Expected missing magnetic references to preserve the plan.`);
+  }
+  expect(result.value.plan.routePoints.map(routePoint => routePoint.databaseId)).toEqual([
+    'departure',
+    'vor-first',
+    'vor-second',
+    'arrival',
+  ]);
+  expect(result.value.plan.routeLegs).toMatchObject([
+    {
+      departureTrueCourseDeg: 90,
+      departureMagneticCourseDeg: null,
+      arrivalTrueCourseDeg: 90,
+      arrivalMagneticCourseDeg: 85,
+      departureVorGuidance: null,
+      arrivalVorGuidance: null,
+    },
+    {
+      departureTrueCourseDeg: 90,
+      departureMagneticCourseDeg: 85,
+      arrivalTrueCourseDeg: 90,
+      arrivalMagneticCourseDeg: null,
+      departureVorGuidance: null,
+      arrivalVorGuidance: {trueCourseDeg: 90, magneticCourseDeg: 94},
+    },
+    {
+      departureTrueCourseDeg: 90,
+      departureMagneticCourseDeg: null,
+      arrivalTrueCourseDeg: 90,
+      arrivalMagneticCourseDeg: 88,
+      departureVorGuidance: {trueCourseDeg: 90, magneticCourseDeg: 94},
+      arrivalVorGuidance: null,
+    },
+  ]);
+  expect(result.value.warnings).toEqual([
+    {code: 'magnetic-course-unavailable', legNumber: 1, endpoint: 'departure'},
+    {code: 'magnetic-course-unavailable', legNumber: 2, endpoint: 'arrival'},
+    {code: 'magnetic-course-unavailable', legNumber: 3, endpoint: 'departure'},
+    {code: 'vor-guidance-unavailable', legNumber: 1, endpoint: 'arrival'},
+    {code: 'vor-guidance-unavailable', legNumber: 2, endpoint: 'departure'},
+    {
+      code: 'facility-variation-date-unavailable',
+      legNumber: 2,
+      endpoint: 'arrival',
+    },
+    {
+      code: 'facility-variation-date-unavailable',
+      legNumber: 3,
+      endpoint: 'departure',
+    },
+  ]);
+});
+
+test('does not interpret ambiguous OpenAIP magnetic fields as accepted references', async () => {
+  await using database = await syntheticPlannerDatabase.create({
+    airports: [
+      syntheticAirport('departure', 'AAAA', 0),
+      syntheticAirport('arrival', 'BBBB', 2),
+    ],
+    navaids: [syntheticNavaid('vor', 'VOR', 'VOR', 1, 70)],
+  });
+  await syntheticPlannerDatabase.modify(
+    database.databasePath,
+    `CREATE OR REPLACE VIEW planner_navaids AS
+      SELECT *,
+        ST_Point(longitude, latitude) AS point,
+        12.0 AS openaip_magnetic_declination,
+        true AS openaip_true_north_aligned
+      FROM synthetic_navaids`
+  );
+  const opened = await openRoutePlanner({databasePath: database.databasePath});
+  if (!opened.ok) {
+    throw new Error(
+      `Expected extra raw-source fields to be ignored: ${opened.failure.code}`
+    );
+  }
+
+  const result = await opened.value.planRoute({
+    departureIcao: 'AAAA',
+    arrivalIcao: 'BBBB',
+  });
+  await opened.value[Symbol.asyncDispose]();
+
+  if (!result.ok) {
+    throw new Error(`Expected ambiguous raw-source fields to preserve the plan.`);
+  }
+  expect(result.value.plan.routePoints[1]).toMatchObject({
+    kind: 'vor-family',
+    magneticDeclinationDegEast: null,
+    facilityVariation: null,
+  });
+  expect(result.value.plan.routeLegs).toMatchObject([
+    {arrivalMagneticCourseDeg: null, arrivalVorGuidance: null},
+    {departureMagneticCourseDeg: null, departureVorGuidance: null},
+  ]);
 });
 
 test.each([
