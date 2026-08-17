@@ -66,7 +66,7 @@ function assertUnicodeScalarValue(value: string): void {
     const codeUnit = value.charCodeAt(index);
     if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
       const next = value.charCodeAt(index + 1);
-      if (next < 0xdc00 || next > 0xdfff) {
+      if (!Number.isInteger(next) || next < 0xdc00 || next > 0xdfff) {
         throw new TypeError('JSON strings must not contain lone surrogates.');
       }
       index += 1;
