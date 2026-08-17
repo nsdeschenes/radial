@@ -30,6 +30,33 @@ test('selects the shorter Route Plan even when it contains more Route Legs', () 
   });
 });
 
+test('retains one monotonic graph while newly admitted candidates improve a provisional Route Plan', () => {
+  const first = candidate('first', 'FIRST', 2, 50);
+  const second = candidate('second', 'SECOND', 50, 2);
+  const later = candidate('later', 'LATER', 5, 5);
+  const graph = routeSearch.createGraph();
+
+  graph.admit(
+    [first, second],
+    [{firstDatabaseId: 'first', secondDatabaseId: 'second', distanceNm: 10}]
+  );
+  expect(graph.selectOptimalRoute(20)?.totalDistanceNm).toBe(14);
+
+  graph.admit([later], []);
+  expect(graph.selectOptimalRoute(20)).toEqual({
+    navaids: [later.routePoint],
+    legDistancesNm: [5, 5],
+    totalDistanceNm: 10,
+  });
+  expect(() =>
+    graph.admit(
+      [],
+      [{firstDatabaseId: 'second', secondDatabaseId: 'first', distanceNm: 10}]
+    )
+  ).toThrow(/candidate pair was compared more than once/);
+  expect(() => graph.admit([later], [])).toThrow(/candidate was admitted more than once/);
+});
+
 test('uses exact Float64 distance, then Route Leg count, then stable Navaid identity sequence', () => {
   const exact = candidate('distance-exact', 'ZULU', 0.5, 0.5);
   const nextFloat = candidate('distance-next-float', 'ALFA', 0.5, 0.5 + Number.EPSILON);

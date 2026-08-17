@@ -5,6 +5,7 @@ import {DuckDBInstance} from '@duckdb/node-api';
 import validateContract from '#radial/route-planner/internal/duckdb/contract.js';
 import PlannerRepository from '#radial/route-planner/internal/duckdb/repository.js';
 import navigation from '#radial/route-planner/internal/navigation.js';
+import progressiveVorFamilyDiscovery from '#radial/route-planner/internal/progressiveVorFamilyDiscovery.js';
 import routeSearch from '#radial/route-planner/internal/routeSearch.js';
 import validation from '#radial/route-planner/internal/validation.js';
 import deriveWarnings from '#radial/route-planner/internal/warnings.js';
@@ -16,6 +17,15 @@ type RoutePlannerConfig = RoutePlannerTypes['RoutePlannerConfig'];
 type RoutePlanningFailure = RoutePlannerTypes['RoutePlanningFailure'];
 type RoutePlanningRequest = RoutePlannerTypes['RoutePlanningRequest'];
 type RoutePlanningResult = RoutePlannerTypes['RoutePlanningResult'];
+type SelectedVorFamilyRoute = ReturnType<
+  ReturnType<typeof routeSearch.createGraph>['selectOptimalRoute']
+>;
+type VorFamilyCandidate = Awaited<
+  ReturnType<PlannerRepository['findNewVorFamilyCandidates']>
+>[number];
+type VorFamilySearchResult =
+  | Readonly<{status: 'route-found'; route: NonNullable<SelectedVorFamilyRoute>}>
+  | Readonly<{status: 'exhausted'}>;
 type DatabaseQueryOperation = 'resolve-airports' | 'find-vor-family-route';
 
 class DuckDbRoutePlanner implements RoutePlanner {
@@ -74,33 +84,76 @@ class DuckDbRoutePlanner implements RoutePlanner {
       }
 
       let directDistanceNm: number;
-      let candidates: Awaited<ReturnType<PlannerRepository['findVorFamilyCandidates']>>;
-      let navaidPairDistances: Awaited<
-        ReturnType<PlannerRepository['findVorFamilyNavaidPairs']>
-      >;
       try {
         directDistanceNm = await this.#repository.directDistanceNm(
           connection,
           departure.value,
           arrival.value
         );
-        candidates = await this.#repository.findVorFamilyCandidates(
-          connection,
-          departure.value,
-          arrival.value
-        );
-        navaidPairDistances = await this.#repository.findVorFamilyNavaidPairs(connection);
       } catch {
         return databaseQueryFailed('find-vor-family-route');
       }
+      const discoverySession =
+        progressiveVorFamilyDiscovery.createSession<VorFamilyCandidate>(
+          directDistanceNm,
+          this.#maxRouteFactor
+        );
+      const graph = routeSearch.createGraph();
+      const maximumRouteDistanceNm = directDistanceNm * this.#maxRouteFactor;
+      const admittedDatabaseIds: string[] = [];
+      let provisionalRoute: SelectedVorFamilyRoute;
 
-      const selectedRoute = routeSearch.selectOptimalRoute(
-        candidates,
-        navaidPairDistances,
-        directDistanceNm * this.#maxRouteFactor
-      );
+      for (;;) {
+        const nextLimitNm = discoverySession.nextLimitNm(
+          provisionalRoute?.totalDistanceNm
+        );
+        if (nextLimitNm === undefined) {
+          break;
+        }
 
-      if (selectedRoute === undefined) {
+        let measuredCandidates: Awaited<
+          ReturnType<PlannerRepository['findNewVorFamilyCandidates']>
+        >;
+        try {
+          measuredCandidates = await this.#repository.findNewVorFamilyCandidates(
+            connection,
+            departure.value,
+            arrival.value,
+            nextLimitNm,
+            discoverySession.measuredDatabaseIds
+          );
+        } catch {
+          return databaseQueryFailed('find-vor-family-route');
+        }
+        const candidates = discoverySession.admitMeasuredCandidates(
+          measuredCandidates,
+          nextLimitNm
+        );
+
+        let navaidPairDistances: Awaited<
+          ReturnType<PlannerRepository['findNewVorFamilyNavaidPairs']>
+        >;
+        try {
+          navaidPairDistances = await this.#repository.findNewVorFamilyNavaidPairs(
+            connection,
+            candidates,
+            admittedDatabaseIds
+          );
+        } catch {
+          return databaseQueryFailed('find-vor-family-route');
+        }
+        graph.admit(candidates, navaidPairDistances);
+        admittedDatabaseIds.push(
+          ...candidates.map(candidate => candidate.routePoint.databaseId)
+        );
+        provisionalRoute = graph.selectOptimalRoute(maximumRouteDistanceNm);
+      }
+      const vorFamilySearchResult: VorFamilySearchResult =
+        provisionalRoute === undefined
+          ? {status: 'exhausted'}
+          : {status: 'route-found', route: provisionalRoute};
+
+      if (vorFamilySearchResult.status === 'exhausted') {
         return {
           ok: false,
           failure: {
@@ -113,6 +166,7 @@ class DuckDbRoutePlanner implements RoutePlanner {
         };
       }
 
+      const selectedRoute = vorFamilySearchResult.route;
       const routePoints = [departure.value, ...selectedRoute.navaids, arrival.value];
       const routeLegs = selectedRoute.legDistancesNm.map((distanceNm, index) => {
         const legDeparture = routePoints[index];
@@ -257,13 +311,7 @@ function databaseQueryFailed(operation: DatabaseQueryOperation): RoutePlanningRe
 }
 
 function completedSearchLimits(maxRouteFactor: number): readonly number[] {
-  return [
-    ...new Set([
-      Math.min(1.1, maxRouteFactor),
-      Math.min(1.25, maxRouteFactor),
-      maxRouteFactor,
-    ]),
-  ];
+  return progressiveVorFamilyDiscovery.scheduledFactors(maxRouteFactor);
 }
 
 function databaseUnavailable(databasePath: string) {
