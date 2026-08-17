@@ -2,10 +2,10 @@ import {stat} from 'node:fs/promises';
 
 import {DuckDBInstance} from '@duckdb/node-api';
 
-import coverage from '#radial/route-planner/internal/coverage.js';
 import validateContract from '#radial/route-planner/internal/duckdb/contract.js';
 import PlannerRepository from '#radial/route-planner/internal/duckdb/repository.js';
 import navigation from '#radial/route-planner/internal/navigation.js';
+import routeSearch from '#radial/route-planner/internal/routeSearch.js';
 import validation from '#radial/route-planner/internal/validation.js';
 import deriveWarnings from '#radial/route-planner/internal/warnings.js';
 import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
@@ -74,46 +74,33 @@ class DuckDbRoutePlanner implements RoutePlanner {
       }
 
       let directDistanceNm: number;
-      let candidates: Awaited<ReturnType<PlannerRepository['findVorCandidates']>>;
+      let candidates: Awaited<ReturnType<PlannerRepository['findVorFamilyCandidates']>>;
+      let navaidPairDistances: Awaited<
+        ReturnType<PlannerRepository['findVorFamilyNavaidPairs']>
+      >;
       try {
         directDistanceNm = await this.#repository.directDistanceNm(
           connection,
           departure.value,
           arrival.value
         );
-        candidates = await this.#repository.findVorCandidates(
+        candidates = await this.#repository.findVorFamilyCandidates(
           connection,
           departure.value,
           arrival.value
         );
+        navaidPairDistances = await this.#repository.findVorFamilyNavaidPairs(connection);
       } catch {
         return databaseQueryFailed('find-vor-family-route');
       }
 
-      const selectedCandidate = candidates
-        .filter(
-          candidate =>
-            coverage.isAirportToNavaidNavigable(
-              candidate.departureDistanceNm,
-              candidate.routePoint.publishedRangeNm
-            ) &&
-            coverage.isAirportToNavaidNavigable(
-              candidate.arrivalDistanceNm,
-              candidate.routePoint.publishedRangeNm
-            ) &&
-            candidate.departureDistanceNm + candidate.arrivalDistanceNm <=
-              directDistanceNm * this.#maxRouteFactor
-        )
-        .toSorted(
-          (first, second) =>
-            first.departureDistanceNm +
-              first.arrivalDistanceNm -
-              (second.departureDistanceNm + second.arrivalDistanceNm) ||
-            first.routePoint.identifier.localeCompare(second.routePoint.identifier) ||
-            first.routePoint.databaseId.localeCompare(second.routePoint.databaseId)
-        )[0];
+      const selectedRoute = routeSearch.selectOptimalRoute(
+        candidates,
+        navaidPairDistances,
+        directDistanceNm * this.#maxRouteFactor
+      );
 
-      if (selectedCandidate === undefined) {
+      if (selectedRoute === undefined) {
         return {
           ok: false,
           failure: {
@@ -126,29 +113,21 @@ class DuckDbRoutePlanner implements RoutePlanner {
         };
       }
 
-      const routePoints = [
-        departure.value,
-        selectedCandidate.routePoint,
-        arrival.value,
-      ] as const;
-      const routeLegs = [
-        navigation.createRouteLeg(
-          departure.value,
-          selectedCandidate.routePoint,
-          selectedCandidate.departureDistanceNm
-        ),
-        navigation.createRouteLeg(
-          selectedCandidate.routePoint,
-          arrival.value,
-          selectedCandidate.arrivalDistanceNm
-        ),
-      ] as const;
+      const routePoints = [departure.value, ...selectedRoute.navaids, arrival.value];
+      const routeLegs = selectedRoute.legDistancesNm.map((distanceNm, index) => {
+        const legDeparture = routePoints[index];
+        const legArrival = routePoints[index + 1];
+        if (legDeparture === undefined || legArrival === undefined) {
+          throw new Error('Selected Route Plan continuity invariant failed.');
+        }
+        return navigation.createRouteLeg(legDeparture, legArrival, distanceNm);
+      });
 
       return {
         ok: true,
         value: {
           plan: {
-            totalDistanceNm: routeLegs[0].distanceNm + routeLegs[1].distanceNm,
+            totalDistanceNm: selectedRoute.totalDistanceNm,
             searchMode: 'vor-family',
             routePoints,
             routeLegs,
