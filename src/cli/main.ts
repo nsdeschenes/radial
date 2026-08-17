@@ -1,6 +1,6 @@
+import openRadialApplication from '#radial/application/RadialApplication.js';
 import diagnostics from '#radial/cli/formatDiagnostics.js';
 import validation from '#radial/route-planner/internal/validation.js';
-import openRoutePlanner from '#radial/route-planner/RoutePlanner.js';
 
 type CliIo = {
   writeStdout(text: string): void;
@@ -27,28 +27,38 @@ async function runCli({args, env, io}: CliInput): Promise<number> {
   }
 
   const configuredFactor = env['RADIAL_MAX_ROUTE_FACTOR'];
-  const opened = await openRoutePlanner({
+  const openedApplication = await openRadialApplication({
     databasePath: env['RADIAL_DATABASE_PATH'] ?? '',
     ...(configuredFactor === undefined ? {} : {maxRouteFactor: Number(configuredFactor)}),
   });
 
-  if (!opened.ok) {
-    io.writeStderr(diagnostics.formatPlannerOpenDiagnostic(opened.failure));
+  if (!openedApplication.ok) {
+    io.writeStderr(diagnostics.formatPlannerOpenDiagnostic(openedApplication.failure));
     return 1;
   }
 
   try {
-    const result = await opened.value.planRoute(validatedRequest.value);
-    if (!result.ok) {
-      io.writeStderr(diagnostics.formatRoutePlanningDiagnostic(result.failure));
-      return result.failure.code === 'invalid-request' ? 2 : 1;
+    const openedPlanner = await openedApplication.value.planning.open();
+    if (!openedPlanner.ok) {
+      io.writeStderr(diagnostics.formatPlannerOpenDiagnostic(openedPlanner.failure));
+      return 1;
     }
 
-    throw new Error(
-      'Route Plan presentation is not available in this implementation slice.'
-    );
+    try {
+      const result = await openedPlanner.value.planRoute(validatedRequest.value);
+      if (!result.ok) {
+        io.writeStderr(diagnostics.formatRoutePlanningDiagnostic(result.failure));
+        return result.failure.code === 'invalid-request' ? 2 : 1;
+      }
+
+      throw new Error(
+        'Route Plan presentation is not available in this implementation slice.'
+      );
+    } finally {
+      await openedPlanner.value[Symbol.asyncDispose]();
+    }
   } finally {
-    await opened.value[Symbol.asyncDispose]();
+    await openedApplication.value[Symbol.asyncDispose]();
   }
 }
 
