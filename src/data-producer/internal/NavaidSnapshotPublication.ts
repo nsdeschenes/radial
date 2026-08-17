@@ -4,6 +4,9 @@ import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
 import type buildNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidate.js';
+import Wmm2025 from '#radial/data-producer/internal/Wmm2025.js';
+
+const {localMagneticDeclinationFromWmm2025, wmm2025Provenance} = Wmm2025;
 
 type NavaidSnapshotCandidate = ReturnType<typeof buildNavaidSnapshotCandidate>;
 
@@ -36,7 +39,11 @@ async function publishNavaidSnapshot(
     try {
       const previousSnapshotId = await activeSnapshotId(connection);
       await insertCandidateRows(connection, snapshotId, candidate);
-      await regenerateAirportProjections(connection, snapshotId);
+      await regenerateAirportProjections(
+        connection,
+        snapshotId,
+        candidate.provenance.magneticModel.referenceDate
+      );
       await verifyStoredCandidate(connection, snapshotId, candidate);
 
       const publishedAt = (options.publishedAt ?? (() => new Date().toISOString()))();
@@ -106,10 +113,16 @@ function validateCandidate(candidate: NavaidSnapshotCandidate): void {
   const partitionIdentities = new Set<string>();
   const databaseIdentities = new Set<string>();
   for (const navaid of candidate.plannerNavaids) {
+    const expectedMagneticDeclination = localMagneticDeclinationFromWmm2025({
+      referenceDate: candidate.provenance.magneticModel.referenceDate,
+      longitude: navaid.longitude,
+      latitude: navaid.latitude,
+    });
     if (
       partitionIdentities.has(navaid.sourceRecordId) ||
       databaseIdentities.has(navaid.databaseId) ||
-      !validPlannerNavaid(navaid)
+      !validPlannerNavaid(navaid) ||
+      navaid.magneticDeclinationDegEast !== expectedMagneticDeclination
     ) {
       throw new Error('candidate planner-ready Navaids do not reconcile');
     }
@@ -181,6 +194,7 @@ function validateCandidate(candidate: NavaidSnapshotCandidate): void {
 
 function validateProvenance(candidate: NavaidSnapshotCandidate): void {
   const provenance = candidate.provenance;
+  const expectedMagneticModel = wmm2025Provenance(candidate.retrievedAt.slice(0, 10));
   const requiredStrings = [
     provenance.sourceIdentity,
     provenance.derivationPolicyIdentity,
@@ -199,6 +213,17 @@ function validateProvenance(candidate: NavaidSnapshotCandidate): void {
     !validChecksum(provenance.magneticModel.coefficientChecksum)
   ) {
     throw new Error('candidate magnetic provenance bundle is invalid');
+  }
+  if (
+    provenance.magneticModel.model !== expectedMagneticModel.model ||
+    provenance.magneticModel.version !== expectedMagneticModel.version ||
+    provenance.magneticModel.epochYear !== expectedMagneticModel.epochYear ||
+    provenance.magneticModel.referenceDate !== expectedMagneticModel.referenceDate ||
+    provenance.magneticModel.source !== expectedMagneticModel.source ||
+    provenance.magneticModel.coefficientChecksum !==
+      expectedMagneticModel.coefficientChecksum
+  ) {
+    throw new Error('candidate magnetic provenance does not match pinned WMM2025 inputs');
   }
 }
 
@@ -347,15 +372,47 @@ async function insertCandidateRows(
 
 async function regenerateAirportProjections(
   connection: DuckDBConnection,
-  snapshotId: string
+  snapshotId: string,
+  magneticReferenceDate: string
 ): Promise<void> {
-  await connection.run(
-    `INSERT INTO radial_producer.planner_airports
-     SELECT CAST(? AS UUID), icao, database_id, name, longitude, latitude, NULL
-     FROM radial_producer.cached_airports
-     ORDER BY icao`,
-    [snapshotId]
+  const cachedAirports = await connection.runAndReadAll(
+    `SELECT icao, database_id, name, longitude, latitude
+     FROM radial_producer.cached_airports ORDER BY icao`
   );
+  for (const airport of cachedAirports.getRowObjectsJS()) {
+    const icao = airport['icao'];
+    const databaseId = airport['database_id'];
+    const name = airport['name'];
+    const longitude = airport['longitude'];
+    const latitude = airport['latitude'];
+    if (
+      typeof icao !== 'string' ||
+      typeof databaseId !== 'string' ||
+      typeof name !== 'string' ||
+      typeof longitude !== 'number' ||
+      typeof latitude !== 'number'
+    ) {
+      throw new Error('Cached Airport projection input is invalid');
+    }
+    const magneticDeclinationDegEast = localMagneticDeclinationFromWmm2025({
+      referenceDate: magneticReferenceDate,
+      longitude,
+      latitude,
+    });
+    await connection.run(
+      `INSERT INTO radial_producer.planner_airports
+       VALUES (CAST(? AS UUID), ?, ?, ?, ?, ?, ?)`,
+      [
+        snapshotId,
+        icao,
+        databaseId,
+        name,
+        longitude,
+        latitude,
+        magneticDeclinationDegEast,
+      ]
+    );
+  }
 }
 
 async function verifyStoredCandidate(

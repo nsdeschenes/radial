@@ -1,6 +1,9 @@
 import {createHash} from 'node:crypto';
 
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
+import Wmm2025 from '#radial/data-producer/internal/Wmm2025.js';
+
+const {localMagneticDeclinationFromWmm2025, wmm2025Provenance} = Wmm2025;
 
 const FAMILY_BY_TYPE = new Map<number, string>([
   [2, 'NDB'],
@@ -29,6 +32,8 @@ type CandidateProvenance = Readonly<{
   matchingPolicyIdentity: string;
   magneticModel: MagneticModelProvenance;
 }>;
+
+type CandidateInputProvenance = Omit<CandidateProvenance, 'magneticModel'>;
 
 type RawNavaid = Readonly<{
   sourceRecordId: string;
@@ -93,7 +98,7 @@ type NavaidSnapshotCandidate = Readonly<{
 
 type BuildCandidateRequest = Readonly<{
   rawNavaids: readonly unknown[];
-  provenance: CandidateProvenance;
+  provenance: CandidateInputProvenance;
   retrievedAt: string;
   retrievalCompletedAt: string;
 }>;
@@ -107,12 +112,16 @@ type IdentifiedRecord = Readonly<{
 function buildNavaidSnapshotCandidate(
   request: BuildCandidateRequest
 ): NavaidSnapshotCandidate {
-  validateProvenance(request.provenance);
   validateTimestamp(request.retrievedAt, 'retrievedAt');
   validateTimestamp(request.retrievalCompletedAt, 'retrievalCompletedAt');
   if (request.retrievalCompletedAt < request.retrievedAt) {
     throw new Error('retrievalCompletedAt must not precede retrievedAt.');
   }
+  validateInputProvenance(request.provenance);
+  const provenance = Object.freeze({
+    ...request.provenance,
+    magneticModel: wmm2025Provenance(request.retrievedAt.slice(0, 10)),
+  });
 
   const identifiedRecords = identifyRecords(request.rawNavaids);
   const rawNavaids = identifiedRecords.map(({sourceRecordId, canonicalRecord}) => ({
@@ -125,7 +134,7 @@ function buildNavaidSnapshotCandidate(
   const facilityVariationAudits: FacilityVariationAudit[] = [];
 
   for (const identified of identifiedRecords) {
-    const derived = deriveNavaid(identified);
+    const derived = deriveNavaid(identified, provenance.magneticModel.referenceDate);
     if ('reason' in derived) {
       exclusions.push(derived);
     } else {
@@ -147,7 +156,7 @@ function buildNavaidSnapshotCandidate(
   const snapshotChecksum = checksum(
     canonicalizeJson({
       manifestVersion: 1,
-      provenance: request.provenance,
+      provenance,
       componentChecksums,
       counts: {
         rawNavaids: rawNavaids.length,
@@ -160,7 +169,7 @@ function buildNavaidSnapshotCandidate(
   return Object.freeze({
     retrievedAt: request.retrievedAt,
     retrievalCompletedAt: request.retrievalCompletedAt,
-    provenance: request.provenance,
+    provenance,
     rawNavaids: Object.freeze(rawNavaids),
     plannerNavaids: Object.freeze(plannerNavaids),
     exclusions: Object.freeze(exclusions),
@@ -214,7 +223,10 @@ function identifyRecords(rawNavaids: readonly unknown[]): IdentifiedRecord[] {
     .toSorted((left, right) => compareStrings(left.sourceRecordId, right.sourceRecordId));
 }
 
-function deriveNavaid(identified: IdentifiedRecord): PlannerNavaid | NavaidExclusion {
+function deriveNavaid(
+  identified: IdentifiedRecord,
+  magneticReferenceDate: string
+): PlannerNavaid | NavaidExclusion {
   const {record, sourceRecordId} = identified;
   if (sourceRecordId === '') {
     return {sourceRecordId, reason: 'missing-stable-identity'};
@@ -252,7 +264,11 @@ function deriveNavaid(identified: IdentifiedRecord): PlannerNavaid | NavaidExclu
     frequencyValue: frequency.value,
     frequencyUnit: frequency.unit,
     publishedRangeNm,
-    magneticDeclinationDegEast: null,
+    magneticDeclinationDegEast: localMagneticDeclinationFromWmm2025({
+      referenceDate: magneticReferenceDate,
+      longitude: coordinates.longitude,
+      latitude: coordinates.latitude,
+    }),
     facilityVariationDegEast: null,
     facilityVariationSource: null,
     facilityVariationEffectiveDate: null,
@@ -313,43 +329,21 @@ function rangeFrom(value: unknown): number | undefined {
     : undefined;
 }
 
-function validateProvenance(provenance: CandidateProvenance): void {
+function validateInputProvenance(provenance: CandidateInputProvenance): void {
   for (const [name, value] of [
     ['sourceIdentity', provenance.sourceIdentity],
     ['derivationPolicyIdentity', provenance.derivationPolicyIdentity],
     ['matchingPolicyIdentity', provenance.matchingPolicyIdentity],
-    ['magneticModel.model', provenance.magneticModel.model],
-    ['magneticModel.version', provenance.magneticModel.version],
-    ['magneticModel.source', provenance.magneticModel.source],
   ] as const) {
     if (value.trim() === '') {
       throw new Error(`${name} must not be empty.`);
     }
-  }
-  if (
-    !Number.isFinite(provenance.magneticModel.epochYear) ||
-    provenance.magneticModel.epochYear <= 0
-  ) {
-    throw new Error('magneticModel.epochYear must be finite and positive.');
-  }
-  validateChecksum(
-    provenance.magneticModel.coefficientChecksum,
-    'magneticModel.coefficientChecksum'
-  );
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(provenance.magneticModel.referenceDate)) {
-    throw new Error('magneticModel.referenceDate must be an ISO date.');
   }
 }
 
 function validateTimestamp(value: string, name: string): void {
   if (Number.isNaN(Date.parse(value)) || new Date(value).toISOString() !== value) {
     throw new Error(`${name} must be a canonical UTC timestamp.`);
-  }
-}
-
-function validateChecksum(value: string, name: string): void {
-  if (!/^sha256:[0-9a-f]{64}$/.test(value)) {
-    throw new Error(`${name} must be a lowercase prefixed SHA-256 checksum.`);
   }
 }
 

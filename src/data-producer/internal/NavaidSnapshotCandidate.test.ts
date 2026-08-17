@@ -6,15 +6,6 @@ const PROVENANCE = {
   sourceIdentity: 'fixture:openaip-navaids:v1',
   derivationPolicyIdentity: 'radial:navaid-derivation:v1',
   matchingPolicyIdentity: 'fixture:no-facility-variation:v1',
-  magneticModel: {
-    model: 'fixture magnetic model',
-    version: '1',
-    epochYear: 2025,
-    referenceDate: '2026-08-17',
-    source: 'fixture:wmm:v1',
-    coefficientChecksum:
-      'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-  },
 } as const;
 
 test('canonically preserves and deterministically partitions every raw Navaid', () => {
@@ -70,14 +61,18 @@ test('canonically preserves and deterministically partitions every raw Navaid', 
   const reordered = buildNavaidSnapshotCandidate({
     rawNavaids: records.toReversed(),
     provenance: PROVENANCE,
+    retrievedAt: '2026-08-17T13:00:00.000Z',
+    retrievalCompletedAt: '2026-08-17T13:00:01.000Z',
+  });
+  const nextDate = buildNavaidSnapshotCandidate({
+    rawNavaids: records,
+    provenance: PROVENANCE,
     retrievedAt: '2026-08-18T12:00:00.000Z',
     retrievalCompletedAt: '2026-08-18T12:00:01.000Z',
   });
 
   expect(candidate.snapshotChecksum).toBe(reordered.snapshotChecksum);
-  expect(candidate.snapshotChecksum).toBe(
-    'sha256:2fca603a847763dd5a85bc7bef92d026e709e758ad7b38c57ca8d083cbe4368e'
-  );
+  expect(candidate.snapshotChecksum).not.toBe(nextDate.snapshotChecksum);
   expect(candidate.componentChecksums).toEqual(reordered.componentChecksums);
   expect(candidate.rawNavaids).toHaveLength(7);
   expect(candidate.plannerNavaids.map(row => row.family)).toEqual(['NDB', 'VOR-DME']);
@@ -95,6 +90,49 @@ test('canonically preserves and deterministically partitions every raw Navaid', 
   expect(new Set(candidate.rawNavaids.map(row => row.sourceRecordId)).size).toBe(7);
   expect(candidate.rawNavaids.map(row => row.sourceRecordId)).toEqual(
     reordered.rawNavaids.map(row => row.sourceRecordId)
+  );
+  expect(candidate.provenance.magneticModel).toEqual({
+    model: 'WMM',
+    version: 'WMM2025',
+    epochYear: 2025,
+    referenceDate: '2026-08-17',
+    source: 'https://doi.org/10.25921/aqfd-sd83',
+    coefficientChecksum:
+      'sha256:dfa8597825af4e0b87ff4198a5b4fb661b3c49f4cd090cd0164e0259b075582f',
+  });
+  expect(
+    candidate.plannerNavaids.every(
+      row =>
+        row.magneticDeclinationDegEast !== null &&
+        !Number.isInteger(row.magneticDeclinationDegEast) &&
+        row.magneticDeclinationDegEast >= -180 &&
+        row.magneticDeclinationDegEast < 180
+    )
+  ).toBe(true);
+});
+
+test('preserves an eligible Navaid with unavailable Blackout Zone declination', () => {
+  const candidate = buildNavaidSnapshotCandidate({
+    rawNavaids: [
+      {
+        _id: 'blackout-vor',
+        type: 3,
+        identifier: 'BOZ',
+        geometry: {type: 'Point', coordinates: [139.298, 85.762]},
+        frequency: {value: '113.000', unit: 2},
+        range: {value: 100, unit: 2},
+      },
+    ],
+    provenance: PROVENANCE,
+    retrievedAt: '2025-01-01T00:00:00.000Z',
+    retrievalCompletedAt: '2025-01-01T00:00:01.000Z',
+  });
+
+  expect(candidate.plannerNavaids).toHaveLength(1);
+  expect(candidate.plannerNavaids[0]?.magneticDeclinationDegEast).toBeNull();
+  expect(candidate.exclusions).toEqual([]);
+  expect(candidate.snapshotChecksum).toBe(
+    'sha256:8f0d49c1075ab582e4141544a2c80e9a2df9f5209a752745ba376d33df4b177e'
   );
 });
 
