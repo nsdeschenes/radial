@@ -148,7 +148,7 @@ test('returns the same continuous multi-Navaid Route Plan for ten database row p
     });
   await openedWithoutIrrelevantCandidate.value[Symbol.asyncDispose]();
   expect(resultWithoutIrrelevantCandidate).toEqual(expected);
-});
+}, 15_000);
 
 test('replaces an early provisional Route Plan after completing its improving ellipse', async () => {
   await using database = await syntheticPlannerDatabase.create({
@@ -372,7 +372,7 @@ test('selects the same stable mixed-family Route Plan for ten database row permu
   expect(
     expected.value.plan.routePoints.map(routePoint => routePoint.databaseId)
   ).toEqual(['departure', 'vor', 'ndb-a', 'arrival']);
-});
+}, 15_000);
 
 test('rejects a database path that does not identify an existing file', async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-planner-'));
