@@ -47,11 +47,24 @@ function formatRoutePlanningDiagnostic(failure: RoutePlanningFailure): string {
     case 'airport-ambiguous':
       return `${capitalize(failure.role)} airport ${JSON.stringify(failure.normalizedIcao)} matched multiple usable records in the local database.\n`;
     case 'database-query-failed':
-      return failure.operation === 'resolve-airports'
-        ? 'Unable to plan route: the airport lookup query failed.\n'
-        : 'Unable to plan route: a database query failed.\n';
+      return formatDatabaseQueryDiagnostic(failure.operation);
     case 'no-route':
       return `No route found from ${failure.departureIcao} to ${failure.arrivalIcao}.\n`;
+  }
+}
+
+function formatDatabaseQueryDiagnostic(operation: string): string {
+  switch (operation) {
+    case 'validate-contract':
+      return 'Unable to plan route: the database contract validation query failed.\n';
+    case 'resolve-airports':
+      return 'Unable to plan route: the airport lookup query failed.\n';
+    case 'find-vor-family-route':
+      return 'Unable to plan route: the VOR-family route search query failed.\n';
+    case 'find-ndb-fallback-route':
+      return 'Unable to plan route: the NDB fallback route search query failed.\n';
+    default:
+      return `Unable to plan route: the ${JSON.stringify(operation)} database query failed.\n`;
   }
 }
 
