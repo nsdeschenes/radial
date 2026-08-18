@@ -162,6 +162,8 @@ class RadialApplication implements Application {
     this.dataManagement = Object.freeze({
       reloadNavaids: (request: RadialApplicationTypes['NavaidReloadRequest']) =>
         this.#reloadNavaids(request),
+      reloadAirport: (request: RadialApplicationTypes['AirportReloadRequest']) =>
+        this.#reloadAirport(request),
     });
     this.planning = Object.freeze({open: () => this.#openPlanning()});
   }
@@ -188,6 +190,57 @@ class RadialApplication implements Application {
         this.#navaidDataProducerDependencies
       )
     );
+  }
+
+  async #reloadAirport(
+    request: RadialApplicationTypes['AirportReloadRequest']
+  ): Promise<RadialApplicationTypes['AirportReloadResult']> {
+    const validatedIcao = validation.validateAirportIcao(request.icao);
+    if (!validatedIcao.ok) {
+      return {
+        ok: false,
+        failure: {
+          code: 'DATA_INVALID_ICAO',
+          summary: 'The Airport ICAO is invalid.',
+          cause: `The requested Airport ICAO ${JSON.stringify(request.icao)} is not four ASCII letters.`,
+          action: 'Provide exactly one four-letter ICAO and retry the Airport reload.',
+          activeDataPreserved: true,
+        },
+      };
+    }
+    if (request.openAipApiKey.trim() === '') {
+      return {
+        ok: false,
+        failure: {
+          code: 'DATA_CREDENTIALS_MISSING',
+          summary: 'OpenAIP credentials are missing.',
+          cause: 'OPENAIP_API_KEY is required for an explicit Airport reload.',
+          action: 'Set OPENAIP_API_KEY and retry the Airport reload.',
+          activeDataPreserved: true,
+        },
+      };
+    }
+
+    return this.#activityGate.run(async () => {
+      try {
+        return await ensureCachedAirport.reloadAirport(
+          await this.#runtime.instance(),
+          {...request, icao: validatedIcao.value},
+          this.#airportDataProducerDependencies
+        );
+      } catch {
+        return {
+          ok: false,
+          failure: {
+            code: 'DATA_DATABASE_UNAVAILABLE',
+            summary: 'The configured database is unavailable.',
+            cause: 'The database could not be opened for the Airport reload.',
+            action: 'Check RADIAL_DATABASE_PATH and retry the Airport reload.',
+            activeDataPreserved: true,
+          },
+        };
+      }
+    });
   }
 
   async #openPlanning(): Promise<RadialApplicationTypes['PlanningOpenResult']> {

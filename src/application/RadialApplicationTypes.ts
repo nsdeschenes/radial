@@ -17,9 +17,21 @@ type NavaidReloadRequest = Readonly<{
   onProgress?: (progress: NavaidReloadProgress) => void;
 }>;
 
+type AirportReloadProgress = Readonly<{
+  stage: 'database' | 'openaip' | 'derive' | 'publish' | 'complete';
+  message: string;
+}>;
+
+type AirportReloadRequest = Readonly<{
+  icao: string;
+  openAipApiKey: string;
+  onProgress?: (progress: AirportReloadProgress) => void;
+}>;
+
 type DataFailure = Readonly<{
   code:
     | 'DATA_DATABASE_PATH_MISSING'
+    | 'DATA_INVALID_ICAO'
     | 'DATA_CREDENTIALS_MISSING'
     | 'DATA_DATABASE_UNAVAILABLE'
     | 'DATA_DATABASE_INVALID'
@@ -27,6 +39,9 @@ type DataFailure = Readonly<{
     | 'DATA_OPENAIP_FORBIDDEN'
     | 'DATA_OPENAIP_UNAVAILABLE'
     | 'DATA_OPENAIP_INVALID_RESPONSE'
+    | 'DATA_AIRPORT_NOT_FOUND'
+    | 'DATA_AIRPORT_AMBIGUOUS'
+    | 'DATA_AIRPORT_INVALID'
     | 'DATA_SNAPSHOT_DRIFT'
     | 'DATA_NASR_UNAVAILABLE'
     | 'DATA_NASR_INVALID_RESPONSE'
@@ -81,6 +96,15 @@ type NavaidReloadSuccess = Readonly<{
 
 type NavaidReloadResult = Result<NavaidReloadSuccess, DataFailure>;
 
+type AirportReloadSuccess = Readonly<{
+  status: 'cached' | 'replaced';
+  icao: string;
+  sourceId: string;
+  retrievedAt: string;
+}>;
+
+type AirportReloadResult = Result<AirportReloadSuccess, DataFailure>;
+
 type PlanningOpenFailure = RoutePlannerTypes['PlannerOpenFailure'] | DataFailure;
 type PlanningOpenResult = Result<RoutePlannerTypes['RoutePlanner'], PlanningOpenFailure>;
 
@@ -90,6 +114,7 @@ interface PlanningCapability {
 
 interface DataManagementCapability {
   reloadNavaids(request: NavaidReloadRequest): Promise<NavaidReloadResult>;
+  reloadAirport(request: AirportReloadRequest): Promise<AirportReloadResult>;
 }
 
 interface RadialApplication {
@@ -109,6 +134,10 @@ export default interface RadialApplicationTypes {
   >;
   DataFailure: DataFailure;
   DataManagementCapability: DataManagementCapability;
+  AirportReloadProgress: AirportReloadProgress;
+  AirportReloadRequest: AirportReloadRequest;
+  AirportReloadResult: AirportReloadResult;
+  AirportReloadSuccess: AirportReloadSuccess;
   NavaidReloadProgress: NavaidReloadProgress;
   NavaidReloadRequest: NavaidReloadRequest;
   NavaidReloadResult: NavaidReloadResult;

@@ -541,6 +541,9 @@ test('reports the failed query operation without writing a partial Route Plan an
       async reloadNavaids() {
         throw new Error('Navaid reload is not used by this test.');
       },
+      async reloadAirport() {
+        throw new Error('Airport reload is not used by this test.');
+      },
     },
     async [Symbol.asyncDispose]() {},
   };
@@ -566,7 +569,32 @@ function syntheticApplication(
 ): ApplicationTypes['Application'] {
   return {
     databasePath: ':synthetic:',
-    dataManagement: {reloadNavaids},
+    dataManagement: {
+      reloadNavaids,
+      async reloadAirport() {
+        throw new Error('Airport reload is not used by this test.');
+      },
+    },
+    planning: {
+      async open() {
+        throw new Error('Route planning is not used by this test.');
+      },
+    },
+    async [Symbol.asyncDispose]() {},
+  };
+}
+
+function syntheticAirportApplication(
+  reloadAirport: ApplicationTypes['DataManagementCapability']['reloadAirport']
+): ApplicationTypes['Application'] {
+  return {
+    databasePath: ':synthetic:',
+    dataManagement: {
+      async reloadNavaids() {
+        throw new Error('Navaid reload is not used by this test.');
+      },
+      reloadAirport,
+    },
     planning: {
       async open() {
         throw new Error('Route planning is not used by this test.');
@@ -589,6 +617,9 @@ async function openSyntheticApplication(
       dataManagement: {
         async reloadNavaids() {
           throw new Error('Navaid reload is not used by this test.');
+        },
+        async reloadAirport() {
+          throw new Error('Airport reload is not used by this test.');
         },
       },
       async [Symbol.asyncDispose]() {},

@@ -6,6 +6,7 @@ import {DuckDBInstance} from '@duckdb/node-api';
 import openRadialApplication from 'radial';
 import {expect, test} from 'vitest';
 
+import Wmm2025 from '#radial/data-producer/internal/Wmm2025.js';
 import createSyntheticFAANasrCycle from '#radial/test/createSyntheticFAANasrCycle.js';
 
 type AirportPage = Readonly<{
@@ -274,9 +275,189 @@ test('reports a corrupt committed Cached Airport instead of replacing it', async
   }
 });
 
+test('forced Airport reload replaces the cache and derives magnetic projection from WMM', async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-airport-reload-'));
+  const databasePath = join(temporaryDirectory, 'radial.duckdb');
+  let lookupCount = 0;
+  let nowCallCount = 0;
+  let useFreshTimes = false;
+
+  try {
+    const opened = await openBootstrappedApplication(
+      databasePath,
+      request => {
+        expect(request.search).toBe('CAAA');
+        lookupCount += 1;
+        return airportPage(1, 1, [
+          {
+            ...airport(`airport-${lookupCount}`, 'CAAA', -80, 44),
+            magneticDeclination: lookupCount === 1 ? 123 : -123,
+          },
+        ]);
+      },
+      () => {
+        if (!useFreshTimes) {
+          return new Date('2026-07-10T00:00:00.000Z');
+        }
+        nowCallCount += 1;
+        return new Date(Date.parse('2026-07-10T00:00:00.000Z') + nowCallCount * 1000);
+      }
+    );
+    if (!opened.ok) {
+      throw new Error('Expected the application to open.');
+    }
+
+    const bootstrapPlanner = await opened.value.planning.open();
+    if (!bootstrapPlanner.ok) {
+      throw new Error('Expected the Navaid Snapshot bootstrap to succeed.');
+    }
+    await bootstrapPlanner.value[Symbol.asyncDispose]();
+    useFreshTimes = true;
+
+    const firstReload = await opened.value.dataManagement.reloadAirport({
+      icao: ' caaa ',
+      openAipApiKey: 'test-key',
+    });
+    expect(firstReload).toMatchObject({
+      ok: true,
+      value: {status: 'cached', icao: 'CAAA', sourceId: 'airport-1'},
+    });
+    if (!firstReload.ok) {
+      throw new Error('Expected the first Airport reload to succeed.');
+    }
+    const firstRetrievedAt = firstReload.value.retrievedAt;
+
+    const secondReload = await opened.value.dataManagement.reloadAirport({
+      icao: 'CAAA',
+      openAipApiKey: 'test-key',
+    });
+    expect(secondReload).toMatchObject({
+      ok: true,
+      value: {status: 'replaced', icao: 'CAAA', sourceId: 'airport-2'},
+    });
+    if (!secondReload.ok) {
+      throw new Error('Expected the second Airport reload to succeed.');
+    }
+    const secondRetrievedAt = secondReload.value.retrievedAt;
+
+    expect(secondRetrievedAt).not.toBe(firstRetrievedAt);
+    const firstProvenance = await cachedAirportProvenanceRow(databasePath);
+
+    await opened.value[Symbol.asyncDispose]();
+
+    expect(firstProvenance['database_id']).toBe('airport-2');
+    expect(await projectedAirportDetails(databasePath)).toEqual({
+      icao: 'CAAA',
+      database_id: 'airport-2',
+      magnetic_declination_deg_east: Wmm2025.localMagneticDeclinationFromWmm2025({
+        referenceDate: '2026-07-10',
+        longitude: -80,
+        latitude: 44,
+      }),
+    });
+  } finally {
+    await rm(temporaryDirectory, {recursive: true});
+  }
+});
+
+test('failed forced Airport reload preserves the cached record and projection', async () => {
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), 'radial-airport-reload-failure-')
+  );
+  const databasePath = join(temporaryDirectory, 'radial.duckdb');
+  let shouldFail = false;
+
+  try {
+    const opened = await openBootstrappedApplication(databasePath, request => {
+      if (shouldFail) {
+        throw new Error('OpenAIP is unavailable.');
+      }
+      return airportPage(1, 1, [airport('airport-original', request.search, -80, 44)]);
+    });
+    if (!opened.ok) {
+      throw new Error('Expected the application to open.');
+    }
+
+    const bootstrapPlanner = await opened.value.planning.open();
+    if (!bootstrapPlanner.ok) {
+      throw new Error('Expected the Navaid Snapshot bootstrap to succeed.');
+    }
+    await bootstrapPlanner.value[Symbol.asyncDispose]();
+
+    await expect(
+      opened.value.dataManagement.reloadAirport({
+        icao: 'CAAA',
+        openAipApiKey: 'test-key',
+      })
+    ).resolves.toMatchObject({ok: true, value: {status: 'cached'}});
+    shouldFail = true;
+
+    await expect(
+      opened.value.dataManagement.reloadAirport({
+        icao: 'CAAA',
+        openAipApiKey: 'test-key',
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      failure: {code: 'DATA_OPENAIP_UNAVAILABLE', activeDataPreserved: true},
+    });
+    await opened.value[Symbol.asyncDispose]();
+
+    expect(await cachedAirportRows(databasePath)).toEqual([
+      {icao: 'CAAA', database_id: 'airport-original', name: 'CAAA Airport'},
+    ]);
+    expect(await projectedAirportRows(databasePath)).toEqual([
+      {icao: 'CAAA', database_id: 'airport-original'},
+    ]);
+  } finally {
+    await rm(temporaryDirectory, {recursive: true});
+  }
+});
+
+test('caches an Airport before the first Navaid Snapshot and projects it on publication', async () => {
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), 'radial-airport-pre-snapshot-')
+  );
+  const databasePath = join(temporaryDirectory, 'radial.duckdb');
+
+  try {
+    const opened = await openBootstrappedApplication(databasePath, request =>
+      airportPage(1, 1, [airport('airport-pre-snapshot', request.search, -80, 44)])
+    );
+    if (!opened.ok) {
+      throw new Error('Expected the application to open.');
+    }
+
+    await expect(
+      opened.value.dataManagement.reloadAirport({
+        icao: ' CAAA ',
+        openAipApiKey: 'test-key',
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {status: 'cached', icao: 'CAAA'},
+    });
+    expect(await projectedAirportRows(databasePath)).toEqual([]);
+
+    await expect(
+      opened.value.dataManagement.reloadNavaids({openAipApiKey: 'test-key'})
+    ).resolves.toMatchObject({ok: true});
+    await opened.value[Symbol.asyncDispose]();
+
+    expect(await projectedAirportRows(databasePath)).toEqual([
+      {icao: 'CAAA', database_id: 'airport-pre-snapshot'},
+    ]);
+  } finally {
+    await rm(temporaryDirectory, {recursive: true});
+  }
+});
+
 async function openBootstrappedApplication(
   databasePath: string,
-  listOpenAIPAirports: (request: AirportPageRequest) => AirportPage | Promise<AirportPage>
+  listOpenAIPAirports: (
+    request: AirportPageRequest
+  ) => AirportPage | Promise<AirportPage>,
+  now: () => Date = () => new Date('2026-07-10T00:00:00.000Z')
 ): ReturnType<typeof openRadialApplication> {
   const timestamp = '2026-07-10T00:00:00.000Z';
   const nasrCycle = createSyntheticFAANasrCycle(
@@ -296,7 +477,7 @@ async function openBootstrappedApplication(
   return openRadialApplication(
     {databasePath, openAipApiKey: 'test-key'},
     {
-      now: () => new Date(timestamp),
+      now,
       listOpenAIPAirports: request => Promise.resolve(listOpenAIPAirports(request)),
       createOpenAIPTransport: () => async () => ({
         status: 200,
@@ -362,6 +543,27 @@ async function cachedAirportRows(databasePath: string) {
   }
 }
 
+async function cachedAirportProvenanceRow(databasePath: string) {
+  const instance = await DuckDBInstance.create(databasePath);
+  const connection = await instance.connect();
+  try {
+    const rows = await connection.runAndReadAll(
+      `SELECT database_id, CAST(retrieved_at AS VARCHAR) AS retrieved_at,
+              CAST(published_at AS VARCHAR) AS published_at
+       FROM radial_producer.cached_airports
+       WHERE icao = 'CAAA'`
+    );
+    const row = rows.getRowObjectsJS()[0];
+    if (row === undefined) {
+      throw new Error('Expected one Cached Airport provenance row.');
+    }
+    return row;
+  } finally {
+    connection.closeSync();
+    instance.closeSync();
+  }
+}
+
 async function projectedAirportRows(databasePath: string) {
   const instance = await DuckDBInstance.create(databasePath);
   const connection = await instance.connect();
@@ -372,6 +574,26 @@ async function projectedAirportRows(databasePath: string) {
        FROM planner_airports ORDER BY icao`
     );
     return rows.getRowObjectsJS();
+  } finally {
+    connection.closeSync();
+    instance.closeSync();
+  }
+}
+
+async function projectedAirportDetails(databasePath: string) {
+  const instance = await DuckDBInstance.create(databasePath);
+  const connection = await instance.connect();
+  try {
+    await connection.run('LOAD spatial');
+    const rows = await connection.runAndReadAll(
+      `SELECT icao, database_id, magnetic_declination_deg_east
+       FROM planner_airports`
+    );
+    const row = rows.getRowObjectsJS()[0];
+    if (row === undefined) {
+      throw new Error('Expected one projected Cached Airport.');
+    }
+    return row;
   } finally {
     connection.closeSync();
     instance.closeSync();
