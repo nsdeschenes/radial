@@ -145,6 +145,9 @@ async function openAcceptanceApplication(
         async reloadNavaids() {
           throw new Error('Navaid reload is not used by acceptance smoke.');
         },
+        async reloadAirport() {
+          throw new Error('Airport reload is not used by acceptance smoke.');
+        },
       },
       async [Symbol.asyncDispose]() {},
     },

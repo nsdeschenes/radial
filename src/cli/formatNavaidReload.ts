@@ -1,19 +1,5 @@
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
-
-function formatProgress(
-  progress: RadialApplicationTypes['NavaidReloadProgress']
-): string {
-  return `progress: ${progress.message}\n`;
-}
-
-function formatFailure(failure: RadialApplicationTypes['DataFailure']): string {
-  return (
-    `error [${failure.code}]: ${failure.summary}\n` +
-    `Cause: ${failure.cause}\n` +
-    `Action: ${failure.action}\n` +
-    (failure.activeDataPreserved ? 'Active data remains unchanged.\n' : '')
-  );
-}
+import dataReloadOutput from '#radial/cli/formatDataReload.js';
 
 function formatSuccess(success: RadialApplicationTypes['NavaidReloadSuccess']): string {
   const {faaNasr, magneticModel} = success.provenance;
@@ -56,4 +42,8 @@ function formatSuccess(success: RadialApplicationTypes['NavaidReloadSuccess']): 
   );
 }
 
-export default {formatFailure, formatProgress, formatSuccess};
+export default {
+  formatFailure: dataReloadOutput.formatFailure,
+  formatProgress: dataReloadOutput.formatProgress,
+  formatSuccess,
+};

@@ -2,8 +2,10 @@ import {createHash} from 'node:crypto';
 
 import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 
+import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import OpenAIP from '#radial/clients/OpenAIP/OpenAIP.js';
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
+import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import Wmm2025 from '#radial/data-producer/internal/Wmm2025.js';
 
 type AirportPageRequest = Readonly<{
@@ -43,6 +45,9 @@ type AirportResolutionResult =
   | Readonly<{ok: true}>
   | Readonly<{ok: false; failure: AirportResolutionFailure}>;
 
+type AirportReloadRequest = RadialApplicationTypes['AirportReloadRequest'];
+type AirportReloadResult = RadialApplicationTypes['AirportReloadResult'];
+
 type AirportRecord = Readonly<{
   sourceId: string;
   icao: string;
@@ -59,8 +64,106 @@ type AirportCacheRead =
   | Readonly<{kind: 'corrupt'}>
   | Readonly<{kind: 'database-error'}>;
 
+type AirportAcquisitionProgress = Readonly<{
+  stage: 'openaip' | 'derive';
+  message: string;
+}>;
+
+type AirportAcquisitionResult =
+  | Readonly<{
+      ok: true;
+      airport: AirportRecord;
+      retrievedAt: string;
+      publishedAt: string;
+    }>
+  | Readonly<{ok: false; failure: AirportResolutionFailure}>;
+
 const AIRPORT_PAGE_LIMIT = 1000;
 const ICAO_PATTERN = /^[A-Z]{4}$/;
+
+async function reloadAirport(
+  instance: DuckDBInstance,
+  request: AirportReloadRequest,
+  dependencies: AirportDataProducerDependencies = {}
+): Promise<AirportReloadResult> {
+  const normalizedIcao = normalizeIcao(request.icao);
+  if (!ICAO_PATTERN.test(normalizedIcao)) {
+    return failure(
+      'DATA_INVALID_ICAO',
+      'The Airport ICAO is invalid.',
+      `The requested Airport ICAO ${JSON.stringify(request.icao)} is not four ASCII letters.`,
+      'Provide exactly one four-letter ICAO and retry the Airport reload.'
+    );
+  }
+  if (request.openAipApiKey.trim() === '') {
+    return failure(
+      'DATA_CREDENTIALS_MISSING',
+      'OpenAIP credentials are missing.',
+      'OPENAIP_API_KEY is required for an explicit Airport reload.',
+      'Set OPENAIP_API_KEY and retry the Airport reload.'
+    );
+  }
+
+  request.onProgress?.({stage: 'database', message: 'Preparing Producer Schema.'});
+  try {
+    await initializeProducerSchema(instance);
+  } catch {
+    return failure(
+      'DATA_DATABASE_INVALID',
+      'The configured database is invalid.',
+      'The Producer Schema could not be prepared safely.',
+      'Inspect the configured database and retry with a valid Radial database.'
+    );
+  }
+
+  const cached = await readCachedAirport(instance, normalizedIcao);
+  if (cached.kind === 'database-error') {
+    return failure(
+      'DATA_DATABASE_UNAVAILABLE',
+      'The configured database is unavailable.',
+      'The existing Cached Airport could not be inspected.',
+      'Check database availability and retry the Airport reload.'
+    );
+  }
+
+  const acquired = await acquireAirportRecord(
+    request.openAipApiKey,
+    normalizedIcao,
+    dependencies,
+    progress => request.onProgress?.(progress)
+  );
+  if (!acquired.ok) {
+    return mapAirportReloadFailure(acquired.failure);
+  }
+
+  request.onProgress?.({stage: 'publish', message: 'Publishing Cached Airport.'});
+  try {
+    await publishAirport(
+      instance,
+      acquired.airport,
+      acquired.retrievedAt,
+      acquired.publishedAt
+    );
+  } catch (error) {
+    return failure(
+      'DATA_PUBLICATION_FAILED',
+      'Cached Airport publication failed.',
+      'The Cached Airport could not be committed.',
+      'Inspect database availability and retry the Airport reload.',
+      error instanceof AirportPublicationError ? error.activeDataPreserved : true
+    );
+  }
+  request.onProgress?.({stage: 'complete', message: 'Cached Airport committed.'});
+  return {
+    ok: true,
+    value: {
+      status: cached.kind === 'missing' ? 'cached' : 'replaced',
+      icao: normalizedIcao,
+      sourceId: acquired.airport.sourceId,
+      retrievedAt: acquired.retrievedAt,
+    },
+  };
+}
 
 async function ensureCachedAirport(
   instance: DuckDBInstance,
@@ -83,6 +186,38 @@ async function ensureCachedAirport(
     return {ok: false, failure: {reason: 'credentials-missing'}};
   }
 
+  const acquired = await acquireAirportRecord(
+    openAipApiKey,
+    normalizedIcao,
+    dependencies
+  );
+  if (!acquired.ok) {
+    return acquired;
+  }
+
+  try {
+    await publishAirport(
+      instance,
+      acquired.airport,
+      acquired.retrievedAt,
+      acquired.publishedAt
+    );
+  } catch {
+    return {ok: false, failure: {reason: 'publication-failed'}};
+  }
+  return {ok: true};
+}
+
+async function acquireAirportRecord(
+  apiKey: string,
+  normalizedIcao: string,
+  dependencies: AirportDataProducerDependencies,
+  reportProgress?: (progress: AirportAcquisitionProgress) => void
+): Promise<AirportAcquisitionResult> {
+  reportProgress?.({
+    stage: 'openaip',
+    message: `Looking up Airport ${normalizedIcao} in OpenAIP.`,
+  });
   const now = dependencies.now ?? (() => new Date());
   let retrievedAt: string;
   try {
@@ -94,7 +229,7 @@ async function ensureCachedAirport(
   let records: readonly unknown[];
   try {
     records = await fetchAirportRecords(
-      openAipApiKey,
+      apiKey,
       normalizedIcao,
       dependencies.listOpenAIPAirports
     );
@@ -110,24 +245,28 @@ async function ensureCachedAirport(
     };
   }
 
+  reportProgress?.({stage: 'derive', message: 'Validating exact Airport match.'});
   const selected = selectAirport(records, normalizedIcao);
   if (!selected.ok) {
     return selected;
   }
 
+  reportProgress?.({
+    stage: 'derive',
+    message: 'Deriving planner-ready Airport projection.',
+  });
   let publishedAt: string;
   try {
     publishedAt = now().toISOString();
   } catch {
     return {ok: false, failure: {reason: 'publication-failed'}};
   }
-
-  try {
-    await publishAirport(instance, selected.airport, retrievedAt, publishedAt);
-  } catch {
-    return {ok: false, failure: {reason: 'publication-failed'}};
-  }
-  return {ok: true};
+  return {
+    ok: true,
+    airport: selected.airport,
+    retrievedAt,
+    publishedAt,
+  };
 }
 
 async function readCachedAirport(
@@ -491,9 +630,15 @@ async function publishAirport(
       try {
         await connection.run('ROLLBACK');
       } catch {
-        // The original publication failure is the actionable result.
+        throw new AirportPublicationError(
+          false,
+          error instanceof Error ? error.message : 'Cached Airport publication failed.'
+        );
       }
-      throw error;
+      throw new AirportPublicationError(
+        true,
+        error instanceof Error ? error.message : 'Cached Airport publication failed.'
+      );
     }
   } finally {
     connection.closeSync();
@@ -502,6 +647,78 @@ async function publishAirport(
 
 function normalizeIcao(value: string): string {
   return value.trim().toUpperCase();
+}
+
+function failure(
+  code: RadialApplicationTypes['DataFailure']['code'],
+  summary: string,
+  cause: string,
+  action: string,
+  activeDataPreserved = true
+): AirportReloadResult {
+  return {
+    ok: false,
+    failure: {code, summary, cause, action, activeDataPreserved},
+  };
+}
+
+function mapAirportReloadFailure(
+  reloadFailure: AirportResolutionFailure
+): AirportReloadResult {
+  switch (reloadFailure.reason) {
+    case 'not-found':
+    case 'mismatched':
+      return failure(
+        'DATA_AIRPORT_NOT_FOUND',
+        'The requested Airport was not found.',
+        'OpenAIP returned no exact usable match for the requested ICAO.',
+        'Check the ICAO and retry the Airport reload.'
+      );
+    case 'ambiguous':
+      return failure(
+        'DATA_AIRPORT_AMBIGUOUS',
+        'The Airport lookup was ambiguous.',
+        'OpenAIP returned multiple usable records for the requested ICAO.',
+        'Resolve the duplicate OpenAIP records and retry the Airport reload.'
+      );
+    case 'unusable':
+      return failure(
+        'DATA_AIRPORT_INVALID',
+        'The requested Airport data is invalid.',
+        'OpenAIP returned an unusable record for the requested ICAO.',
+        'Correct the upstream Airport data and retry the Airport reload.'
+      );
+    case 'cache-corrupt':
+    case 'credentials-missing':
+    case 'database-query':
+      return failure(
+        'DATA_OPENAIP_INVALID_RESPONSE',
+        'The Airport lookup failed.',
+        'The Airport source did not produce a usable result.',
+        'Check the Airport source and retry the Airport reload.'
+      );
+    case 'source-invalid':
+      return failure(
+        'DATA_OPENAIP_INVALID_RESPONSE',
+        'OpenAIP Airport acquisition failed.',
+        'The OpenAIP Airport response was invalid.',
+        'Check OpenAIP source compatibility and retry the Airport reload.'
+      );
+    case 'source-unavailable':
+      return failure(
+        'DATA_OPENAIP_UNAVAILABLE',
+        'OpenAIP Airport acquisition failed.',
+        'The OpenAIP Airport source was unavailable.',
+        'Check OpenAIP availability and credentials, then retry the Airport reload.'
+      );
+    case 'publication-failed':
+      return failure(
+        'DATA_PUBLICATION_FAILED',
+        'Cached Airport publication failed.',
+        'The Cached Airport could not be committed.',
+        'Inspect database availability and retry the Airport reload.'
+      );
+  }
 }
 
 function normalizedIcaoValue(value: unknown): string | null {
@@ -562,10 +779,19 @@ function checksum(value: string): string {
 
 class AirportSourceInvalidError extends Error {}
 
+class AirportPublicationError extends Error {
+  readonly activeDataPreserved: boolean;
+
+  constructor(activeDataPreserved: boolean, message: string) {
+    super(message);
+    this.activeDataPreserved = activeDataPreserved;
+  }
+}
+
 class AirportSourceUnavailableError extends Error {
   constructor(options: {cause: unknown}) {
     super('OpenAIP Airport source was unavailable.', options);
   }
 }
 
-export default ensureCachedAirport;
+export default Object.assign(ensureCachedAirport, {reloadAirport});

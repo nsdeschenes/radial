@@ -17,6 +17,13 @@ type NormalizedRoutePlanningRequest = Readonly<{
   arrivalIcao: string;
 }>;
 
+type AirportIcaoValidation =
+  | Readonly<{ok: true; value: string}>
+  | Readonly<{
+      ok: false;
+      failure: Readonly<{reason: 'invalid-icao'; value: string; normalizedIcao: string}>;
+    }>;
+
 const ICAO_PATTERN = /^[A-Z]{4}$/;
 
 function validatePlannerConfig(
@@ -82,6 +89,17 @@ function validateRoutePlanningRequest(
   return {ok: true, value: Object.freeze({departureIcao, arrivalIcao})};
 }
 
+function validateAirportIcao(value: string): AirportIcaoValidation {
+  const normalizedIcao = value.trim().toUpperCase();
+  if (!ICAO_PATTERN.test(normalizedIcao)) {
+    return {
+      ok: false,
+      failure: {reason: 'invalid-icao', value, normalizedIcao},
+    };
+  }
+  return {ok: true, value: normalizedIcao};
+}
+
 function invalidIcao(
   field: 'departureIcao' | 'arrivalIcao',
   value: string,
@@ -99,4 +117,8 @@ function invalidIcao(
   };
 }
 
-export default {validatePlannerConfig, validateRoutePlanningRequest};
+export default {
+  validateAirportIcao,
+  validatePlannerConfig,
+  validateRoutePlanningRequest,
+};

@@ -298,6 +298,74 @@ test('rejects a missing OpenAIP credential before creating producer storage', as
   }
 });
 
+test('validates Airport reload ICAOs and still requires credentials for a cache hit', async () => {
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), 'radial-airport-reload-config-')
+  );
+  const databasePath = join(temporaryDirectory, 'radial.duckdb');
+  let lookupCount = 0;
+
+  try {
+    const opened = await openRadialApplication(
+      {databasePath},
+      {
+        listOpenAIPAirports: async ({page}: {page: number}) => {
+          lookupCount += 1;
+          return {
+            page,
+            totalPages: 1,
+            items: [
+              {
+                _id: 'airport-caaa',
+                name: 'CAAA Airport',
+                icaoCode: 'CAAA',
+                geometry: {type: 'Point', coordinates: [-80, 44]},
+              },
+            ],
+          };
+        },
+      }
+    );
+    if (!opened.ok) {
+      throw new Error('Expected the application to open.');
+    }
+
+    await expect(
+      opened.value.dataManagement.reloadAirport({
+        icao: ' bad ',
+        openAipApiKey: 'test-key',
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      failure: {code: 'DATA_INVALID_ICAO', activeDataPreserved: true},
+    });
+    await expect(stat(databasePath)).rejects.toMatchObject({code: 'ENOENT'});
+
+    await expect(
+      opened.value.dataManagement.reloadAirport({
+        icao: ' caaa ',
+        openAipApiKey: 'test-key',
+      })
+    ).resolves.toMatchObject({ok: true, value: {status: 'cached', icao: 'CAAA'}});
+    await expect(
+      opened.value.dataManagement.reloadAirport({icao: 'CAAA', openAipApiKey: ' '})
+    ).resolves.toEqual({
+      ok: false,
+      failure: {
+        code: 'DATA_CREDENTIALS_MISSING',
+        summary: 'OpenAIP credentials are missing.',
+        cause: 'OPENAIP_API_KEY is required for an explicit Airport reload.',
+        action: 'Set OPENAIP_API_KEY and retry the Airport reload.',
+        activeDataPreserved: true,
+      },
+    });
+    expect(lookupCount).toBe(1);
+    await opened.value[Symbol.asyncDispose]();
+  } finally {
+    await rm(temporaryDirectory, {recursive: true});
+  }
+});
+
 test('publishes fresh reload identities and preserves the active snapshot on acquisition failure', async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-reload-'));
   const databasePath = join(temporaryDirectory, 'radial.duckdb');
