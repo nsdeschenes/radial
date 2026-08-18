@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  format:
-    name: Check formatting
+  install:
+    name: Install dependencies
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -22,8 +22,39 @@ jobs:
       - name: Set up Nub
         uses: nubjs/setup-nub@v0
 
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-node-modules-
+
       - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: nub install --frozen-lockfile
+
+  format:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: install
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Nub
+        uses: nubjs/setup-nub@v0
+
+      - name: Restore node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-node-modules-
 
       - name: Check formatting
         run: nub run fmt:check
@@ -32,6 +63,7 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: install
 
     steps:
       - name: Checkout repository
@@ -40,8 +72,13 @@ jobs:
       - name: Set up Nub
         uses: nubjs/setup-nub@v0
 
-      - name: Install dependencies
-        run: nub install --frozen-lockfile
+      - name: Restore node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-node-modules-
 
       - name: Lint
         run: nub run lint
@@ -50,6 +87,7 @@ jobs:
     name: Typecheck
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: install
 
     steps:
       - name: Checkout repository
@@ -58,16 +96,22 @@ jobs:
       - name: Set up Nub
         uses: nubjs/setup-nub@v0
 
-      - name: Install dependencies
-        run: nub install --frozen-lockfile
+      - name: Restore node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-node-modules-
 
       - name: Typecheck
         run: nub run typecheck
 
-  test:
+  acceptance:
     name: Deterministic acceptance evidence
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: install
 
     steps:
       - name: Checkout repository
@@ -76,20 +120,22 @@ jobs:
       - name: Set up Nub
         uses: nubjs/setup-nub@v0
 
-      - name: Install dependencies
-        run: nub install --frozen-lockfile
+      - name: Restore node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-node-modules-
 
       - name: Run acceptance tooling evidence
         run: nub run test:acceptance
 
-      - name: Run complete deterministic test suite
-        run: nub run test
-
-  coverage:
-    name: Diagnostic coverage (shard ${{ matrix.shard }}/4)
+  test:
+    name: Deterministic test suite (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    continue-on-error: true
+    needs: install
     strategy:
       fail-fast: false
       matrix:
@@ -102,8 +148,13 @@ jobs:
       - name: Set up Nub
         uses: nubjs/setup-nub@v0
 
-      - name: Install dependencies
-        run: nub install --frozen-lockfile
+      - name: Restore node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-node-modules-
 
-      - name: Report percentage coverage without an acceptance threshold
-        run: nub run test:coverage --shard=${{ matrix.shard }}/4
+      - name: Run complete deterministic test suite
+        run: nub run test:non-acceptance --shard=${{ matrix.shard }}/4
