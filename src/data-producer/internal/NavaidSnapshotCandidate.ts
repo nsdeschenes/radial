@@ -1,8 +1,23 @@
 import {createHash} from 'node:crypto';
 
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
+import faaNasrFacilityVariation from '#radial/data-producer/internal/FAANasrFacilityVariation.js';
 
-const FAMILY_BY_TYPE = new Map<number, string>([
+type FAANasrCycleArtifact = Parameters<
+  typeof faaNasrFacilityVariation.selectApplicableCycle
+>[0][number];
+type FacilityVariationAudit = ReturnType<typeof faaNasrFacilityVariation.match>['audit'];
+
+type NavaidFamily =
+  | 'NDB'
+  | 'VOR'
+  | 'VOR-DME'
+  | 'VORTAC'
+  | 'DVOR'
+  | 'DVOR-DME'
+  | 'DVORTAC';
+
+const FAMILY_BY_TYPE = new Map<number, NavaidFamily>([
   [2, 'NDB'],
   [3, 'VOR'],
   [4, 'VOR-DME'],
@@ -23,12 +38,26 @@ type MagneticModelProvenance = Readonly<{
   coefficientChecksum: string;
 }>;
 
-type CandidateProvenance = Readonly<{
+type CandidateProvenanceInput = Readonly<{
   sourceIdentity: string;
   derivationPolicyIdentity: string;
   matchingPolicyIdentity: string;
   magneticModel: MagneticModelProvenance;
 }>;
+
+type CandidateProvenance = CandidateProvenanceInput &
+  Readonly<{
+    faaNasr: Readonly<{
+      archiveChecksum: string;
+      archiveIdentity: string;
+      contentChecksum: string;
+      cycleId: string;
+      effectiveDate: string;
+      publishedAt: string;
+      retrievedAt: string;
+      sourceUrl: string;
+    }>;
+  }>;
 
 type RawNavaid = Readonly<{
   sourceRecordId: string;
@@ -41,7 +70,7 @@ type PlannerNavaid = Readonly<{
   databaseId: string;
   identifier: string;
   name: string;
-  family: string;
+  family: NavaidFamily;
   longitude: number;
   latitude: number;
   frequencyValue: number;
@@ -66,12 +95,6 @@ type NavaidExclusion = Readonly<{
   reason: NavaidExclusionReason;
 }>;
 
-type FacilityVariationAudit = Readonly<{
-  sourceRecordId: string;
-  outcome: 'outside-source-coverage';
-  sourceIdentity: null;
-}>;
-
 type ComponentChecksums = Readonly<{
   rawNavaids: string;
   plannerNavaids: string;
@@ -92,8 +115,9 @@ type NavaidSnapshotCandidate = Readonly<{
 }>;
 
 type BuildCandidateRequest = Readonly<{
+  faaNasrCycles: readonly FAANasrCycleArtifact[];
   rawNavaids: readonly unknown[];
-  provenance: CandidateProvenance;
+  provenance: CandidateProvenanceInput;
   retrievedAt: string;
   retrievalCompletedAt: string;
 }>;
@@ -113,6 +137,18 @@ function buildNavaidSnapshotCandidate(
   if (request.retrievalCompletedAt < request.retrievedAt) {
     throw new Error('retrievalCompletedAt must not precede retrievedAt.');
   }
+  const selectedNasrCycle = faaNasrFacilityVariation.selectApplicableCycle(
+    request.faaNasrCycles,
+    request.retrievedAt
+  );
+  if (
+    selectedNasrCycle.retrievedAt < request.retrievedAt ||
+    selectedNasrCycle.retrievedAt > request.retrievalCompletedAt
+  ) {
+    throw new Error('FAA NASR retrieval time must fall within snapshot retrieval');
+  }
+  const {records: _, ...faaNasr} = selectedNasrCycle;
+  const provenance = Object.freeze({...request.provenance, faaNasr});
 
   const identifiedRecords = identifyRecords(request.rawNavaids);
   const rawNavaids = identifiedRecords.map(({sourceRecordId, canonicalRecord}) => ({
@@ -129,12 +165,30 @@ function buildNavaidSnapshotCandidate(
     if ('reason' in derived) {
       exclusions.push(derived);
     } else {
-      plannerNavaids.push(derived);
-      facilityVariationAudits.push({
-        sourceRecordId: identified.sourceRecordId,
-        outcome: 'outside-source-coverage',
-        sourceIdentity: null,
-      });
+      if (isVorFamily(derived.family)) {
+        const match = faaNasrFacilityVariation.match(
+          {
+            country: countryFrom(identified.record['country']),
+            family: derived.family,
+            frequencyUnit: 'MHz',
+            frequencyValue: derived.frequencyValue,
+            identifier: derived.identifier,
+            latitude: derived.latitude,
+            longitude: derived.longitude,
+            sourceRecordId: derived.sourceRecordId,
+          },
+          selectedNasrCycle,
+          request.provenance.matchingPolicyIdentity
+        );
+        plannerNavaids.push({
+          ...derived,
+          facilityVariationDegEast: match.facilityVariation?.degreesEast ?? null,
+          facilityVariationSource: match.facilityVariation?.source ?? null,
+        });
+        facilityVariationAudits.push(match.audit);
+      } else {
+        plannerNavaids.push(derived);
+      }
     }
   }
 
@@ -142,12 +196,14 @@ function buildNavaidSnapshotCandidate(
     rawNavaids: checksum(canonicalizeJson(rawNavaids)),
     plannerNavaids: checksum(canonicalizeJson(plannerNavaids)),
     exclusions: checksum(canonicalizeJson(exclusions)),
-    facilityVariationAudits: checksum(canonicalizeJson(facilityVariationAudits)),
+    facilityVariationAudits: checksum(
+      canonicalizeJson(facilityVariationAudits.map(checksumFacilityVariationAudit))
+    ),
   });
   const snapshotChecksum = checksum(
     canonicalizeJson({
       manifestVersion: 1,
-      provenance: request.provenance,
+      provenance: checksumProvenance(provenance),
       componentChecksums,
       counts: {
         rawNavaids: rawNavaids.length,
@@ -160,7 +216,7 @@ function buildNavaidSnapshotCandidate(
   return Object.freeze({
     retrievedAt: request.retrievedAt,
     retrievalCompletedAt: request.retrievalCompletedAt,
-    provenance: request.provenance,
+    provenance,
     rawNavaids: Object.freeze(rawNavaids),
     plannerNavaids: Object.freeze(plannerNavaids),
     exclusions: Object.freeze(exclusions),
@@ -168,6 +224,16 @@ function buildNavaidSnapshotCandidate(
     componentChecksums,
     snapshotChecksum,
   });
+}
+
+function checksumProvenance(provenance: CandidateProvenance) {
+  const {retrievedAt: _, ...faaNasr} = provenance.faaNasr;
+  return {...provenance, faaNasr};
+}
+
+function checksumFacilityVariationAudit(audit: FacilityVariationAudit) {
+  const {nasrRetrievedAt: _, ...checksumAudit} = audit;
+  return checksumAudit;
 }
 
 function identifyRecords(rawNavaids: readonly unknown[]): IdentifiedRecord[] {
@@ -313,7 +379,7 @@ function rangeFrom(value: unknown): number | undefined {
     : undefined;
 }
 
-function validateProvenance(provenance: CandidateProvenance): void {
+function validateProvenance(provenance: CandidateProvenanceInput): void {
   for (const [name, value] of [
     ['sourceIdentity', provenance.sourceIdentity],
     ['derivationPolicyIdentity', provenance.derivationPolicyIdentity],
@@ -339,6 +405,19 @@ function validateProvenance(provenance: CandidateProvenance): void {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(provenance.magneticModel.referenceDate)) {
     throw new Error('magneticModel.referenceDate must be an ISO date.');
   }
+}
+
+function isVorFamily(family: NavaidFamily): family is Exclude<NavaidFamily, 'NDB'> {
+  return family !== 'NDB';
+}
+
+function countryFrom(value: unknown): string | readonly string[] | undefined {
+  if (typeof value === 'string') {
+    return value;
+  }
+  return Array.isArray(value) && value.every(item => typeof item === 'string')
+    ? value
+    : undefined;
 }
 
 function validateTimestamp(value: string, name: string): void {

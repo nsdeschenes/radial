@@ -7,6 +7,8 @@ import type buildNavaidSnapshotCandidate from '#radial/data-producer/internal/Na
 
 type NavaidSnapshotCandidate = ReturnType<typeof buildNavaidSnapshotCandidate>;
 
+const MAXIMUM_FACILITY_MATCH_DISTANCE_NM = 1 + 0.001 / 1852;
+
 type PublicationOptions = Readonly<{
   snapshotId?: string;
   publishedAt?: () => string;
@@ -42,6 +44,7 @@ async function publishNavaidSnapshot(
       const publishedAt = (options.publishedAt ?? (() => new Date().toISOString()))();
       validateTimestamp(publishedAt, 'publishedAt');
       await insertSnapshotMetadata(connection, snapshotId, candidate, publishedAt);
+      await verifySnapshotMetadata(connection, snapshotId, candidate);
       await connection.run(
         `UPDATE radial_producer.producer_state
          SET active_navaid_snapshot_id = CAST(? AS UUID)
@@ -77,6 +80,12 @@ function validateCandidate(candidate: NavaidSnapshotCandidate): void {
   validateTimestamp(candidate.retrievalCompletedAt, 'retrievalCompletedAt');
   if (candidate.retrievalCompletedAt < candidate.retrievedAt) {
     throw new Error('candidate retrieval timestamps do not reconcile');
+  }
+  if (
+    candidate.provenance.faaNasr.retrievedAt < candidate.retrievedAt ||
+    candidate.provenance.faaNasr.retrievedAt > candidate.retrievalCompletedAt
+  ) {
+    throw new Error('candidate FAA NASR retrieval timestamp does not reconcile');
   }
   validateProvenance(candidate);
 
@@ -133,11 +142,22 @@ function validateCandidate(candidate: NavaidSnapshotCandidate): void {
     candidate.facilityVariationAudits.map(audit => audit.sourceRecordId)
   );
   const plannerIdentities = new Set(
-    candidate.plannerNavaids.map(navaid => navaid.sourceRecordId)
+    candidate.plannerNavaids
+      .filter(navaid => navaid.family !== 'NDB')
+      .map(navaid => navaid.sourceRecordId)
+  );
+  const plannerNavaidsBySourceRecordId = new Map(
+    candidate.plannerNavaids.map(navaid => [navaid.sourceRecordId, navaid])
   );
   if (
     auditIdentities.size !== candidate.facilityVariationAudits.length ||
-    !sameSet(auditIdentities, plannerIdentities)
+    !sameSet(auditIdentities, plannerIdentities) ||
+    candidate.facilityVariationAudits.some(audit => {
+      const navaid = plannerNavaidsBySourceRecordId.get(audit.sourceRecordId);
+      return (
+        navaid === undefined || !validFacilityVariationAudit(audit, navaid, candidate)
+      );
+    })
   ) {
     throw new Error('candidate Facility Variation audit partition does not reconcile');
   }
@@ -147,7 +167,12 @@ function validateCandidate(candidate: NavaidSnapshotCandidate): void {
     plannerNavaids: checksum(canonicalizeJson(candidate.plannerNavaids)),
     exclusions: checksum(canonicalizeJson(candidate.exclusions)),
     facilityVariationAudits: checksum(
-      canonicalizeJson(candidate.facilityVariationAudits)
+      canonicalizeJson(
+        candidate.facilityVariationAudits.map(audit => {
+          const {nasrRetrievedAt: _, ...checksumAudit} = audit;
+          return checksumAudit;
+        })
+      )
     ),
   };
   if (candidate.componentChecksums.rawNavaids !== expectedComponentChecksums.rawNavaids) {
@@ -165,7 +190,7 @@ function validateCandidate(candidate: NavaidSnapshotCandidate): void {
   const expectedSnapshotChecksum = checksum(
     canonicalizeJson({
       manifestVersion: 1,
-      provenance: candidate.provenance,
+      provenance: checksumProvenance(candidate.provenance),
       componentChecksums: expectedComponentChecksums,
       counts: {
         rawNavaids: candidate.rawNavaids.length,
@@ -179,6 +204,11 @@ function validateCandidate(candidate: NavaidSnapshotCandidate): void {
   }
 }
 
+function checksumProvenance(provenance: NavaidSnapshotCandidate['provenance']) {
+  const {retrievedAt: _, ...faaNasr} = provenance.faaNasr;
+  return {...provenance, faaNasr};
+}
+
 function validateProvenance(candidate: NavaidSnapshotCandidate): void {
   const provenance = candidate.provenance;
   const requiredStrings = [
@@ -188,6 +218,9 @@ function validateProvenance(candidate: NavaidSnapshotCandidate): void {
     provenance.magneticModel.model,
     provenance.magneticModel.version,
     provenance.magneticModel.source,
+    provenance.faaNasr.sourceUrl,
+    provenance.faaNasr.archiveIdentity,
+    provenance.faaNasr.cycleId,
   ];
   if (requiredStrings.some(value => value.trim() === '')) {
     throw new Error('candidate provenance bundle is incomplete');
@@ -196,7 +229,10 @@ function validateProvenance(candidate: NavaidSnapshotCandidate): void {
     !Number.isFinite(provenance.magneticModel.epochYear) ||
     provenance.magneticModel.epochYear <= 0 ||
     !/^\d{4}-\d{2}-\d{2}$/.test(provenance.magneticModel.referenceDate) ||
-    !validChecksum(provenance.magneticModel.coefficientChecksum)
+    !validChecksum(provenance.magneticModel.coefficientChecksum) ||
+    !validChecksum(provenance.faaNasr.archiveChecksum) ||
+    !validChecksum(provenance.faaNasr.contentChecksum) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(provenance.faaNasr.effectiveDate)
   ) {
     throw new Error('candidate magnetic provenance bundle is invalid');
   }
@@ -205,12 +241,16 @@ function validateProvenance(candidate: NavaidSnapshotCandidate): void {
 function validPlannerNavaid(
   navaid: NavaidSnapshotCandidate['plannerNavaids'][number]
 ): boolean {
-  const variationBundle = [
-    navaid.facilityVariationDegEast,
-    navaid.facilityVariationSource,
-    navaid.facilityVariationEffectiveDate,
-  ];
-  const variationPresent = variationBundle.filter(value => value !== null).length;
+  const variationAbsent =
+    navaid.facilityVariationDegEast === null &&
+    navaid.facilityVariationSource === null &&
+    navaid.facilityVariationEffectiveDate === null;
+  const variationPresent =
+    navaid.facilityVariationDegEast !== null &&
+    navaid.facilityVariationSource !== null &&
+    navaid.facilityVariationSource.trim() !== '' &&
+    (navaid.facilityVariationEffectiveDate === null ||
+      /^\d{4}-\d{2}-\d{2}$/.test(navaid.facilityVariationEffectiveDate));
   return (
     navaid.sourceRecordId !== '' &&
     navaid.databaseId !== '' &&
@@ -228,10 +268,76 @@ function validPlannerNavaid(
     navaid.publishedRangeNm > 0 &&
     (navaid.magneticDeclinationDegEast === null ||
       finiteInRange(navaid.magneticDeclinationDegEast, -180, 180, false)) &&
-    (variationPresent === 0 ||
-      (variationPresent === 3 &&
-        navaid.facilityVariationDegEast !== null &&
-        finiteInRange(navaid.facilityVariationDegEast, -180, 180, false)))
+    (variationAbsent ||
+      (navaid.family !== 'NDB' &&
+        variationPresent &&
+        finiteInRange(navaid.facilityVariationDegEast!, -180, 180, false)))
+  );
+}
+
+function validFacilityVariationAudit(
+  audit: NavaidSnapshotCandidate['facilityVariationAudits'][number],
+  navaid: NavaidSnapshotCandidate['plannerNavaids'][number],
+  candidate: NavaidSnapshotCandidate
+): boolean {
+  const nasr = candidate.provenance.faaNasr;
+  if (
+    ![
+      'matched',
+      'outside-source-coverage',
+      'no-unique-match',
+      'unusable-source-value',
+    ].includes(audit.outcome) ||
+    audit.sourceRecordId === '' ||
+    audit.matchingPolicyIdentity.trim() === '' ||
+    !validChecksum(audit.nasrArchiveChecksum) ||
+    !validChecksum(audit.nasrContentChecksum) ||
+    audit.matchingPolicyIdentity !== candidate.provenance.matchingPolicyIdentity ||
+    audit.nasrSourceUrl !== nasr.sourceUrl ||
+    audit.nasrRetrievedAt !== nasr.retrievedAt ||
+    audit.nasrArchiveIdentity !== nasr.archiveIdentity ||
+    audit.nasrArchiveChecksum !== nasr.archiveChecksum ||
+    audit.nasrContentChecksum !== nasr.contentChecksum ||
+    audit.nasrCycleId !== nasr.cycleId ||
+    audit.nasrEffectiveDate !== nasr.effectiveDate ||
+    audit.openAipIdentifier !== navaid.identifier.trim().toUpperCase() ||
+    audit.openAipLongitude !== navaid.longitude ||
+    audit.openAipLatitude !== navaid.latitude ||
+    audit.openAipFrequencyHz !== Math.round(navaid.frequencyValue * 1_000_000)
+  ) {
+    return false;
+  }
+  if (audit.outcome !== 'matched') {
+    return (
+      audit.facilityVariationDegEast === null &&
+      audit.sourceIdentity === null &&
+      navaid.facilityVariationDegEast === null &&
+      navaid.facilityVariationSource === null &&
+      navaid.facilityVariationEffectiveDate === null
+    );
+  }
+  return (
+    audit.sourceIdentity !== null &&
+    audit.sourceIdentity.trim() !== '' &&
+    audit.facilityVariationDegEast !== null &&
+    finiteInRange(audit.facilityVariationDegEast, -180, 180, false) &&
+    audit.facilityVariationEpochYear !== null &&
+    Number.isSafeInteger(audit.facilityVariationEpochYear) &&
+    audit.facilityVariationEpochYear > 0 &&
+    audit.faaRecordIdentity !== null &&
+    audit.faaFacilityIdentifier !== null &&
+    audit.faaFacilityType !== null &&
+    audit.faaLongitude !== null &&
+    audit.faaLatitude !== null &&
+    audit.faaFrequencyHz !== null &&
+    audit.rawMagneticVariation !== null &&
+    audit.rawMagneticVariationHemisphere !== null &&
+    audit.rawMagneticVariationEpochYear !== null &&
+    audit.separationNm !== null &&
+    audit.separationNm <= MAXIMUM_FACILITY_MATCH_DISTANCE_NM &&
+    navaid.facilityVariationDegEast === audit.facilityVariationDegEast &&
+    navaid.facilityVariationSource === audit.sourceIdentity &&
+    navaid.facilityVariationEffectiveDate === null
   );
 }
 
@@ -259,13 +365,16 @@ async function insertSnapshotMetadata(
       planner_navaids_checksum, exclusions_checksum,
       facility_variation_audits_checksum, retrieved_at, retrieval_completed_at,
       published_at, source_identity, derivation_policy_identity,
-      matching_policy_identity, raw_navaid_count, planner_navaid_count,
+      matching_policy_identity, nasr_source_url, nasr_retrieved_at,
+      nasr_archive_identity, nasr_archive_checksum, nasr_content_checksum,
+      nasr_cycle_id, nasr_effective_date, raw_navaid_count, planner_navaid_count,
       exclusion_count, magnetic_model, magnetic_model_version,
       magnetic_model_epoch_year, magnetic_reference_date, magnetic_model_source,
       magnetic_model_checksum
     ) VALUES (
       CAST(? AS UUID), ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ),
-      CAST(? AS TIMESTAMPTZ), CAST(? AS TIMESTAMPTZ), ?, ?, ?, ?, ?, ?, ?, ?, ?,
+      CAST(? AS TIMESTAMPTZ), CAST(? AS TIMESTAMPTZ), ?, ?, ?, ?,
+      CAST(? AS TIMESTAMPTZ), ?, ?, ?, ?, CAST(? AS DATE), ?, ?, ?, ?, ?, ?,
       CAST(? AS DATE), ?, ?
     )`,
     [
@@ -281,6 +390,13 @@ async function insertSnapshotMetadata(
       candidate.provenance.sourceIdentity,
       candidate.provenance.derivationPolicyIdentity,
       candidate.provenance.matchingPolicyIdentity,
+      candidate.provenance.faaNasr.sourceUrl,
+      candidate.provenance.faaNasr.retrievedAt,
+      candidate.provenance.faaNasr.archiveIdentity,
+      candidate.provenance.faaNasr.archiveChecksum,
+      candidate.provenance.faaNasr.contentChecksum,
+      candidate.provenance.faaNasr.cycleId,
+      candidate.provenance.faaNasr.effectiveDate,
       candidate.rawNavaids.length,
       candidate.plannerNavaids.length,
       candidate.exclusions.length,
@@ -339,8 +455,14 @@ async function insertCandidateRows(
   for (const audit of candidate.facilityVariationAudits) {
     await connection.run(
       `INSERT INTO radial_producer.facility_variation_audits
-       VALUES (CAST(? AS UUID), ?, ?, ?)`,
-      [snapshotId, audit.sourceRecordId, audit.outcome, audit.sourceIdentity]
+       VALUES (CAST(? AS UUID), ?, ?, ?, CAST(? AS JSON))`,
+      [
+        snapshotId,
+        audit.sourceRecordId,
+        audit.outcome,
+        audit.sourceIdentity,
+        canonicalizeJson(audit),
+      ]
     );
   }
 }
@@ -382,6 +504,54 @@ async function verifyStoredCandidate(
     Number(row?.['airport_count']) !== Number(row?.['cached_airport_count'])
   ) {
     throw new Error('stored candidate counts do not reconcile');
+  }
+  const storedAudits = await connection.runAndReadAll(
+    `SELECT CAST(audit_record AS VARCHAR) AS audit_record
+     FROM radial_producer.facility_variation_audits
+     WHERE snapshot_id = CAST(? AS UUID)
+     ORDER BY source_record_id`,
+    [snapshotId]
+  );
+  const actualAuditRecords = storedAudits
+    .getRowObjectsJS()
+    .map(stored => requireString(stored['audit_record'], 'audit_record'));
+  const expectedAuditRecords = candidate.facilityVariationAudits.map(audit =>
+    canonicalizeJson(audit)
+  );
+  if (actualAuditRecords.join('\n') !== expectedAuditRecords.join('\n')) {
+    throw new Error('stored Facility Variation provenance does not reconcile');
+  }
+}
+
+async function verifySnapshotMetadata(
+  connection: DuckDBConnection,
+  snapshotId: string,
+  candidate: NavaidSnapshotCandidate
+): Promise<void> {
+  const reader = await connection.runAndReadAll(
+    `SELECT
+      nasr_source_url,
+      nasr_archive_identity,
+      nasr_archive_checksum,
+      nasr_content_checksum,
+      nasr_cycle_id,
+      CAST(nasr_effective_date AS VARCHAR) AS nasr_effective_date
+     FROM radial_producer.navaid_snapshots
+     WHERE snapshot_id = CAST(? AS UUID)`,
+    [snapshotId]
+  );
+  const row = reader.getRowObjectsJS()[0];
+  const expected = candidate.provenance.faaNasr;
+  if (
+    reader.getRowObjectsJS().length !== 1 ||
+    row?.['nasr_source_url'] !== expected.sourceUrl ||
+    row?.['nasr_archive_identity'] !== expected.archiveIdentity ||
+    row?.['nasr_archive_checksum'] !== expected.archiveChecksum ||
+    row?.['nasr_content_checksum'] !== expected.contentChecksum ||
+    row?.['nasr_cycle_id'] !== expected.cycleId ||
+    row?.['nasr_effective_date'] !== expected.effectiveDate
+  ) {
+    throw new Error('stored FAA NASR provenance does not reconcile');
   }
 }
 
@@ -492,6 +662,13 @@ function validateTimestamp(value: string, name: string): void {
 
 function validChecksum(value: string): boolean {
   return /^sha256:[0-9a-f]{64}$/.test(value);
+}
+
+function requireString(value: unknown, name: string): string {
+  if (typeof value !== 'string') {
+    throw new Error(`${name} must be a string`);
+  }
+  return value;
 }
 
 function checksum(value: string): string {
