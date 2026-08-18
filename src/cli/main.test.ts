@@ -46,6 +46,189 @@ test('reports malformed command input on stderr and exits 2', async () => {
   });
 });
 
+test('validates Navaid reload configuration before opening the application', async () => {
+  const capture = captureOutput();
+  let applicationOpened = false;
+
+  const exitCode = await runCli({
+    args: ['data', 'reload', 'navaids'],
+    env: {},
+    io: capture.io,
+    async openApplication() {
+      applicationOpened = true;
+      throw new Error('The application must not open for invalid configuration.');
+    },
+  });
+
+  expect(applicationOpened).toBe(false);
+  expect(exitCode).toBe(1);
+  expect(capture.output()).toEqual({
+    stdout: '',
+    stderr:
+      'error [DATA_DATABASE_PATH_MISSING]: Database path is missing.\n' +
+      'Cause: RADIAL_DATABASE_PATH is required.\n' +
+      'Action: Set RADIAL_DATABASE_PATH to the DuckDB database file and retry.\n' +
+      'Active data remains unchanged.\n',
+  });
+});
+
+test('reports a missing Navaid reload credential before opening the application', async () => {
+  const capture = captureOutput();
+
+  const exitCode = await runCli({
+    args: ['data', 'reload', 'navaids'],
+    env: {RADIAL_DATABASE_PATH: ':memory:'},
+    io: capture.io,
+    async openApplication() {
+      throw new Error('The application must not open for invalid configuration.');
+    },
+  });
+
+  expect(exitCode).toBe(1);
+  expect(capture.output()).toEqual({
+    stdout: '',
+    stderr:
+      'error [DATA_CREDENTIALS_MISSING]: OpenAIP credentials are missing.\n' +
+      'Cause: OPENAIP_API_KEY is required for an explicit Navaid reload.\n' +
+      'Action: Set OPENAIP_API_KEY and retry the Navaid reload.\n' +
+      'Active data remains unchanged.\n',
+  });
+});
+
+test('provides Navaid reload help and rejects unsupported options', async () => {
+  const helpCapture = captureOutput();
+  const usageCapture = captureOutput();
+
+  await expect(
+    runCli({
+      args: ['data', 'reload', 'navaids', '--help'],
+      env: {},
+      io: helpCapture.io,
+    })
+  ).resolves.toBe(0);
+  await expect(
+    runCli({
+      args: ['data', 'reload', 'navaids', '--force'],
+      env: {},
+      io: usageCapture.io,
+    })
+  ).resolves.toBe(2);
+  expect(helpCapture.output()).toEqual({
+    stdout: 'Usage: radial data reload navaids\n',
+    stderr: '',
+  });
+  expect(usageCapture.output()).toEqual({
+    stdout: '',
+    stderr:
+      'error [DATA_USAGE]: Invalid data command.\n' +
+      'Cause: The Navaid reload accepts no arguments or operational flags.\n' +
+      'Action: Run "radial data reload navaids".\n',
+  });
+});
+
+test('streams Navaid reload progress to stderr and writes success only after commit', async () => {
+  const capture = captureOutput();
+  const reload = Promise.withResolvers<ApplicationTypes['NavaidReloadResult']>();
+  const application = syntheticApplication(async request => {
+    request.onProgress?.({stage: 'openaip', message: 'Acquiring OpenAIP Navaids.'});
+    request.onProgress?.({stage: 'publish', message: 'Publishing Navaid Snapshot.'});
+    return reload.promise;
+  });
+
+  const running = runCli({
+    args: ['data', 'reload', 'navaids'],
+    env: {RADIAL_DATABASE_PATH: ':memory:', OPENAIP_API_KEY: 'secret-api-key'},
+    io: capture.io,
+    async openApplication() {
+      return {ok: true, value: application};
+    },
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(capture.output()).toEqual({
+    stdout: '',
+    stderr:
+      'progress: Acquiring OpenAIP Navaids.\n' +
+      'progress: Publishing Navaid Snapshot.\n',
+  });
+
+  reload.resolve({ok: true, value: syntheticNavaidReloadSuccess()});
+  await expect(running).resolves.toBe(0);
+  expect(capture.output()).toEqual({
+    stdout:
+      'Navaid Snapshot replaced\n' +
+      '  Snapshot ID: 11111111-1111-4111-8111-111111111111\n' +
+      '  Retrieval started: 2026-07-10T00:00:00.000Z\n' +
+      '  Retrieval completed: 2026-07-10T00:00:02.000Z\n' +
+      '  Source: OpenAIP Core API\n' +
+      '  Resource: /navaids\n' +
+      '  API contract version: 1.1\n' +
+      '  Source identity: openaip:navaids:v1\n' +
+      '  Derivation policy: radial:navaid-derivation:v1\n' +
+      '  Matching policy: radial:faa-nasr-match:v1\n' +
+      '  FAA NASR cycle: 2607\n' +
+      '  FAA NASR effective date: 2026-07-09\n' +
+      '  FAA NASR published: 2026-06-25T12:00:00.000Z\n' +
+      '  FAA NASR archive: 09_Jul_2026_NAV_CSV.zip\n' +
+      `  FAA NASR archive checksum: sha256:${'2'.repeat(64)}\n` +
+      `  FAA NASR content checksum: sha256:${'3'.repeat(64)}\n` +
+      '  FAA NASR retrieved: 2026-07-10T00:00:01.000Z\n' +
+      '  FAA NASR source: https://nfdc.faa.gov/webContent/28DaySub/extra/09_Jul_2026_NAV_CSV.zip\n' +
+      '  Magnetic model: WMM WMM2025\n' +
+      '  Magnetic model epoch: 2025\n' +
+      '  Magnetic reference date: 2026-07-10\n' +
+      '  Magnetic model source: NOAA\n' +
+      `  Magnetic model checksum: sha256:${'4'.repeat(64)}\n` +
+      `  Checksum: sha256:${'1'.repeat(64)}\n` +
+      '  Raw records: 3\n' +
+      '  VOR-family Navaids: 1\n' +
+      '  Fallback Navaids: 1\n' +
+      '  Excluded records: 1\n' +
+      '    unsupported-navaid-type: 1\n' +
+      '  Facility Variation of Record present: 1\n' +
+      '  Facility Variation of Record missing: 0\n' +
+      '  Facility Variation Epoch Year missing: 0\n',
+    stderr:
+      'progress: Acquiring OpenAIP Navaids.\n' +
+      'progress: Publishing Navaid Snapshot.\n',
+  });
+});
+
+test('writes a stable Navaid reload failure only to stderr', async () => {
+  const capture = captureOutput();
+  const application = syntheticApplication(async () => ({
+    ok: false,
+    failure: {
+      code: 'DATA_OPENAIP_UNAVAILABLE',
+      summary: 'OpenAIP Navaid acquisition failed.',
+      cause: 'OpenAIP Navaid acquisition did not complete.',
+      action: 'Check OpenAIP availability and credentials, then retry.',
+      activeDataPreserved: true,
+    },
+  }));
+
+  const exitCode = await runCli({
+    args: ['data', 'reload', 'navaids'],
+    env: {RADIAL_DATABASE_PATH: ':memory:', OPENAIP_API_KEY: 'secret-api-key'},
+    io: capture.io,
+    async openApplication() {
+      return {ok: true, value: application};
+    },
+  });
+
+  expect(exitCode).toBe(1);
+  expect(capture.output()).toEqual({
+    stdout: '',
+    stderr:
+      'error [DATA_OPENAIP_UNAVAILABLE]: OpenAIP Navaid acquisition failed.\n' +
+      'Cause: OpenAIP Navaid acquisition did not complete.\n' +
+      'Action: Check OpenAIP availability and credentials, then retry.\n' +
+      'Active data remains unchanged.\n',
+  });
+  expect(capture.output().stderr).not.toContain('secret-api-key');
+});
+
 test('reports an incorrect positional argument count on stderr and exits 2', async () => {
   const capture = captureOutput();
 
@@ -328,7 +511,11 @@ test('reports the failed query operation without writing a partial Route Plan an
         return {ok: true, value: planner};
       },
     },
-    dataManagement: {},
+    dataManagement: {
+      async reloadNavaids() {
+        throw new Error('Navaid reload is not used by this test.');
+      },
+    },
     async [Symbol.asyncDispose]() {},
   };
 
@@ -347,6 +534,63 @@ test('reports the failed query operation without writing a partial Route Plan an
     stderr: 'Unable to plan route: the NDB fallback route search query failed.\n',
   });
 });
+
+function syntheticApplication(
+  reloadNavaids: ApplicationTypes['DataManagementCapability']['reloadNavaids']
+): ApplicationTypes['Application'] {
+  return {
+    databasePath: ':synthetic:',
+    dataManagement: {reloadNavaids},
+    planning: {
+      async open() {
+        throw new Error('Route planning is not used by this test.');
+      },
+    },
+    async [Symbol.asyncDispose]() {},
+  };
+}
+
+function syntheticNavaidReloadSuccess(): ApplicationTypes['NavaidReloadSuccess'] {
+  return {
+    snapshotId: '11111111-1111-4111-8111-111111111111',
+    snapshotChecksum: `sha256:${'1'.repeat(64)}`,
+    rawNavaidCount: 3,
+    plannerNavaidCount: 2,
+    vorFamilyNavaidCount: 1,
+    fallbackNavaidCount: 1,
+    exclusionCount: 1,
+    exclusionCounts: [{reason: 'unsupported-navaid-type', count: 1}],
+    facilityVariationPresentCount: 1,
+    facilityVariationMissingCount: 0,
+    facilityVariationEpochYearMissingCount: 0,
+    retrievedAt: '2026-07-10T00:00:00.000Z',
+    retrievalCompletedAt: '2026-07-10T00:00:02.000Z',
+    provenance: {
+      sourceIdentity: 'openaip:navaids:v1',
+      derivationPolicyIdentity: 'radial:navaid-derivation:v1',
+      matchingPolicyIdentity: 'radial:faa-nasr-match:v1',
+      magneticModel: {
+        model: 'WMM',
+        version: 'WMM2025',
+        epochYear: 2025,
+        referenceDate: '2026-07-10',
+        source: 'NOAA',
+        coefficientChecksum: `sha256:${'4'.repeat(64)}`,
+      },
+      faaNasr: {
+        archiveChecksum: `sha256:${'2'.repeat(64)}`,
+        archiveIdentity: '09_Jul_2026_NAV_CSV.zip',
+        contentChecksum: `sha256:${'3'.repeat(64)}`,
+        cycleId: '2607',
+        effectiveDate: '2026-07-09',
+        publishedAt: '2026-06-25T12:00:00.000Z',
+        retrievedAt: '2026-07-10T00:00:01.000Z',
+        sourceUrl:
+          'https://nfdc.faa.gov/webContent/28DaySub/extra/09_Jul_2026_NAV_CSV.zip',
+      },
+    },
+  };
+}
 
 function syntheticAirport(
   databaseId: string,
