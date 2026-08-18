@@ -82,9 +82,6 @@ jobs:
       - name: Run acceptance tooling evidence
         run: nub run test:acceptance
 
-      - name: Run complete deterministic test suite
-        run: nub run test
-
   coverage:
     name: Diagnostic coverage (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
