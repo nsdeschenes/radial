@@ -6,6 +6,8 @@ import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
 import type buildNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidate.js';
 import NavaidSnapshotPublicationError from '#radial/data-producer/internal/NavaidSnapshotPublicationError.js';
 import NavaidSnapshotValidationError from '#radial/data-producer/internal/NavaidSnapshotValidationError.js';
+import type PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
+import publicationGateRegistry from '#radial/data-producer/internal/PublicationGateRegistry.js';
 import Wmm2025 from '#radial/data-producer/internal/Wmm2025.js';
 
 const {localMagneticDeclinationFromWmm2025, wmm2025Provenance} = Wmm2025;
@@ -18,6 +20,7 @@ type PublicationOptions = Readonly<{
   snapshotId?: string;
   publishedAt?: () => string;
   beforeCommit?: () => void | Promise<void>;
+  publicationGate?: PublicationGate;
 }>;
 
 type PublicationResult = Readonly<{
@@ -42,6 +45,19 @@ async function publishNavaidSnapshot(
   }
   const snapshotId = options.snapshotId ?? randomUUID();
   validateUuid(snapshotId);
+  const publicationGate =
+    options.publicationGate ?? publicationGateRegistry.forInstance(instance);
+  return publicationGate.run(() =>
+    publishNavaidSnapshotWithinGate(instance, candidate, snapshotId, options)
+  );
+}
+
+async function publishNavaidSnapshotWithinGate(
+  instance: DuckDBInstance,
+  candidate: NavaidSnapshotCandidate,
+  snapshotId: string,
+  options: PublicationOptions
+): Promise<PublicationResult> {
   const connection = await instance.connect();
 
   try {

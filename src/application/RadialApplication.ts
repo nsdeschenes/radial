@@ -1,3 +1,4 @@
+import abortableOperation from '#radial/application/internal/AbortableOperation.js';
 import sharedDuckDBRuntime from '#radial/application/internal/SharedDuckDBRuntime.js';
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import ensureCachedAirport from '#radial/data-producer/internal/AirportDataProducer.js';
@@ -25,11 +26,6 @@ type ApplicationDependencies = NavaidDataProducerDependencies &
     openAipApiKey?: string;
   }>;
 type BootstrapResult = Awaited<ReturnType<typeof ensureFirstNavaidSnapshot>>;
-
-const firstBootstrapByRuntime = new WeakMap<
-  SharedDuckDBRuntime,
-  Promise<BootstrapResult>
->();
 
 class ActivityGate {
   #activeOperationCount = 0;
@@ -70,6 +66,7 @@ class ApplicationPlanner implements RoutePlanner {
   readonly #activityGate: ActivityGate;
   readonly #airportApiKey: string;
   readonly #airportDataProducerDependencies: AirportDataProducerDependencies;
+  readonly #airportResolutionCoordinator: SharedDuckDBRuntime['airportResolutionCoordinator'];
   readonly #planner: RoutePlannerTypes['RoutePlanner'];
   readonly #runtime: SharedDuckDBRuntime;
   #isDisposed = false;
@@ -79,11 +76,13 @@ class ApplicationPlanner implements RoutePlanner {
     planner: RoutePlannerTypes['RoutePlanner'],
     runtime: SharedDuckDBRuntime,
     airportApiKey: string,
-    airportDataProducerDependencies: AirportDataProducerDependencies
+    airportDataProducerDependencies: AirportDataProducerDependencies,
+    airportResolutionCoordinator: SharedDuckDBRuntime['airportResolutionCoordinator']
   ) {
     this.#activityGate = activityGate;
     this.#airportApiKey = airportApiKey;
     this.#airportDataProducerDependencies = airportDataProducerDependencies;
+    this.#airportResolutionCoordinator = airportResolutionCoordinator;
     this.#planner = planner;
     this.#runtime = runtime;
   }
@@ -99,15 +98,17 @@ class ApplicationPlanner implements RoutePlanner {
       return validatedRequest;
     }
     return this.#activityGate.run(async () => {
+      const signal = validatedRequest.value.signal;
       for (const endpoint of [
         {role: 'departure' as const, icao: validatedRequest.value.departureIcao},
         {role: 'arrival' as const, icao: validatedRequest.value.arrivalIcao},
       ]) {
-        const resolved = await ensureCachedAirport(
+        const resolved = await this.#airportResolutionCoordinator.ensure(
           await this.#runtime.instance(),
           endpoint.icao,
           this.#airportApiKey,
-          this.#airportDataProducerDependencies
+          this.#airportDataProducerDependencies,
+          signal
         );
         if (!resolved.ok) {
           return {
@@ -119,6 +120,9 @@ class ApplicationPlanner implements RoutePlanner {
             ),
           };
         }
+      }
+      if (signal?.aborted) {
+        throw abortableOperation.abortError(signal);
       }
       return this.#planner.planRoute(validatedRequest.value);
     });
@@ -190,10 +194,16 @@ class RadialApplication implements Application {
       };
     }
     return this.#activityGate.run(async () =>
-      reloadNavaids(
-        await this.#runtime.instance(),
-        request,
-        this.#navaidDataProducerDependencies
+      abortableOperation.awaitWithAbort(
+        this.#runtime.navaidOperationCoordinator.run(
+          async () =>
+            reloadNavaids(await this.#runtime.instance(), request, {
+              ...this.#navaidDataProducerDependencies,
+              publicationGate: this.#runtime.publicationGate,
+            }),
+          request.signal
+        ),
+        request.signal
       )
     );
   }
@@ -229,12 +239,16 @@ class RadialApplication implements Application {
 
     return this.#activityGate.run(async () => {
       try {
-        return await ensureCachedAirport.reloadAirport(
+        return await this.#runtime.airportResolutionCoordinator.reload(
           await this.#runtime.instance(),
           {...request, icao: validatedIcao.value},
-          this.#airportDataProducerDependencies
+          this.#airportDataProducerDependencies,
+          request.signal
         );
-      } catch {
+      } catch (error) {
+        if (request.signal?.aborted) {
+          throw error;
+        }
         return {
           ok: false,
           failure: {
@@ -282,7 +296,8 @@ class RadialApplication implements Application {
             opened.value,
             this.#runtime,
             this.#openAipApiKey,
-            this.#airportDataProducerDependencies
+            this.#airportDataProducerDependencies,
+            this.#runtime.airportResolutionCoordinator
           ),
         };
       }
@@ -299,27 +314,12 @@ class RadialApplication implements Application {
   }
 
   async #ensureFirstNavaidSnapshot(): Promise<BootstrapResult> {
-    let bootstrap = firstBootstrapByRuntime.get(this.#runtime);
-    if (bootstrap === undefined) {
-      bootstrap = (async () =>
-        ensureFirstNavaidSnapshot(
-          await this.#runtime.instance(),
-          this.#openAipApiKey,
-          this.#navaidDataProducerDependencies
-        ))();
-      firstBootstrapByRuntime.set(this.#runtime, bootstrap);
-    }
-
-    try {
-      const result = await bootstrap;
-      if (!result.ok) {
-        firstBootstrapByRuntime.delete(this.#runtime);
-      }
-      return result;
-    } catch (error) {
-      firstBootstrapByRuntime.delete(this.#runtime);
-      throw error;
-    }
+    return this.#runtime.navaidOperationCoordinator.run(async () =>
+      ensureFirstNavaidSnapshot(await this.#runtime.instance(), this.#openAipApiKey, {
+        ...this.#navaidDataProducerDependencies,
+        publicationGate: this.#runtime.publicationGate,
+      })
+    );
   }
 
   [Symbol.asyncDispose](): Promise<void> {
@@ -329,7 +329,7 @@ class RadialApplication implements Application {
 
   async #dispose(): Promise<void> {
     await this.#activityGate.stopAndDrain();
-    sharedDuckDBRuntime.release(this.#runtime);
+    await sharedDuckDBRuntime.release(this.#runtime);
   }
 }
 
