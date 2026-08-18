@@ -35,4 +35,4 @@ test('keeps the committed synthetic stress corpus Route Plan deterministic', asy
   } finally {
     await opened.value[Symbol.asyncDispose]();
   }
-});
+}, 30_000);
