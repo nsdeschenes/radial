@@ -8,6 +8,7 @@ import {expect, test} from 'vitest';
 import buildNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidate.js';
 import publishNavaidSnapshot from '#radial/data-producer/internal/NavaidSnapshotPublication.js';
 import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import createSyntheticFAANasrCycle from '#radial/test/createSyntheticFAANasrCycle.js';
 
 const FIRST_SNAPSHOT_ID = '11111111-1111-4111-8111-111111111111';
 const SECOND_SNAPSHOT_ID = '22222222-2222-4222-8222-222222222222';
@@ -55,6 +56,37 @@ test('atomically replaces the active snapshot and regenerates Cached Airport pro
           magnetic_declination_deg_east: expect.any(Number),
         },
       ]);
+      const facilityVariation = await connection.runAndReadAll(`
+        SELECT
+          navaids.facility_variation_deg_east,
+          navaids.facility_variation_source,
+          CAST(navaids.facility_variation_effective_date AS VARCHAR)
+            AS facility_variation_effective_date,
+          snapshots.nasr_cycle_id,
+          CAST(snapshots.nasr_effective_date AS VARCHAR) AS nasr_effective_date,
+          snapshots.nasr_archive_checksum,
+          CAST(audits.audit_record AS VARCHAR) AS audit_record
+        FROM radial_producer.planner_navaids AS navaids
+        JOIN radial_producer.navaid_snapshots AS snapshots USING (snapshot_id)
+        JOIN radial_producer.facility_variation_audits AS audits
+          USING (snapshot_id, source_record_id)
+      `);
+      const facilityVariationRow = facilityVariation.getRowObjectsJS()[0];
+      expect(facilityVariationRow).toMatchObject({
+        facility_variation_deg_east: -11.7,
+        facility_variation_effective_date: null,
+        facility_variation_source: 'FAA 28-Day NASR 2607',
+        nasr_archive_checksum: firstCandidate.provenance.faaNasr.archiveChecksum,
+        nasr_cycle_id: '2607',
+        nasr_effective_date: '2026-07-09',
+      });
+      const auditRecord = facilityVariationRow?.['audit_record'];
+      expect(typeof auditRecord).toBe('string');
+      expect(JSON.parse(auditRecord as string)).toMatchObject({
+        facilityVariationEpochYear: 2020,
+        matchingPolicyIdentity: 'radial:faa-nasr-match:v1',
+        outcome: 'matched',
+      });
     } finally {
       connection.closeSync();
     }
@@ -130,9 +162,28 @@ test('independently rejects a corrupt candidate and rolls back a publication fai
 function candidateAt(retrievedAt: string) {
   const retrievalCompletedAt = new Date(Date.parse(retrievedAt) + 1_000).toISOString();
   return buildNavaidSnapshotCandidate({
+    faaNasrCycles: [
+      createSyntheticFAANasrCycle(
+        [
+          {
+            EFF_DATE: '2026-07-09',
+            FREQ: '112.150',
+            LAT_DECIMAL: '43.6589',
+            LONG_DECIMAL: '-79.6139',
+            MAG_VARN: '11.7',
+            MAG_VARN_HEMIS: 'W',
+            MAG_VARN_YEAR: '2020',
+            NAV_ID: 'YYZ',
+            NAV_TYPE: 'VOR/DME',
+          },
+        ],
+        {retrievedAt: new Date(Date.parse(retrievedAt) + 500).toISOString()}
+      ),
+    ],
     rawNavaids: [
       {
         _id: 'vor-1',
+        country: 'US',
         type: 4,
         identifier: 'YYZ',
         name: 'Toronto',
@@ -145,7 +196,7 @@ function candidateAt(retrievedAt: string) {
     provenance: {
       sourceIdentity: 'fixture:openaip-navaids:v1',
       derivationPolicyIdentity: 'radial:navaid-derivation:v1',
-      matchingPolicyIdentity: 'fixture:no-facility-variation:v1',
+      matchingPolicyIdentity: 'radial:faa-nasr-match:v1',
     },
     retrievedAt,
     retrievalCompletedAt,

@@ -1,11 +1,26 @@
 import {createHash} from 'node:crypto';
 
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
+import faaNasrFacilityVariation from '#radial/data-producer/internal/FAANasrFacilityVariation.js';
 import Wmm2025 from '#radial/data-producer/internal/Wmm2025.js';
 
 const {localMagneticDeclinationFromWmm2025, wmm2025Provenance} = Wmm2025;
 
-const FAMILY_BY_TYPE = new Map<number, string>([
+type FAANasrCycleArtifact = Parameters<
+  typeof faaNasrFacilityVariation.selectApplicableCycle
+>[0][number];
+type FacilityVariationAudit = ReturnType<typeof faaNasrFacilityVariation.match>['audit'];
+
+type NavaidFamily =
+  | 'NDB'
+  | 'VOR'
+  | 'VOR-DME'
+  | 'VORTAC'
+  | 'DVOR'
+  | 'DVOR-DME'
+  | 'DVORTAC';
+
+const FAMILY_BY_TYPE = new Map<number, NavaidFamily>([
   [2, 'NDB'],
   [3, 'VOR'],
   [4, 'VOR-DME'],
@@ -26,14 +41,26 @@ type MagneticModelProvenance = Readonly<{
   coefficientChecksum: string;
 }>;
 
-type CandidateProvenance = Readonly<{
+type CandidateInputProvenance = Readonly<{
   sourceIdentity: string;
   derivationPolicyIdentity: string;
   matchingPolicyIdentity: string;
-  magneticModel: MagneticModelProvenance;
 }>;
 
-type CandidateInputProvenance = Omit<CandidateProvenance, 'magneticModel'>;
+type CandidateProvenance = CandidateInputProvenance &
+  Readonly<{
+    magneticModel: MagneticModelProvenance;
+    faaNasr: Readonly<{
+      archiveChecksum: string;
+      archiveIdentity: string;
+      contentChecksum: string;
+      cycleId: string;
+      effectiveDate: string;
+      publishedAt: string;
+      retrievedAt: string;
+      sourceUrl: string;
+    }>;
+  }>;
 
 type RawNavaid = Readonly<{
   sourceRecordId: string;
@@ -46,7 +73,7 @@ type PlannerNavaid = Readonly<{
   databaseId: string;
   identifier: string;
   name: string;
-  family: string;
+  family: NavaidFamily;
   longitude: number;
   latitude: number;
   frequencyValue: number;
@@ -71,12 +98,6 @@ type NavaidExclusion = Readonly<{
   reason: NavaidExclusionReason;
 }>;
 
-type FacilityVariationAudit = Readonly<{
-  sourceRecordId: string;
-  outcome: 'outside-source-coverage';
-  sourceIdentity: null;
-}>;
-
 type ComponentChecksums = Readonly<{
   rawNavaids: string;
   plannerNavaids: string;
@@ -97,6 +118,7 @@ type NavaidSnapshotCandidate = Readonly<{
 }>;
 
 type BuildCandidateRequest = Readonly<{
+  faaNasrCycles: readonly FAANasrCycleArtifact[];
   rawNavaids: readonly unknown[];
   provenance: CandidateInputProvenance;
   retrievedAt: string;
@@ -118,9 +140,21 @@ function buildNavaidSnapshotCandidate(
     throw new Error('retrievalCompletedAt must not precede retrievedAt.');
   }
   validateInputProvenance(request.provenance);
+  const selectedNasrCycle = faaNasrFacilityVariation.selectApplicableCycle(
+    request.faaNasrCycles,
+    request.retrievedAt
+  );
+  if (
+    selectedNasrCycle.retrievedAt < request.retrievedAt ||
+    selectedNasrCycle.retrievedAt > request.retrievalCompletedAt
+  ) {
+    throw new Error('FAA NASR retrieval time must fall within snapshot retrieval');
+  }
+  const {records: _, ...faaNasr} = selectedNasrCycle;
   const provenance = Object.freeze({
     ...request.provenance,
     magneticModel: wmm2025Provenance(request.retrievedAt.slice(0, 10)),
+    faaNasr,
   });
 
   const identifiedRecords = identifyRecords(request.rawNavaids);
@@ -138,12 +172,30 @@ function buildNavaidSnapshotCandidate(
     if ('reason' in derived) {
       exclusions.push(derived);
     } else {
-      plannerNavaids.push(derived);
-      facilityVariationAudits.push({
-        sourceRecordId: identified.sourceRecordId,
-        outcome: 'outside-source-coverage',
-        sourceIdentity: null,
-      });
+      if (isVorFamily(derived.family)) {
+        const match = faaNasrFacilityVariation.match(
+          {
+            country: countryFrom(identified.record['country']),
+            family: derived.family,
+            frequencyUnit: 'MHz',
+            frequencyValue: derived.frequencyValue,
+            identifier: derived.identifier,
+            latitude: derived.latitude,
+            longitude: derived.longitude,
+            sourceRecordId: derived.sourceRecordId,
+          },
+          selectedNasrCycle,
+          request.provenance.matchingPolicyIdentity
+        );
+        plannerNavaids.push({
+          ...derived,
+          facilityVariationDegEast: match.facilityVariation?.degreesEast ?? null,
+          facilityVariationSource: match.facilityVariation?.source ?? null,
+        });
+        facilityVariationAudits.push(match.audit);
+      } else {
+        plannerNavaids.push(derived);
+      }
     }
   }
 
@@ -151,12 +203,14 @@ function buildNavaidSnapshotCandidate(
     rawNavaids: checksum(canonicalizeJson(rawNavaids)),
     plannerNavaids: checksum(canonicalizeJson(plannerNavaids)),
     exclusions: checksum(canonicalizeJson(exclusions)),
-    facilityVariationAudits: checksum(canonicalizeJson(facilityVariationAudits)),
+    facilityVariationAudits: checksum(
+      canonicalizeJson(facilityVariationAudits.map(checksumFacilityVariationAudit))
+    ),
   });
   const snapshotChecksum = checksum(
     canonicalizeJson({
       manifestVersion: 1,
-      provenance,
+      provenance: checksumProvenance(provenance),
       componentChecksums,
       counts: {
         rawNavaids: rawNavaids.length,
@@ -177,6 +231,16 @@ function buildNavaidSnapshotCandidate(
     componentChecksums,
     snapshotChecksum,
   });
+}
+
+function checksumProvenance(provenance: CandidateProvenance) {
+  const {retrievedAt: _, ...faaNasr} = provenance.faaNasr;
+  return {...provenance, faaNasr};
+}
+
+function checksumFacilityVariationAudit(audit: FacilityVariationAudit) {
+  const {nasrRetrievedAt: _, ...checksumAudit} = audit;
+  return checksumAudit;
 }
 
 function identifyRecords(rawNavaids: readonly unknown[]): IdentifiedRecord[] {
@@ -339,6 +403,19 @@ function validateInputProvenance(provenance: CandidateInputProvenance): void {
       throw new Error(`${name} must not be empty.`);
     }
   }
+}
+
+function isVorFamily(family: NavaidFamily): family is Exclude<NavaidFamily, 'NDB'> {
+  return family !== 'NDB';
+}
+
+function countryFrom(value: unknown): string | readonly string[] | undefined {
+  if (typeof value === 'string') {
+    return value;
+  }
+  return Array.isArray(value) && value.every(item => typeof item === 'string')
+    ? value
+    : undefined;
 }
 
 function validateTimestamp(value: string, name: string): void {

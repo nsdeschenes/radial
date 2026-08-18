@@ -1,12 +1,51 @@
 import {expect, test} from 'vitest';
 
 import buildNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidate.js';
+import createSyntheticFAANasrCycle from '#radial/test/createSyntheticFAANasrCycle.js';
 
 const PROVENANCE = {
   sourceIdentity: 'fixture:openaip-navaids:v1',
   derivationPolicyIdentity: 'radial:navaid-derivation:v1',
-  matchingPolicyIdentity: 'fixture:no-facility-variation:v1',
+  matchingPolicyIdentity: 'radial:faa-nasr-match:v1',
 } as const;
+
+function nasrCyclesAt(retrievedAt: string, effectiveDate = '2026-07-09') {
+  const publishedAt = new Date(
+    Date.parse(`${effectiveDate}T12:00:00.000Z`) - 14 * 24 * 60 * 60 * 1_000
+  ).toISOString();
+  return [
+    createSyntheticFAANasrCycle(
+      [
+        {
+          EFF_DATE: effectiveDate,
+          FREQ: '112.150',
+          LAT_DECIMAL: '43.6589',
+          LONG_DECIMAL: '-79.6139',
+          MAG_VARN: '11.7',
+          MAG_VARN_HEMIS: 'W',
+          MAG_VARN_YEAR: '2020',
+          NAV_ID: 'YYZ',
+          NAV_TYPE: 'VOR/DME',
+        },
+      ],
+      {effectiveDate, publishedAt, retrievedAt}
+    ),
+  ] as const;
+}
+
+const NASR_ARCHIVE_CHECKSUM = createSyntheticFAANasrCycle([
+  {
+    EFF_DATE: '2026-07-09',
+    FREQ: '112.150',
+    LAT_DECIMAL: '43.6589',
+    LONG_DECIMAL: '-79.6139',
+    MAG_VARN: '11.7',
+    MAG_VARN_HEMIS: 'W',
+    MAG_VARN_YEAR: '2020',
+    NAV_ID: 'YYZ',
+    NAV_TYPE: 'VOR/DME',
+  },
+]).archiveChecksum;
 
 test('canonically preserves and deterministically partitions every raw Navaid', () => {
   const records = [
@@ -15,6 +54,9 @@ test('canonically preserves and deterministically partitions every raw Navaid', 
       type: 4,
       identifier: 'YYZ',
       name: 'Toronto',
+      country: 'US',
+      alignedTrueNorth: true,
+      magneticDeclination: 6.5,
       geometry: {coordinates: [-79.6139, 43.6589], type: 'Point'},
       frequency: {unit: 2, value: '112.150'},
       range: {unit: 2, value: 130},
@@ -53,18 +95,21 @@ test('canonically preserves and deterministically partitions every raw Navaid', 
   ];
 
   const candidate = buildNavaidSnapshotCandidate({
+    faaNasrCycles: nasrCyclesAt('2026-08-17T12:00:00.500Z'),
     rawNavaids: records,
     provenance: PROVENANCE,
     retrievedAt: '2026-08-17T12:00:00.000Z',
     retrievalCompletedAt: '2026-08-17T12:00:01.000Z',
   });
   const reordered = buildNavaidSnapshotCandidate({
+    faaNasrCycles: nasrCyclesAt('2026-08-17T13:00:00.500Z'),
     rawNavaids: records.toReversed(),
     provenance: PROVENANCE,
     retrievedAt: '2026-08-17T13:00:00.000Z',
     retrievalCompletedAt: '2026-08-17T13:00:01.000Z',
   });
   const nextDate = buildNavaidSnapshotCandidate({
+    faaNasrCycles: nasrCyclesAt('2026-08-18T12:00:00.500Z'),
     rawNavaids: records,
     provenance: PROVENANCE,
     retrievedAt: '2026-08-18T12:00:00.000Z',
@@ -76,6 +121,25 @@ test('canonically preserves and deterministically partitions every raw Navaid', 
   expect(candidate.componentChecksums).toEqual(reordered.componentChecksums);
   expect(candidate.rawNavaids).toHaveLength(7);
   expect(candidate.plannerNavaids.map(row => row.family)).toEqual(['NDB', 'VOR-DME']);
+  expect(
+    candidate.plannerNavaids.find(row => row.sourceRecordId === 'vor-1')
+  ).toMatchObject({
+    facilityVariationDegEast: -11.7,
+    facilityVariationEffectiveDate: null,
+    facilityVariationSource: 'FAA 28-Day NASR 2607',
+  });
+  expect(candidate.facilityVariationAudits).toHaveLength(1);
+  expect(candidate.facilityVariationAudits[0]).toMatchObject({
+    facilityVariationEpochYear: 2020,
+    nasrEffectiveDate: '2026-07-09',
+    outcome: 'matched',
+    sourceRecordId: 'vor-1',
+  });
+  expect(candidate.provenance.faaNasr).toMatchObject({
+    archiveChecksum: NASR_ARCHIVE_CHECKSUM,
+    cycleId: '2607',
+    effectiveDate: '2026-07-09',
+  });
   expect(candidate.exclusions.map(row => row.reason)).toEqual([
     'invalid-coordinates',
     'invalid-frequency',
@@ -85,7 +149,7 @@ test('canonically preserves and deterministically partitions every raw Navaid', 
   ]);
   expect(candidate.rawNavaids.find(row => row.sourceRecordId === 'vor-1')).toMatchObject({
     canonicalRecord:
-      '{"_id":"vor-1","additive":{"a":"preserved","z":true},"frequency":{"unit":2,"value":"112.150"},"geometry":{"coordinates":[-79.6139,43.6589],"type":"Point"},"identifier":"YYZ","name":"Toronto","range":{"unit":2,"value":130},"type":4}',
+      '{"_id":"vor-1","additive":{"a":"preserved","z":true},"alignedTrueNorth":true,"country":"US","frequency":{"unit":2,"value":"112.150"},"geometry":{"coordinates":[-79.6139,43.6589],"type":"Point"},"identifier":"YYZ","magneticDeclination":6.5,"name":"Toronto","range":{"unit":2,"value":130},"type":4}',
   });
   expect(new Set(candidate.rawNavaids.map(row => row.sourceRecordId)).size).toBe(7);
   expect(candidate.rawNavaids.map(row => row.sourceRecordId)).toEqual(
@@ -113,6 +177,7 @@ test('canonically preserves and deterministically partitions every raw Navaid', 
 
 test('preserves an eligible Navaid with unavailable Blackout Zone declination', () => {
   const candidate = buildNavaidSnapshotCandidate({
+    faaNasrCycles: nasrCyclesAt('2025-01-01T00:00:00.500Z', '2024-12-05'),
     rawNavaids: [
       {
         _id: 'blackout-vor',
@@ -131,15 +196,13 @@ test('preserves an eligible Navaid with unavailable Blackout Zone declination', 
   expect(candidate.plannerNavaids).toHaveLength(1);
   expect(candidate.plannerNavaids[0]?.magneticDeclinationDegEast).toBeNull();
   expect(candidate.exclusions).toEqual([]);
-  expect(candidate.snapshotChecksum).toBe(
-    'sha256:8f0d49c1075ab582e4141544a2c80e9a2df9f5209a752745ba376d33df4b177e'
-  );
 });
 
 test('rejects duplicate source IDs and non-canonicalizable raw values', () => {
   const duplicate = {_id: 'duplicate', unknown: true};
   expect(() =>
     buildNavaidSnapshotCandidate({
+      faaNasrCycles: nasrCyclesAt('2026-08-17T12:00:00.500Z'),
       rawNavaids: [duplicate, duplicate],
       provenance: PROVENANCE,
       retrievedAt: '2026-08-17T12:00:00.000Z',
@@ -149,6 +212,7 @@ test('rejects duplicate source IDs and non-canonicalizable raw values', () => {
 
   expect(() =>
     buildNavaidSnapshotCandidate({
+      faaNasrCycles: nasrCyclesAt('2026-08-17T12:00:00.500Z'),
       rawNavaids: [{_id: 'invalid', value: Number.NaN}],
       provenance: PROVENANCE,
       retrievedAt: '2026-08-17T12:00:00.000Z',

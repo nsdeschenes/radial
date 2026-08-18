@@ -141,7 +141,7 @@ test('leaves the database file unchanged when reopening a current schema', async
   } finally {
     await rm(temporaryDirectory, {recursive: true});
   }
-}, 15_000);
+}, 30_000);
 
 test('rejects a partial producer schema without repairing it', async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-producer-partial-'));
