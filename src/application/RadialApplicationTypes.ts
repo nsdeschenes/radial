@@ -15,6 +15,7 @@ type NavaidReloadProgress = Readonly<{
 type NavaidReloadRequest = Readonly<{
   openAipApiKey: string;
   onProgress?: (progress: NavaidReloadProgress) => void;
+  signal?: AbortSignal;
 }>;
 
 type AirportReloadProgress = Readonly<{
@@ -26,6 +27,7 @@ type AirportReloadRequest = Readonly<{
   icao: string;
   openAipApiKey: string;
   onProgress?: (progress: AirportReloadProgress) => void;
+  signal?: AbortSignal;
 }>;
 
 type DataFailure = Readonly<{

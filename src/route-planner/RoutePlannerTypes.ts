@@ -40,6 +40,7 @@ type RoutePlannerConfig = {
 type RoutePlanningRequest = {
   departureIcao: string;
   arrivalIcao: string;
+  signal?: AbortSignal;
 };
 
 type AirportRoutePoint = RoutePointBase & {

@@ -15,6 +15,7 @@ type ValidatedPlannerConfig = Readonly<{
 type NormalizedRoutePlanningRequest = Readonly<{
   departureIcao: string;
   arrivalIcao: string;
+  signal?: AbortSignal;
 }>;
 
 type AirportIcaoValidation =
@@ -86,7 +87,14 @@ function validateRoutePlanningRequest(
     };
   }
 
-  return {ok: true, value: Object.freeze({departureIcao, arrivalIcao})};
+  return {
+    ok: true,
+    value: Object.freeze({
+      departureIcao,
+      arrivalIcao,
+      ...(request.signal === undefined ? {} : {signal: request.signal}),
+    }),
+  };
 }
 
 function validateAirportIcao(value: string): AirportIcaoValidation {
