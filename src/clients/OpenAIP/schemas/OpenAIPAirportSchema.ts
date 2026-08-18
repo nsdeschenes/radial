@@ -9,7 +9,7 @@ const OpenAIPAirportSchema = z
       .optional()
       .meta({description: "The document's internal reference ID value."}),
     name: z.string().optional(),
-    icaoCode: z.string().regex(new RegExp('^[A-Z]{4}$')).optional(),
+    icaoCode: z.string().optional(),
     iataCode: z.string().regex(new RegExp('^[A-Z]{3}$')).optional(),
     altIdentifier: z.string().optional(),
     type: z

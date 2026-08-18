@@ -1,5 +1,6 @@
 import sharedDuckDBRuntime from '#radial/application/internal/SharedDuckDBRuntime.js';
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
+import ensureCachedAirport from '#radial/data-producer/internal/AirportDataProducer.js';
 import ensureFirstNavaidSnapshot from '#radial/data-producer/internal/BootstrapNavaidSnapshot.js';
 import reloadNavaids from '#radial/data-producer/internal/NavaidDataProducer.js';
 import validation from '#radial/route-planner/internal/validation.js';
@@ -10,7 +11,15 @@ type Application = RadialApplicationTypes['Application'];
 type RoutePlanner = RoutePlannerTypes['RoutePlanner'];
 type SharedDuckDBRuntime = Awaited<ReturnType<typeof sharedDuckDBRuntime.acquire>>;
 type NavaidDataProducerDependencies = NonNullable<Parameters<typeof reloadNavaids>[2]>;
+type AirportDataProducerDependencies = NonNullable<
+  Parameters<typeof ensureCachedAirport>[3]
+>;
+type AirportResolutionFailure = Extract<
+  Awaited<ReturnType<typeof ensureCachedAirport>>,
+  {ok: false}
+>['failure'];
 type ApplicationDependencies = NavaidDataProducerDependencies &
+  AirportDataProducerDependencies &
   Readonly<{
     openAipApiKey?: string;
   }>;
@@ -58,12 +67,24 @@ class ActivityGate {
 
 class ApplicationPlanner implements RoutePlanner {
   readonly #activityGate: ActivityGate;
+  readonly #airportApiKey: string;
+  readonly #airportDataProducerDependencies: AirportDataProducerDependencies;
   readonly #planner: RoutePlannerTypes['RoutePlanner'];
+  readonly #runtime: SharedDuckDBRuntime;
   #isDisposed = false;
 
-  constructor(activityGate: ActivityGate, planner: RoutePlannerTypes['RoutePlanner']) {
+  constructor(
+    activityGate: ActivityGate,
+    planner: RoutePlannerTypes['RoutePlanner'],
+    runtime: SharedDuckDBRuntime,
+    airportApiKey: string,
+    airportDataProducerDependencies: AirportDataProducerDependencies
+  ) {
     this.#activityGate = activityGate;
+    this.#airportApiKey = airportApiKey;
+    this.#airportDataProducerDependencies = airportDataProducerDependencies;
     this.#planner = planner;
+    this.#runtime = runtime;
   }
 
   async planRoute(
@@ -72,7 +93,34 @@ class ApplicationPlanner implements RoutePlanner {
     if (this.#isDisposed) {
       throw new Error('Cannot plan a route after the Route Planner has been disposed.');
     }
-    return this.#activityGate.run(() => this.#planner.planRoute(request));
+    const validatedRequest = validation.validateRoutePlanningRequest(request);
+    if (!validatedRequest.ok) {
+      return validatedRequest;
+    }
+    return this.#activityGate.run(async () => {
+      for (const endpoint of [
+        {role: 'departure' as const, icao: validatedRequest.value.departureIcao},
+        {role: 'arrival' as const, icao: validatedRequest.value.arrivalIcao},
+      ]) {
+        const resolved = await ensureCachedAirport(
+          await this.#runtime.instance(),
+          endpoint.icao,
+          this.#airportApiKey,
+          this.#airportDataProducerDependencies
+        );
+        if (!resolved.ok) {
+          return {
+            ok: false,
+            failure: mapAirportResolutionFailure(
+              endpoint.role,
+              endpoint.icao,
+              resolved.failure
+            ),
+          };
+        }
+      }
+      return this.#planner.planRoute(validatedRequest.value);
+    });
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
@@ -93,6 +141,7 @@ class RadialApplication implements Application {
   readonly #maxRouteFactor: number;
   readonly #openAipApiKey: string;
   readonly #navaidDataProducerDependencies: NavaidDataProducerDependencies;
+  readonly #airportDataProducerDependencies: AirportDataProducerDependencies;
   readonly #runtime: SharedDuckDBRuntime;
   #disposePromise: Promise<void> | undefined;
 
@@ -101,13 +150,14 @@ class RadialApplication implements Application {
     configuredDatabasePath: string,
     maxRouteFactor: number,
     openAipApiKey: string,
-    navaidDataProducerDependencies: NavaidDataProducerDependencies
+    dependencies: ApplicationDependencies
   ) {
     this.#runtime = runtime;
     this.#configuredDatabasePath = configuredDatabasePath;
     this.#maxRouteFactor = maxRouteFactor;
     this.#openAipApiKey = openAipApiKey;
-    this.#navaidDataProducerDependencies = navaidDataProducerDependencies;
+    this.#navaidDataProducerDependencies = dependencies;
+    this.#airportDataProducerDependencies = dependencies;
     this.databasePath = runtime.databasePath;
     this.dataManagement = Object.freeze({
       reloadNavaids: (request: RadialApplicationTypes['NavaidReloadRequest']) =>
@@ -168,7 +218,13 @@ class RadialApplication implements Application {
       if (opened.ok) {
         return {
           ok: true,
-          value: new ApplicationPlanner(this.#activityGate, opened.value),
+          value: new ApplicationPlanner(
+            this.#activityGate,
+            opened.value,
+            this.#runtime,
+            this.#openAipApiKey,
+            this.#airportDataProducerDependencies
+          ),
         };
       }
       return opened.failure.code === 'database-unavailable'
@@ -220,7 +276,7 @@ class RadialApplication implements Application {
 
 async function openRadialApplication(
   config: RadialApplicationTypes['ApplicationConfig'],
-  navaidDataProducerDependencies: ApplicationDependencies = {}
+  dependencies: ApplicationDependencies = {}
 ): Promise<RadialApplicationTypes['ApplicationOpenResult']> {
   const validatedConfig = validation.validatePlannerConfig(config);
   if (!validatedConfig.ok) {
@@ -235,8 +291,8 @@ async function openRadialApplication(
         runtime,
         validatedConfig.value.databasePath,
         validatedConfig.value.maxRouteFactor,
-        config.openAipApiKey ?? navaidDataProducerDependencies.openAipApiKey ?? '',
-        navaidDataProducerDependencies
+        config.openAipApiKey ?? dependencies.openAipApiKey ?? '',
+        dependencies
       ),
     };
   } catch {
@@ -247,6 +303,35 @@ async function openRadialApplication(
         databasePath: validatedConfig.value.databasePath,
       },
     };
+  }
+}
+
+function mapAirportResolutionFailure(
+  role: 'departure' | 'arrival',
+  normalizedIcao: string,
+  failure: AirportResolutionFailure
+): RoutePlannerTypes['RoutePlanningFailure'] {
+  switch (failure.reason) {
+    case 'not-found':
+      return {code: 'airport-not-found', role, normalizedIcao};
+    case 'ambiguous':
+      return {code: 'airport-ambiguous', role, normalizedIcao};
+    case 'cache-corrupt':
+      return {code: 'airport-cache-corrupt', role, normalizedIcao};
+    case 'database-query':
+      return {code: 'database-query-failed', operation: 'resolve-airports'};
+    case 'credentials-missing':
+    case 'mismatched':
+    case 'publication-failed':
+    case 'source-invalid':
+    case 'source-unavailable':
+    case 'unusable':
+      return {
+        code: 'airport-resolution-failed',
+        role,
+        normalizedIcao,
+        reason: failure.reason,
+      };
   }
 }
 

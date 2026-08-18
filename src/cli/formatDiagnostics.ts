@@ -58,6 +58,16 @@ function formatRoutePlanningDiagnostic(failure: RoutePlanningFailure): string {
       return `${capitalize(failure.role)} airport ${JSON.stringify(failure.normalizedIcao)} was not found in the local database.\n`;
     case 'airport-ambiguous':
       return `${capitalize(failure.role)} airport ${JSON.stringify(failure.normalizedIcao)} matched multiple usable records in the local database.\n`;
+    case 'airport-resolution-failed':
+      return (
+        `${capitalize(failure.role)} airport ${JSON.stringify(failure.normalizedIcao)} ` +
+        `could not be resolved from OpenAIP (${failure.reason}).\n`
+      );
+    case 'airport-cache-corrupt':
+      return (
+        `${capitalize(failure.role)} airport ${JSON.stringify(failure.normalizedIcao)} ` +
+        'has corrupt local Cached Airport data.\n'
+      );
     case 'database-query-failed':
       return formatDatabaseQueryDiagnostic(failure.operation);
     case 'no-route':
