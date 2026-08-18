@@ -28,7 +28,7 @@
     "lint:fix": "oxlint --fix",
     "test": "vitest run",
     "test:acceptance": "vitest run src/acceptance",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "vitest run --coverage --maxWorkers 2",
     "typecheck": "tsc --noEmit",
     "pre-commit:run": "prek run",
     "pre-commit:install": "prek install"
