@@ -3,6 +3,7 @@ import type {DuckDBInstance} from '@duckdb/node-api';
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import reloadNavaids from '#radial/data-producer/internal/NavaidDataProducer.js';
 import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import publicationGateRegistry from '#radial/data-producer/internal/PublicationGateRegistry.js';
 
 type DataFailure = RadialApplicationTypes['DataFailure'];
 type NavaidDataProducerDependencies = NonNullable<Parameters<typeof reloadNavaids>[2]>;
@@ -13,27 +14,36 @@ async function ensureFirstNavaidSnapshot(
   openAipApiKey: string,
   dependencies: NavaidDataProducerDependencies = {}
 ): Promise<BootstrapResult> {
-  let schemaExists: boolean;
+  const publicationGate =
+    dependencies.publicationGate ?? publicationGateRegistry.forInstance(instance);
+  let readiness: 'ready' | 'bootstrap' | 'credentials-missing';
   try {
-    schemaExists = await initializeProducerSchema.producerSchemaExists(instance);
+    readiness = await publicationGate.run(async () => {
+      const schemaExists = await initializeProducerSchema.producerSchemaExists(instance);
+      if (schemaExists) {
+        await initializeProducerSchema(instance);
+        if (
+          (await initializeProducerSchema.readActiveNavaidSnapshotId(instance)) !== null
+        ) {
+          return 'ready';
+        }
+      }
+
+      if (openAipApiKey.trim() === '') {
+        return 'credentials-missing';
+      }
+
+      await initializeProducerSchema(instance);
+      return 'bootstrap';
+    });
   } catch {
     return databaseInvalid();
   }
 
-  if (schemaExists) {
-    try {
-      await initializeProducerSchema(instance);
-      if (
-        (await initializeProducerSchema.readActiveNavaidSnapshotId(instance)) !== null
-      ) {
-        return {ok: true};
-      }
-    } catch {
-      return databaseInvalid();
-    }
+  if (readiness === 'ready') {
+    return {ok: true};
   }
-
-  if (openAipApiKey.trim() === '') {
+  if (readiness === 'credentials-missing') {
     return {
       ok: false,
       failure: {
@@ -46,13 +56,14 @@ async function ensureFirstNavaidSnapshot(
     };
   }
 
-  try {
-    await initializeProducerSchema(instance);
-  } catch {
-    return databaseInvalid();
-  }
-
-  const reloaded = await reloadNavaids(instance, {openAipApiKey}, dependencies);
+  const reloaded = await reloadNavaids(
+    instance,
+    {openAipApiKey},
+    {
+      ...dependencies,
+      publicationGate,
+    }
+  );
   return reloaded.ok ? {ok: true} : reloaded;
 }
 

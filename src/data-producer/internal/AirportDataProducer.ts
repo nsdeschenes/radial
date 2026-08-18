@@ -6,6 +6,8 @@ import type RadialApplicationTypes from '#radial/application/RadialApplicationTy
 import OpenAIP from '#radial/clients/OpenAIP/OpenAIP.js';
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
 import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import type PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
+import publicationGateRegistry from '#radial/data-producer/internal/PublicationGateRegistry.js';
 import Wmm2025 from '#radial/data-producer/internal/Wmm2025.js';
 
 type AirportPageRequest = Readonly<{
@@ -25,6 +27,8 @@ type AirportDataProducerDependencies = Readonly<{
     request: AirportPageRequest
   ) => Promise<AirportPage> | AirportPage;
   now?: () => Date;
+  beforeAirportCommit?: () => void | Promise<void>;
+  publicationGate?: PublicationGate;
 }>;
 
 type AirportResolutionFailure = Readonly<{
@@ -86,6 +90,8 @@ async function reloadAirport(
   request: AirportReloadRequest,
   dependencies: AirportDataProducerDependencies = {}
 ): Promise<AirportReloadResult> {
+  const publicationGate =
+    dependencies.publicationGate ?? publicationGateRegistry.forInstance(instance);
   const normalizedIcao = normalizeIcao(request.icao);
   if (!ICAO_PATTERN.test(normalizedIcao)) {
     return failure(
@@ -106,7 +112,7 @@ async function reloadAirport(
 
   request.onProgress?.({stage: 'database', message: 'Preparing Producer Schema.'});
   try {
-    await initializeProducerSchema(instance);
+    await publicationGate.run(() => initializeProducerSchema(instance));
   } catch {
     return failure(
       'DATA_DATABASE_INVALID',
@@ -142,7 +148,9 @@ async function reloadAirport(
       instance,
       acquired.airport,
       acquired.retrievedAt,
-      acquired.publishedAt
+      acquired.publishedAt,
+      publicationGate,
+      dependencies.beforeAirportCommit
     );
   } catch (error) {
     return failure(
@@ -171,6 +179,8 @@ async function ensureCachedAirport(
   openAipApiKey: string,
   dependencies: AirportDataProducerDependencies = {}
 ): Promise<AirportResolutionResult> {
+  const publicationGate =
+    dependencies.publicationGate ?? publicationGateRegistry.forInstance(instance);
   const cached = await readCachedAirport(instance, normalizedIcao);
   if (cached.kind === 'present' || cached.kind === 'missing') {
     if (cached.kind === 'present') {
@@ -200,7 +210,9 @@ async function ensureCachedAirport(
       instance,
       acquired.airport,
       acquired.retrievedAt,
-      acquired.publishedAt
+      acquired.publishedAt,
+      publicationGate,
+      dependencies.beforeAirportCommit
     );
   } catch {
     return {ok: false, failure: {reason: 'publication-failed'}};
@@ -549,7 +561,21 @@ async function publishAirport(
   instance: DuckDBInstance,
   airport: AirportRecord,
   retrievedAt: string,
-  publishedAt: string
+  publishedAt: string,
+  publicationGate: PublicationGate = publicationGateRegistry.forInstance(instance),
+  beforeCommit?: () => void | Promise<void>
+): Promise<void> {
+  await publicationGate.run(() =>
+    publishAirportWithinGate(instance, airport, retrievedAt, publishedAt, beforeCommit)
+  );
+}
+
+async function publishAirportWithinGate(
+  instance: DuckDBInstance,
+  airport: AirportRecord,
+  retrievedAt: string,
+  publishedAt: string,
+  beforeCommit?: () => void | Promise<void>
 ): Promise<void> {
   const connection = await instance.connect();
   try {
@@ -625,6 +651,7 @@ async function publishAirport(
           ]
         );
       }
+      await beforeCommit?.();
       await connection.run('COMMIT');
     } catch (error) {
       try {

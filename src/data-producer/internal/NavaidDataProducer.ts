@@ -13,6 +13,8 @@ import type OpenAIPNavaidTransport from '#radial/data-producer/internal/OpenAIPN
 import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import acquireProductionFAANasrCycle from '#radial/data-producer/internal/ProductionFAANasrCycleSource.js';
 import createProductionOpenAIPNavaidTransport from '#radial/data-producer/internal/ProductionOpenAIPNavaidTransport.js';
+import type PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
+import publicationGateRegistry from '#radial/data-producer/internal/PublicationGateRegistry.js';
 
 type FAANasrCycles = Parameters<typeof buildNavaidSnapshotCandidate>[0]['faaNasrCycles'];
 type ReloadResult = RadialApplicationTypes['NavaidReloadResult'];
@@ -22,6 +24,8 @@ type NavaidDataProducerDependencies = Readonly<{
   acquireFAANasrCycles?: (retrievalStartedAt: string) => Promise<FAANasrCycles>;
   createOpenAIPTransport?: (apiKey: string) => OpenAIPNavaidTransport;
   now?: () => Date;
+  beforeNavaidCommit?: () => void | Promise<void>;
+  publicationGate?: PublicationGate;
 }>;
 
 async function reloadNavaids(
@@ -29,6 +33,8 @@ async function reloadNavaids(
   request: ReloadRequest,
   dependencies: NavaidDataProducerDependencies = {}
 ): Promise<ReloadResult> {
+  const publicationGate =
+    dependencies.publicationGate ?? publicationGateRegistry.forInstance(instance);
   if (request.openAipApiKey.trim() === '') {
     return failure(
       'DATA_CREDENTIALS_MISSING',
@@ -41,7 +47,7 @@ async function reloadNavaids(
 
   request.onProgress?.({stage: 'database', message: 'Preparing Producer Schema.'});
   try {
-    await initializeProducerSchema(instance);
+    await publicationGate.run(() => initializeProducerSchema(instance));
   } catch {
     return failure(
       'DATA_DATABASE_INVALID',
@@ -161,7 +167,12 @@ async function reloadNavaids(
 
   request.onProgress?.({stage: 'publish', message: 'publishing Navaid Snapshot'});
   try {
-    const published = await publishNavaidSnapshot(instance, candidate);
+    const published = await publishNavaidSnapshot(instance, candidate, {
+      ...(dependencies.beforeNavaidCommit === undefined
+        ? {}
+        : {beforeCommit: dependencies.beforeNavaidCommit}),
+      publicationGate,
+    });
     request.onProgress?.({stage: 'complete', message: 'Navaid Snapshot committed.'});
     return {
       ok: true,
