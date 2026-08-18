@@ -1,5 +1,6 @@
 import sharedDuckDBRuntime from '#radial/application/internal/SharedDuckDBRuntime.js';
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
+import reloadNavaids from '#radial/data-producer/internal/NavaidDataProducer.js';
 import validation from '#radial/route-planner/internal/validation.js';
 import openRoutePlanner from '#radial/route-planner/RoutePlanner.js';
 import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
@@ -7,6 +8,7 @@ import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
 type Application = RadialApplicationTypes['Application'];
 type RoutePlanner = RoutePlannerTypes['RoutePlanner'];
 type SharedDuckDBRuntime = Awaited<ReturnType<typeof sharedDuckDBRuntime.acquire>>;
+type NavaidDataProducerDependencies = NonNullable<Parameters<typeof reloadNavaids>[2]>;
 
 class ActivityGate {
   #activeOperationCount = 0;
@@ -78,20 +80,50 @@ class RadialApplication implements Application {
   readonly #activityGate = new ActivityGate();
   readonly #configuredDatabasePath: string;
   readonly #maxRouteFactor: number;
+  readonly #navaidDataProducerDependencies: NavaidDataProducerDependencies;
   readonly #runtime: SharedDuckDBRuntime;
   #disposePromise: Promise<void> | undefined;
 
   constructor(
     runtime: SharedDuckDBRuntime,
     configuredDatabasePath: string,
-    maxRouteFactor: number
+    maxRouteFactor: number,
+    navaidDataProducerDependencies: NavaidDataProducerDependencies
   ) {
     this.#runtime = runtime;
     this.#configuredDatabasePath = configuredDatabasePath;
     this.#maxRouteFactor = maxRouteFactor;
+    this.#navaidDataProducerDependencies = navaidDataProducerDependencies;
     this.databasePath = runtime.databasePath;
-    this.dataManagement = Object.freeze({});
+    this.dataManagement = Object.freeze({
+      reloadNavaids: (request: RadialApplicationTypes['NavaidReloadRequest']) =>
+        this.#reloadNavaids(request),
+    });
     this.planning = Object.freeze({open: () => this.#openPlanning()});
+  }
+
+  async #reloadNavaids(
+    request: RadialApplicationTypes['NavaidReloadRequest']
+  ): Promise<RadialApplicationTypes['NavaidReloadResult']> {
+    if (request.openAipApiKey.trim() === '') {
+      return {
+        ok: false,
+        failure: {
+          code: 'DATA_CREDENTIALS_MISSING',
+          summary: 'OpenAIP credentials are missing.',
+          cause: 'OPENAIP_API_KEY is required for an explicit Navaid reload.',
+          action: 'Set OPENAIP_API_KEY and retry the Navaid reload.',
+          activeDataPreserved: true,
+        },
+      };
+    }
+    return this.#activityGate.run(async () =>
+      reloadNavaids(
+        await this.#runtime.instance(),
+        request,
+        this.#navaidDataProducerDependencies
+      )
+    );
   }
 
   async #openPlanning(): Promise<RoutePlannerTypes['PlannerOpenResult']> {
@@ -133,7 +165,8 @@ class RadialApplication implements Application {
 }
 
 async function openRadialApplication(
-  config: RadialApplicationTypes['ApplicationConfig']
+  config: RadialApplicationTypes['ApplicationConfig'],
+  navaidDataProducerDependencies: NavaidDataProducerDependencies = {}
 ): Promise<RadialApplicationTypes['ApplicationOpenResult']> {
   const validatedConfig = validation.validatePlannerConfig(config);
   if (!validatedConfig.ok) {
@@ -147,7 +180,8 @@ async function openRadialApplication(
       value: new RadialApplication(
         runtime,
         validatedConfig.value.databasePath,
-        validatedConfig.value.maxRouteFactor
+        validatedConfig.value.maxRouteFactor,
+        navaidDataProducerDependencies
       ),
     };
   } catch {

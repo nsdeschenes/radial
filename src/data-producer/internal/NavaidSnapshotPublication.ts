@@ -4,6 +4,8 @@ import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
 import type buildNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidate.js';
+import NavaidSnapshotPublicationError from '#radial/data-producer/internal/NavaidSnapshotPublicationError.js';
+import NavaidSnapshotValidationError from '#radial/data-producer/internal/NavaidSnapshotValidationError.js';
 import Wmm2025 from '#radial/data-producer/internal/Wmm2025.js';
 
 const {localMagneticDeclinationFromWmm2025, wmm2025Provenance} = Wmm2025;
@@ -31,7 +33,13 @@ async function publishNavaidSnapshot(
   candidate: NavaidSnapshotCandidate,
   options: PublicationOptions = {}
 ): Promise<PublicationResult> {
-  validateCandidate(candidate);
+  try {
+    validateCandidate(candidate);
+  } catch (error) {
+    throw new NavaidSnapshotValidationError(
+      error instanceof Error ? error.message : 'Navaid Snapshot candidate is invalid.'
+    );
+  }
   const snapshotId = options.snapshotId ?? randomUUID();
   validateUuid(snapshotId);
   const connection = await instance.connect();
@@ -65,9 +73,21 @@ async function publishNavaidSnapshot(
       await verifyNoCrossSnapshotReferences(connection);
       await options.beforeCommit?.();
       await connection.run('COMMIT');
-    } catch (error) {
-      await connection.run('ROLLBACK');
-      throw error;
+    } catch (publicationError) {
+      try {
+        await connection.run('ROLLBACK');
+        throw new NavaidSnapshotPublicationError(
+          true,
+          publicationError instanceof Error
+            ? publicationError.message
+            : 'Navaid Snapshot publication failed.'
+        );
+      } catch (rollbackError) {
+        if (rollbackError instanceof NavaidSnapshotPublicationError) {
+          throw rollbackError;
+        }
+        throw new NavaidSnapshotPublicationError(false);
+      }
     }
   } finally {
     connection.closeSync();

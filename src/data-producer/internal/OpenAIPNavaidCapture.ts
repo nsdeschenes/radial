@@ -1,5 +1,6 @@
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
 import parseJsonWithUniqueKeys from '#radial/data-producer/internal/JsonWithUniqueKeys.js';
+import OpenAIPNavaidCaptureError from '#radial/data-producer/internal/OpenAIPNavaidCaptureError.js';
 import type OpenAIPNavaidTransport from '#radial/data-producer/internal/OpenAIPNavaidTransport.js';
 import OpenAIPNavaidTransportError from '#radial/data-producer/internal/OpenAIPNavaidTransportError.js';
 
@@ -24,6 +25,11 @@ type CaptureOpenAIPNavaidsRequest = Readonly<{
   now?: () => Date;
   sleep?: (milliseconds: number) => Promise<void>;
   random?: () => number;
+  onProgress?: (progress: {
+    page: number;
+    totalPages: number;
+    cumulativeRecordCount: number;
+  }) => void;
 }>;
 
 type CapturedOpenAIPNavaids = Readonly<{
@@ -46,6 +52,7 @@ type CaptureDependencies = Readonly<{
   now: () => Date;
   sleep: (milliseconds: number) => Promise<void>;
   random: () => number;
+  onProgress?: CaptureOpenAIPNavaidsRequest['onProgress'];
 }>;
 
 class CollectionDriftError extends Error {}
@@ -65,26 +72,38 @@ async function captureOpenAIPNavaids(
           setTimeout(resolve, milliseconds);
         })),
     random: request.random ?? Math.random,
+    ...(request.onProgress === undefined ? {} : {onProgress: request.onProgress}),
   };
 
-  for (let attempt = 1; attempt <= MAX_CAPTURE_ATTEMPTS; attempt += 1) {
-    try {
-      const rawNavaids = await captureOneCollection(dependencies);
-      return Object.freeze({
-        rawNavaids: Object.freeze(rawNavaids),
-        retrievedAt: startedAt.toISOString(),
-        retrievalCompletedAt: now().toISOString(),
-      });
-    } catch (error) {
-      if (!(error instanceof CollectionDriftError)) {
-        throw error;
-      }
-      if (attempt === MAX_CAPTURE_ATTEMPTS) {
-        throw new Error(
-          `OpenAIP Navaid collection drifted during all ${MAX_CAPTURE_ATTEMPTS} capture attempts.`
-        );
+  try {
+    for (let attempt = 1; attempt <= MAX_CAPTURE_ATTEMPTS; attempt += 1) {
+      try {
+        const rawNavaids = await captureOneCollection(dependencies);
+        return Object.freeze({
+          rawNavaids: Object.freeze(rawNavaids),
+          retrievedAt: startedAt.toISOString(),
+          retrievalCompletedAt: now().toISOString(),
+        });
+      } catch (error) {
+        if (!(error instanceof CollectionDriftError)) {
+          throw error;
+        }
+        if (attempt === MAX_CAPTURE_ATTEMPTS) {
+          throw new OpenAIPNavaidCaptureError(
+            'snapshot-drift',
+            `OpenAIP Navaid collection drifted during all ${MAX_CAPTURE_ATTEMPTS} capture attempts.`
+          );
+        }
       }
     }
+  } catch (error) {
+    if (error instanceof OpenAIPNavaidCaptureError) {
+      throw error;
+    }
+    throw new OpenAIPNavaidCaptureError(
+      'invalid-response',
+      error instanceof Error ? error.message : 'OpenAIP Navaid response was invalid.'
+    );
   }
   throw new Error('OpenAIP Navaid capture exhausted its attempt policy.');
 }
@@ -148,6 +167,11 @@ async function captureOneCollection(
       previousId = sourceId;
       rawNavaids.push(item);
     }
+    dependencies.onProgress?.({
+      page: pageNumber,
+      totalPages: envelope.totalPages,
+      cumulativeRecordCount: rawNavaids.length,
+    });
 
     if (expectedNextPage === undefined) {
       if (rawNavaids.length !== expectedTotalCount) {
@@ -178,10 +202,14 @@ async function requestPageWithRetry(
       });
     } catch (error) {
       if (error instanceof OpenAIPNavaidTransportError && !error.retryable) {
-        throw new Error('OpenAIP Navaid transport rejected the request.');
+        throw new OpenAIPNavaidCaptureError(
+          'invalid-response',
+          'OpenAIP Navaid transport rejected the request.'
+        );
       }
       if (attempt === MAX_REQUEST_ATTEMPTS) {
-        throw new Error(
+        throw new OpenAIPNavaidCaptureError(
+          'unavailable',
           `OpenAIP Navaid transport failed after ${MAX_REQUEST_ATTEMPTS} attempts.`
         );
       }
@@ -193,11 +221,27 @@ async function requestPageWithRetry(
     if (response.status === 200) {
       return response;
     }
+    if (response.status === 401) {
+      throw new OpenAIPNavaidCaptureError(
+        'auth',
+        'OpenAIP Navaid request failed with HTTP 401.'
+      );
+    }
+    if (response.status === 403) {
+      throw new OpenAIPNavaidCaptureError(
+        'forbidden',
+        'OpenAIP Navaid request failed with HTTP 403.'
+      );
+    }
     if (!RETRYABLE_STATUSES.has(response.status)) {
-      throw new Error(`OpenAIP Navaid request failed with HTTP ${response.status}.`);
+      throw new OpenAIPNavaidCaptureError(
+        'invalid-response',
+        `OpenAIP Navaid request failed with HTTP ${response.status}.`
+      );
     }
     if (attempt === MAX_REQUEST_ATTEMPTS) {
-      throw new Error(
+      throw new OpenAIPNavaidCaptureError(
+        'unavailable',
         `OpenAIP Navaid request failed with HTTP ${response.status} after ${MAX_REQUEST_ATTEMPTS} attempts.`
       );
     }

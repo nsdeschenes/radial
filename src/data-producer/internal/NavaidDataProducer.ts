@@ -1,0 +1,239 @@
+import type {DuckDBInstance} from '@duckdb/node-api';
+
+import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
+import FAANasrCycleSourceError from '#radial/data-producer/internal/FAANasrCycleSourceError.js';
+import faaNasrFacilityVariation from '#radial/data-producer/internal/FAANasrFacilityVariation.js';
+import buildNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidate.js';
+import publishNavaidSnapshot from '#radial/data-producer/internal/NavaidSnapshotPublication.js';
+import NavaidSnapshotPublicationError from '#radial/data-producer/internal/NavaidSnapshotPublicationError.js';
+import NavaidSnapshotValidationError from '#radial/data-producer/internal/NavaidSnapshotValidationError.js';
+import captureOpenAIPNavaids from '#radial/data-producer/internal/OpenAIPNavaidCapture.js';
+import OpenAIPNavaidCaptureError from '#radial/data-producer/internal/OpenAIPNavaidCaptureError.js';
+import type OpenAIPNavaidTransport from '#radial/data-producer/internal/OpenAIPNavaidTransport.js';
+import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import acquireProductionFAANasrCycle from '#radial/data-producer/internal/ProductionFAANasrCycleSource.js';
+import createProductionOpenAIPNavaidTransport from '#radial/data-producer/internal/ProductionOpenAIPNavaidTransport.js';
+
+type FAANasrCycles = Parameters<typeof buildNavaidSnapshotCandidate>[0]['faaNasrCycles'];
+type ReloadResult = RadialApplicationTypes['NavaidReloadResult'];
+type ReloadRequest = RadialApplicationTypes['NavaidReloadRequest'];
+
+type NavaidDataProducerDependencies = Readonly<{
+  acquireFAANasrCycles?: (retrievalStartedAt: string) => Promise<FAANasrCycles>;
+  createOpenAIPTransport?: (apiKey: string) => OpenAIPNavaidTransport;
+  now?: () => Date;
+}>;
+
+async function reloadNavaids(
+  instance: DuckDBInstance,
+  request: ReloadRequest,
+  dependencies: NavaidDataProducerDependencies = {}
+): Promise<ReloadResult> {
+  if (request.openAipApiKey.trim() === '') {
+    return failure(
+      'DATA_CREDENTIALS_MISSING',
+      'OpenAIP credentials are missing.',
+      'OPENAIP_API_KEY is required for an explicit Navaid reload.',
+      'Set OPENAIP_API_KEY and retry the Navaid reload.',
+      true
+    );
+  }
+
+  request.onProgress?.({stage: 'database', message: 'Preparing Producer Schema.'});
+  try {
+    await initializeProducerSchema(instance);
+  } catch {
+    return failure(
+      'DATA_DATABASE_INVALID',
+      'The configured database is invalid.',
+      'The Producer Schema could not be prepared safely.',
+      'Inspect the configured database and retry with a valid Radial database.',
+      true
+    );
+  }
+
+  const now = dependencies.now ?? (() => new Date());
+  let captured: Awaited<ReturnType<typeof captureOpenAIPNavaids>>;
+  request.onProgress?.({stage: 'openaip', message: 'Acquiring OpenAIP Navaids.'});
+  try {
+    captured = await captureOpenAIPNavaids({
+      transport: (
+        dependencies.createOpenAIPTransport ?? createProductionOpenAIPNavaidTransport
+      )(request.openAipApiKey),
+      now,
+      onProgress(progress) {
+        request.onProgress?.({
+          stage: 'openaip',
+          message:
+            `fetching Navaids page ${progress.page}/${progress.totalPages} ` +
+            `(${progress.cumulativeRecordCount} records)`,
+        });
+      },
+    });
+  } catch (error) {
+    const code: RadialApplicationTypes['DataFailure']['code'] =
+      error instanceof OpenAIPNavaidCaptureError
+        ? (
+            {
+              auth: 'DATA_OPENAIP_AUTH',
+              forbidden: 'DATA_OPENAIP_FORBIDDEN',
+              unavailable: 'DATA_OPENAIP_UNAVAILABLE',
+              'invalid-response': 'DATA_OPENAIP_INVALID_RESPONSE',
+              'snapshot-drift': 'DATA_SNAPSHOT_DRIFT',
+            } as const
+          )[error.code]
+        : 'DATA_OPENAIP_UNAVAILABLE';
+    return failure(
+      code,
+      'OpenAIP Navaid acquisition failed.',
+      'OpenAIP Navaid acquisition did not complete.',
+      'Check OpenAIP availability and credentials, then retry.',
+      true
+    );
+  }
+
+  let faaNasrCycles: FAANasrCycles;
+  request.onProgress?.({stage: 'nasr', message: 'Acquiring FAA NASR data.'});
+  try {
+    faaNasrCycles = await (
+      dependencies.acquireFAANasrCycles ?? acquireProductionFAANasrCycle
+    )(captured.retrievedAt);
+  } catch (error) {
+    return failure(
+      error instanceof FAANasrCycleSourceError && error.code === 'invalid-response'
+        ? 'DATA_NASR_INVALID_RESPONSE'
+        : 'DATA_NASR_UNAVAILABLE',
+      'FAA NASR acquisition failed.',
+      error instanceof FAANasrCycleSourceError && error.code === 'invalid-response'
+        ? 'The applicable FAA NASR archive response is invalid.'
+        : 'The applicable FAA NASR archive is unavailable.',
+      'Check FAA NASR availability and source compatibility, then retry.',
+      true
+    );
+  }
+  try {
+    faaNasrFacilityVariation.selectApplicableCycle(faaNasrCycles, captured.retrievedAt);
+  } catch {
+    return failure(
+      'DATA_NASR_INVALID_RESPONSE',
+      'FAA NASR source validation failed.',
+      'The applicable FAA NASR archive or metadata is invalid.',
+      'Retry after the FAA NASR source is corrected.',
+      true
+    );
+  }
+
+  request.onProgress?.({stage: 'derive', message: 'validating raw records'});
+  request.onProgress?.({stage: 'derive', message: 'deriving planner-ready data'});
+  request.onProgress?.({stage: 'derive', message: 'calculating magnetic data'});
+  let candidate: ReturnType<typeof buildNavaidSnapshotCandidate>;
+  try {
+    candidate = buildNavaidSnapshotCandidate({
+      faaNasrCycles,
+      rawNavaids: captured.rawNavaids,
+      provenance: {
+        sourceIdentity:
+          'openaip-core-api:/navaids:contract-1.1:limit-1000:sort-_id-ascending',
+        derivationPolicyIdentity: 'radial:navaid-derivation:v1',
+        matchingPolicyIdentity: 'radial:faa-nasr-match:v1',
+      },
+      retrievedAt: captured.retrievedAt,
+      retrievalCompletedAt: now().toISOString(),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('WMM2025 ')) {
+      return failure(
+        'DATA_MAGNETIC_MODEL_INVALID',
+        'Local Magnetic Declination calculation failed.',
+        'The pinned WMM2025 model could not produce valid magnetic data.',
+        'Retry with a supported magnetic reference date or corrected model artifact.',
+        true
+      );
+    }
+    return failure(
+      'DATA_DERIVATION_FAILED',
+      'Navaid Snapshot derivation failed.',
+      'The acquired sources could not produce a valid Navaid Snapshot candidate.',
+      'Retry after verifying OpenAIP, FAA NASR, and magnetic-model source compatibility.',
+      true
+    );
+  }
+
+  request.onProgress?.({stage: 'publish', message: 'publishing Navaid Snapshot'});
+  try {
+    const published = await publishNavaidSnapshot(instance, candidate);
+    request.onProgress?.({stage: 'complete', message: 'Navaid Snapshot committed.'});
+    return {
+      ok: true,
+      value: {
+        ...published,
+        ...committedCounts(candidate),
+        retrievedAt: candidate.retrievedAt,
+        retrievalCompletedAt: candidate.retrievalCompletedAt,
+        provenance: candidate.provenance,
+      },
+    };
+  } catch (error) {
+    if (error instanceof NavaidSnapshotValidationError) {
+      return failure(
+        'DATA_VALIDATION_FAILED',
+        'Navaid Snapshot validation failed.',
+        'The derived candidate did not satisfy the publication invariants.',
+        'Retry after the source-data incompatibility is corrected.',
+        true
+      );
+    }
+    return failure(
+      'DATA_PUBLICATION_FAILED',
+      'Navaid Snapshot publication failed.',
+      'The Navaid Snapshot could not be committed.',
+      'Inspect database availability and retry the reload.',
+      error instanceof NavaidSnapshotPublicationError ? error.activeDataPreserved : false
+    );
+  }
+}
+
+function committedCounts(candidate: ReturnType<typeof buildNavaidSnapshotCandidate>) {
+  const exclusionCounts = new Map<string, number>();
+  for (const exclusion of candidate.exclusions) {
+    exclusionCounts.set(
+      exclusion.reason,
+      (exclusionCounts.get(exclusion.reason) ?? 0) + 1
+    );
+  }
+  return {
+    vorFamilyNavaidCount: candidate.plannerNavaids.filter(
+      navaid => navaid.family !== 'NDB'
+    ).length,
+    fallbackNavaidCount: candidate.plannerNavaids.filter(
+      navaid => navaid.family === 'NDB'
+    ).length,
+    exclusionCounts: [...exclusionCounts]
+      .toSorted(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([reason, count]) => ({reason, count})),
+    facilityVariationPresentCount: candidate.facilityVariationAudits.filter(
+      audit => audit.outcome === 'matched'
+    ).length,
+    facilityVariationMissingCount: candidate.facilityVariationAudits.filter(
+      audit => audit.outcome !== 'matched'
+    ).length,
+    facilityVariationEpochYearMissingCount: candidate.facilityVariationAudits.filter(
+      audit => audit.outcome === 'matched' && audit.facilityVariationEpochYear === null
+    ).length,
+  };
+}
+
+function failure(
+  code: RadialApplicationTypes['DataFailure']['code'],
+  summary: string,
+  cause: string,
+  action: string,
+  activeDataPreserved: boolean
+): ReloadResult {
+  return {
+    ok: false,
+    failure: {code, summary, cause, action, activeDataPreserved},
+  };
+}
+
+export default reloadNavaids;
