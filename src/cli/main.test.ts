@@ -127,6 +127,86 @@ test('provides Navaid reload help and rejects unsupported options', async () => 
   });
 });
 
+test('validates the Airport reload argument before opening the application', async () => {
+  const capture = captureOutput();
+  let applicationOpened = false;
+
+  const exitCode = await runCli({
+    args: ['data', 'reload', 'airport', ' bad '],
+    env: {RADIAL_DATABASE_PATH: ':memory:'},
+    io: capture.io,
+    async openApplication() {
+      applicationOpened = true;
+      throw new Error('The application must not open for invalid configuration.');
+    },
+  });
+
+  expect(applicationOpened).toBe(false);
+  expect(exitCode).toBe(2);
+  expect(capture.output()).toEqual({
+    stdout: '',
+    stderr:
+      'error [DATA_INVALID_ICAO]: The Airport ICAO is invalid.\n' +
+      'Cause: The requested Airport ICAO " bad " is not four ASCII letters.\n' +
+      'Action: Provide exactly one four-letter ICAO and retry the Airport reload.\n' +
+      'Active data remains unchanged.\n',
+  });
+});
+
+test('reports missing Airport reload credentials before opening the application', async () => {
+  const capture = captureOutput();
+
+  const exitCode = await runCli({
+    args: ['data', 'reload', 'airport', 'CAAA'],
+    env: {RADIAL_DATABASE_PATH: ':memory:'},
+    io: capture.io,
+    async openApplication() {
+      throw new Error('The application must not open for invalid configuration.');
+    },
+  });
+
+  expect(exitCode).toBe(1);
+  expect(capture.output()).toEqual({
+    stdout: '',
+    stderr:
+      'error [DATA_CREDENTIALS_MISSING]: OpenAIP credentials are missing.\n' +
+      'Cause: OPENAIP_API_KEY is required for an explicit Airport reload.\n' +
+      'Action: Set OPENAIP_API_KEY and retry the Airport reload.\n' +
+      'Active data remains unchanged.\n',
+  });
+});
+
+test('provides Airport reload help and rejects extra arguments', async () => {
+  const helpCapture = captureOutput();
+  const usageCapture = captureOutput();
+
+  await expect(
+    runCli({
+      args: ['data', 'reload', 'airport', '--help'],
+      env: {},
+      io: helpCapture.io,
+    })
+  ).resolves.toBe(0);
+  await expect(
+    runCli({
+      args: ['data', 'reload', 'airport', 'CAAA', '--force'],
+      env: {},
+      io: usageCapture.io,
+    })
+  ).resolves.toBe(2);
+  expect(helpCapture.output()).toEqual({
+    stdout: 'Usage: radial data reload airport <ICAO>\n',
+    stderr: '',
+  });
+  expect(usageCapture.output()).toEqual({
+    stdout: '',
+    stderr:
+      'error [DATA_USAGE]: Invalid data command.\n' +
+      'Cause: The Airport reload accepts exactly one ICAO and no operational flags.\n' +
+      'Action: Run "radial data reload airport <ICAO>".\n',
+  });
+});
+
 test('streams Navaid reload progress to stderr and writes success only after commit', async () => {
   const capture = captureOutput();
   const reload = Promise.withResolvers<ApplicationTypes['NavaidReloadResult']>();
@@ -225,6 +305,88 @@ test('writes a stable Navaid reload failure only to stderr', async () => {
       'error [DATA_OPENAIP_UNAVAILABLE]: OpenAIP Navaid acquisition failed.\n' +
       'Cause: OpenAIP Navaid acquisition did not complete.\n' +
       'Action: Check OpenAIP availability and credentials, then retry.\n' +
+      'Active data remains unchanged.\n',
+  });
+  expect(capture.output().stderr).not.toContain('secret-api-key');
+});
+
+test('streams Airport reload progress and writes success only after commit', async () => {
+  const capture = captureOutput();
+  const reload = Promise.withResolvers<ApplicationTypes['AirportReloadResult']>();
+  const application = syntheticAirportApplication(async request => {
+    expect(request.icao).toBe('CAAA');
+    request.onProgress?.({stage: 'openaip', message: 'Looking up Airport CAAA.'});
+    request.onProgress?.({stage: 'publish', message: 'Publishing Cached Airport.'});
+    return reload.promise;
+  });
+
+  const running = runCli({
+    args: ['data', 'reload', 'airport', ' caaa '],
+    env: {RADIAL_DATABASE_PATH: ':memory:', OPENAIP_API_KEY: 'secret-api-key'},
+    io: capture.io,
+    async openApplication() {
+      return {ok: true, value: application};
+    },
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(capture.output()).toEqual({
+    stdout: '',
+    stderr:
+      'progress: Looking up Airport CAAA.\n' + 'progress: Publishing Cached Airport.\n',
+  });
+
+  reload.resolve({
+    ok: true,
+    value: {
+      status: 'replaced',
+      icao: 'CAAA',
+      sourceId: 'airport-caaa',
+      retrievedAt: '2026-07-10T00:00:00.000Z',
+    },
+  });
+  await expect(running).resolves.toBe(0);
+  expect(capture.output()).toEqual({
+    stdout:
+      'Cached Airport replaced\n' +
+      '  ICAO: CAAA\n' +
+      '  OpenAIP ID: airport-caaa\n' +
+      '  Retrieved: 2026-07-10T00:00:00.000Z\n',
+    stderr:
+      'progress: Looking up Airport CAAA.\n' + 'progress: Publishing Cached Airport.\n',
+  });
+});
+
+test('writes a failed Airport reload only to stderr', async () => {
+  const capture = captureOutput();
+  const application = syntheticAirportApplication(async () => ({
+    ok: false,
+    failure: {
+      code: 'DATA_AIRPORT_NOT_FOUND',
+      summary: 'The requested Airport was not found.',
+      cause: 'OpenAIP returned no exact usable match for the requested ICAO.',
+      action: 'Check the ICAO and retry the Airport reload.',
+      activeDataPreserved: true,
+    },
+  }));
+
+  const exitCode = await runCli({
+    args: ['data', 'reload', 'airport', 'CAAA'],
+    env: {RADIAL_DATABASE_PATH: ':memory:', OPENAIP_API_KEY: 'secret-api-key'},
+    io: capture.io,
+    async openApplication() {
+      return {ok: true, value: application};
+    },
+  });
+
+  expect(exitCode).toBe(1);
+  expect(capture.output()).toEqual({
+    stdout: '',
+    stderr:
+      'error [DATA_AIRPORT_NOT_FOUND]: The requested Airport was not found.\n' +
+      'Cause: OpenAIP returned no exact usable match for the requested ICAO.\n' +
+      'Action: Check the ICAO and retry the Airport reload.\n' +
       'Active data remains unchanged.\n',
   });
   expect(capture.output().stderr).not.toContain('secret-api-key');
