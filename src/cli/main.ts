@@ -55,6 +55,7 @@ async function runCli({
   const openedApplication = await openApplication({
     databasePath: env['RADIAL_DATABASE_PATH'] ?? '',
     ...(configuredFactor === undefined ? {} : {maxRouteFactor: Number(configuredFactor)}),
+    openAipApiKey: env['OPENAIP_API_KEY'] ?? '',
   });
 
   if (!openedApplication.ok) {
