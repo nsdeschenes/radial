@@ -16,6 +16,8 @@
   },
   "scripts": {
     "acceptance:benchmark": "nub src/acceptance/runRoutePlannerBenchmark.ts",
+    "acceptance:compatibility": "nub src/acceptance/runLiveCompatibilityProbes.ts",
+    "acceptance:refresh-fixtures": "nub src/acceptance/refreshFixtures.ts",
     "acceptance:smoke": "nub src/acceptance/checkRoutePlannerSmoke.ts",
     "acceptance:stress": "vitest run src/acceptance/syntheticStressCorpus.test.ts",
     "dev": "node --watch src/radial.ts",
@@ -27,7 +29,7 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "test": "vitest run",
-    "test:acceptance": "vitest run src/acceptance",
+    "test:acceptance": "vitest run src/acceptance src/application src/cli src/clients/OpenAIP src/data-producer src/route-planner",
     "test:non-acceptance": "vitest run --exclude 'src/acceptance/**'",
     "test:coverage": "vitest run --coverage --maxWorkers 2",
     "typecheck": "tsc --noEmit",
