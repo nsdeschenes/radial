@@ -1,35 +1,11 @@
 import {expect, test} from 'vitest';
 
+import testVectors from '#fixtures/WMM2025/test-vectors.json' with {type: 'json'};
 import Wmm2025 from '#radial/data-producer/internal/Wmm2025.js';
 
 const {localMagneticDeclinationFromWmm2025, noaaDecimalYearFromUtcDate} = Wmm2025;
 
-test.each([
-  {
-    referenceDate: '2025-01-01',
-    latitude: 80,
-    longitude: 0,
-    expectedDeclination: 1.28,
-  },
-  {
-    referenceDate: '2025-01-01',
-    latitude: 0,
-    longitude: 120,
-    expectedDeclination: -0.16,
-  },
-  {
-    referenceDate: '2025-01-01',
-    latitude: -80,
-    longitude: -120,
-    expectedDeclination: 68.78,
-  },
-  {
-    referenceDate: '2027-07-02',
-    latitude: 80,
-    longitude: 0,
-    expectedDeclination: 2.59,
-  },
-])(
+test.each(testVectors)(
   'matches the official NOAA WMM2025 zero-kilometre vector at $latitude, $longitude',
   ({referenceDate, latitude, longitude, expectedDeclination}) => {
     expect(
