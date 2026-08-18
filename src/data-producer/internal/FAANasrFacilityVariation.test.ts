@@ -84,6 +84,16 @@ test('rejects unavailable, unofficial, inconsistent, or corrupted selected cycle
   );
 });
 
+test('accepts frequency-less non-VOR records in a selected cycle', () => {
+  const selected = verifiedCycleWithRecords([
+    nasrRecord({NAV_ID: 'REIN', NAV_TYPE: 'TACAN', FREQ: ''}),
+  ]);
+
+  expect(selected.records).toEqual([
+    nasrRecord({NAV_ID: 'REIN', NAV_TYPE: 'TACAN', FREQ: ''}),
+  ]);
+});
+
 test('matches one VOR-family record using normalized identity, exact frequency, and WGS84 distance', () => {
   const selected = faaNasrFacilityVariation.selectApplicableCycle(
     [cycle('2607', '2026-07-09', '2026-06-25T12:00:00.000Z')],
