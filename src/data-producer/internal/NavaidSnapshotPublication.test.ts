@@ -5,10 +5,12 @@ import {join} from 'node:path';
 import {DuckDBInstance} from '@duckdb/node-api';
 import {expect, test} from 'vitest';
 
-import buildNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidate.js';
+import FifoOperationCoordinator from '#radial/application/internal/FifoOperationCoordinator.js';
 import publishNavaidSnapshot from '#radial/data-producer/internal/NavaidSnapshotPublication.js';
 import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
-import createSyntheticFAANasrCycle from '#radial/test/createSyntheticFAANasrCycle.js';
+import PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
+import createSyntheticNavaidSnapshotCandidate from '#radial/test/data-producer/createSyntheticNavaidSnapshotCandidate.js';
+import insertSyntheticCachedAirport from '#radial/test/data-producer/insertSyntheticCachedAirport.js';
 
 const FIRST_SNAPSHOT_ID = '11111111-1111-4111-8111-111111111111';
 const SECOND_SNAPSHOT_ID = '22222222-2222-4222-8222-222222222222';
@@ -21,8 +23,10 @@ test('atomically replaces the active snapshot and regenerates Cached Airport pro
 
   try {
     await initializeProducerSchema(instance);
-    await insertCachedAirport(instance);
-    const firstCandidate = candidateAt('2026-08-17T12:00:00.000Z');
+    await insertSyntheticCachedAirport(instance);
+    const firstCandidate = createSyntheticNavaidSnapshotCandidate(
+      '2026-08-17T12:00:00.000Z'
+    );
     const first = await publishNavaidSnapshot(instance, firstCandidate, {
       snapshotId: FIRST_SNAPSHOT_ID,
       publishedAt: () => '2026-08-17T12:00:02.000Z',
@@ -91,7 +95,9 @@ test('atomically replaces the active snapshot and regenerates Cached Airport pro
       connection.closeSync();
     }
 
-    const equivalentCandidate = candidateAt('2026-08-17T13:00:00.000Z');
+    const equivalentCandidate = createSyntheticNavaidSnapshotCandidate(
+      '2026-08-17T13:00:00.000Z'
+    );
     expect(equivalentCandidate.snapshotChecksum).toBe(firstCandidate.snapshotChecksum);
     await publishNavaidSnapshot(instance, equivalentCandidate, {
       snapshotId: SECOND_SNAPSHOT_ID,
@@ -117,7 +123,7 @@ test('independently rejects a corrupt candidate and rolls back a publication fai
 
   try {
     await initializeProducerSchema(instance);
-    const candidate = candidateAt('2026-08-17T12:00:00.000Z');
+    const candidate = createSyntheticNavaidSnapshotCandidate('2026-08-17T12:00:00.000Z');
     await publishNavaidSnapshot(instance, candidate, {
       snapshotId: FIRST_SNAPSHOT_ID,
       publishedAt: () => '2026-08-17T12:00:02.000Z',
@@ -138,13 +144,17 @@ test('independently rejects a corrupt candidate and rolls back a publication fai
       })
     ).rejects.toThrow('candidate raw Navaid checksum does not reconcile');
     await expect(
-      publishNavaidSnapshot(instance, candidateAt('2026-08-19T12:00:00.000Z'), {
-        snapshotId: FAILED_SNAPSHOT_ID,
-        publishedAt: () => '2026-08-19T12:00:02.000Z',
-        beforeCommit: () => {
-          throw new Error('injected publication failure');
-        },
-      })
+      publishNavaidSnapshot(
+        instance,
+        createSyntheticNavaidSnapshotCandidate('2026-08-19T12:00:00.000Z'),
+        {
+          snapshotId: FAILED_SNAPSHOT_ID,
+          publishedAt: () => '2026-08-19T12:00:02.000Z',
+          beforeCommit: () => {
+            throw new Error('injected publication failure');
+          },
+        }
+      )
     ).rejects.toThrow('injected publication failure');
 
     await expect(activeState(instance)).resolves.toEqual({
@@ -159,66 +169,106 @@ test('independently rejects a corrupt candidate and rolls back a publication fai
   }
 });
 
-function candidateAt(retrievedAt: string) {
-  const retrievalCompletedAt = new Date(Date.parse(retrievedAt) + 1_000).toISOString();
-  return buildNavaidSnapshotCandidate({
-    faaNasrCycles: [
-      createSyntheticFAANasrCycle(
-        [
-          {
-            EFF_DATE: '2026-07-09',
-            FREQ: '112.150',
-            LAT_DECIMAL: '43.6589',
-            LONG_DECIMAL: '-79.6139',
-            MAG_VARN: '11.7',
-            MAG_VARN_HEMIS: 'W',
-            MAG_VARN_YEAR: '2020',
-            NAV_ID: 'YYZ',
-            NAV_TYPE: 'VOR/DME',
-          },
-        ],
-        {retrievedAt: new Date(Date.parse(retrievedAt) + 500).toISOString()}
-      ),
-    ],
-    rawNavaids: [
-      {
-        _id: 'vor-1',
-        country: 'US',
-        type: 4,
-        identifier: 'YYZ',
-        name: 'Toronto',
-        geometry: {type: 'Point', coordinates: [-79.6139, 43.6589]},
-        frequency: {value: '112.150', unit: 2},
-        range: {value: 130, unit: 2},
-      },
-      {_id: 'unsupported', type: 0},
-    ],
-    provenance: {
-      sourceIdentity: 'fixture:openaip-navaids:v1',
-      derivationPolicyIdentity: 'radial:navaid-derivation:v1',
-      matchingPolicyIdentity: 'radial:faa-nasr-match:v1',
-    },
-    retrievedAt,
-    retrievalCompletedAt,
-  });
-}
+const INJECTED_FAILURE_BOUNDARIES = [
+  'before-transaction',
+  'before-transaction-start',
+  'transaction-started',
+  'candidate-write',
+  'candidate-verified',
+  'active-marker-changed',
+  'before-commit',
+] as const;
 
-async function insertCachedAirport(instance: DuckDBInstance): Promise<void> {
-  const connection = await instance.connect();
-  try {
-    await connection.run(
-      `INSERT INTO radial_producer.cached_airports VALUES
-        ('CYYZ', 'airport-yyz', 'Toronto Pearson', -79.6306, 43.6777,
-         '{"_id":"airport-yyz"}',
-         'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-         'openaip:airport-yyz',
-         TIMESTAMPTZ '2026-08-17 11:00:00+00',
-         TIMESTAMPTZ '2026-08-17 11:00:01+00')`
-    );
-  } finally {
-    connection.closeSync();
+test.each(INJECTED_FAILURE_BOUNDARIES)(
+  'rolls back an injected %s failure without leaving candidate rows',
+  async boundary => {
+    const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-publication-'));
+    const databasePath = join(temporaryDirectory, 'radial.duckdb');
+    const instance = await DuckDBInstance.create(databasePath);
+
+    try {
+      await initializeProducerSchema(instance);
+      await insertSyntheticCachedAirport(instance);
+      const firstCandidate = createSyntheticNavaidSnapshotCandidate(
+        '2026-08-17T12:00:00.000Z'
+      );
+      await publishNavaidSnapshot(instance, firstCandidate, {
+        snapshotId: FIRST_SNAPSHOT_ID,
+        publishedAt: () => '2026-08-17T12:00:02.000Z',
+      });
+
+      await expect(
+        publishNavaidSnapshot(
+          instance,
+          createSyntheticNavaidSnapshotCandidate('2026-08-18T12:00:00.000Z'),
+          {
+            snapshotId: SECOND_SNAPSHOT_ID,
+            publishedAt: () => '2026-08-18T12:00:02.000Z',
+            onBoundary(reachedBoundary) {
+              if (reachedBoundary === boundary) {
+                throw new Error(`injected ${boundary} failure`);
+              }
+            },
+          }
+        )
+      ).rejects.toMatchObject({
+        activeDataPreserved: true,
+        message: `injected ${boundary} failure`,
+      });
+
+      await expect(activeState(instance)).resolves.toEqual({
+        activeSnapshotId: FIRST_SNAPSHOT_ID,
+        snapshotIds: [FIRST_SNAPSHOT_ID],
+        rawSnapshotIds: [FIRST_SNAPSHOT_ID],
+        airportSnapshotIds: [FIRST_SNAPSHOT_ID],
+      });
+    } finally {
+      instance.closeSync();
+      await rm(temporaryDirectory, {recursive: true});
+    }
   }
-}
+);
+
+test('does not mutate when publication gate acquisition fails', async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-publication-'));
+  const databasePath = join(temporaryDirectory, 'radial.duckdb');
+  const instance = await DuckDBInstance.create(databasePath);
+
+  try {
+    await initializeProducerSchema(instance);
+    await publishNavaidSnapshot(
+      instance,
+      createSyntheticNavaidSnapshotCandidate('2026-08-17T12:00:00.000Z'),
+      {
+        snapshotId: FIRST_SNAPSHOT_ID,
+        publishedAt: () => '2026-08-17T12:00:02.000Z',
+      }
+    );
+    const publicationGate = new PublicationGate(new FifoOperationCoordinator());
+    publicationGate.close();
+
+    await expect(
+      publishNavaidSnapshot(
+        instance,
+        createSyntheticNavaidSnapshotCandidate('2026-08-18T12:00:00.000Z'),
+        {
+          snapshotId: SECOND_SNAPSHOT_ID,
+          publicationGate,
+        }
+      )
+    ).rejects.toThrow('The operation coordinator has been closed.');
+
+    await expect(activeState(instance)).resolves.toEqual({
+      activeSnapshotId: FIRST_SNAPSHOT_ID,
+      snapshotIds: [FIRST_SNAPSHOT_ID],
+      rawSnapshotIds: [FIRST_SNAPSHOT_ID],
+      airportSnapshotIds: [],
+    });
+  } finally {
+    instance.closeSync();
+    await rm(temporaryDirectory, {recursive: true});
+  }
+});
 
 async function activeState(instance: DuckDBInstance) {
   const connection = await instance.connect();

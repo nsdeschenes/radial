@@ -458,6 +458,7 @@ async function initializeProducerSchema(instance: DuckDBInstance): Promise<void>
       WHERE schema_name = 'radial_producer'
     `);
     if (schemas.getRowObjectsJS().length > 0) {
+      await connection.run('LOAD spatial');
       if (!(await hasCurrentObjects(connection))) {
         throw new Error('Producer Schema objects do not match version 1/1/1.');
       }
