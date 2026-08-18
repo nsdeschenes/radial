@@ -1,7 +1,9 @@
+import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
+import navaidReloadOutput from '#radial/cli/formatNavaidReload.js';
 import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
 
 type InvalidRequestFailure = RoutePlannerTypes['InvalidRequestFailure'];
-type PlannerOpenFailure = RoutePlannerTypes['PlannerOpenFailure'];
+type PlannerOpenFailure = RadialApplicationTypes['PlanningOpenFailure'];
 type RoutePlanningFailure = RoutePlannerTypes['RoutePlanningFailure'];
 
 const USAGE =
@@ -21,6 +23,10 @@ function formatInvalidRequestDiagnostic(failure: InvalidRequestFailure): string 
 }
 
 function formatPlannerOpenDiagnostic(failure: PlannerOpenFailure): string {
+  if (isDataFailure(failure)) {
+    return navaidReloadOutput.formatFailure(failure);
+  }
+
   switch (failure.code) {
     case 'invalid-configuration':
       if (failure.field === 'databasePath') {
@@ -36,6 +42,12 @@ function formatPlannerOpenDiagnostic(failure: PlannerOpenFailure): string {
     case 'database-contract-invalid':
       return 'Unable to initialize Route Planner: the database contract is invalid.\n';
   }
+}
+
+function isDataFailure(
+  failure: PlannerOpenFailure
+): failure is RadialApplicationTypes['DataFailure'] {
+  return failure.code.startsWith('DATA_');
 }
 
 function formatRoutePlanningDiagnostic(failure: RoutePlanningFailure): string {

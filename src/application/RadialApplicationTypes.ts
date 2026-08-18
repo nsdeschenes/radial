@@ -2,7 +2,10 @@ import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
 
 type Result<Value, Failure> = {ok: true; value: Value} | {ok: false; failure: Failure};
 
-type RadialApplicationConfig = RoutePlannerTypes['RoutePlannerConfig'];
+type RadialApplicationConfig = RoutePlannerTypes['RoutePlannerConfig'] &
+  Readonly<{
+    openAipApiKey?: string;
+  }>;
 
 type NavaidReloadProgress = Readonly<{
   stage: 'database' | 'openaip' | 'nasr' | 'derive' | 'publish' | 'complete';
@@ -78,8 +81,11 @@ type NavaidReloadSuccess = Readonly<{
 
 type NavaidReloadResult = Result<NavaidReloadSuccess, DataFailure>;
 
+type PlanningOpenFailure = RoutePlannerTypes['PlannerOpenFailure'] | DataFailure;
+type PlanningOpenResult = Result<RoutePlannerTypes['RoutePlanner'], PlanningOpenFailure>;
+
 interface PlanningCapability {
-  open(): Promise<RoutePlannerTypes['PlannerOpenResult']>;
+  open(): Promise<PlanningOpenResult>;
 }
 
 interface DataManagementCapability {
@@ -108,6 +114,8 @@ export default interface RadialApplicationTypes {
   NavaidReloadResult: NavaidReloadResult;
   NavaidReloadSuccess: NavaidReloadSuccess;
   PlanningCapability: PlanningCapability;
+  PlanningOpenFailure: PlanningOpenFailure;
+  PlanningOpenResult: PlanningOpenResult;
   Planner: RoutePlannerTypes['RoutePlanner'];
   PlannerOpenFailure: RoutePlannerTypes['PlannerOpenFailure'];
   PlannerOpenResult: RoutePlannerTypes['PlannerOpenResult'];

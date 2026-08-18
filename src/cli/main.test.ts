@@ -6,6 +6,7 @@ import {expect, test} from 'vitest';
 
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import runCli from '#radial/cli/main.js';
+import openRoutePlanner from '#radial/route-planner/RoutePlanner.js';
 import syntheticPlannerDatabase from '#radial/test/route-planner/createSyntheticPlannerDatabase.js';
 
 function captureOutput() {
@@ -324,12 +325,33 @@ test('reports an invalid planner-ready database contract on stderr', async () =>
     args: ['cyyz', ' CYOW '],
     env: {RADIAL_DATABASE_PATH: ':memory:'},
     io: capture.io,
+    openApplication: openSyntheticApplication,
   });
 
   expect(exitCode).toBe(1);
   expect(capture.output()).toEqual({
     stdout: '',
     stderr: 'Unable to initialize Route Planner: the database contract is invalid.\n',
+  });
+});
+
+test('reports a safe first Navaid Snapshot bootstrap failure on stderr', async () => {
+  const capture = captureOutput();
+
+  const exitCode = await runCli({
+    args: ['CYYZ', 'CYOW'],
+    env: {RADIAL_DATABASE_PATH: ':memory:'},
+    io: capture.io,
+  });
+
+  expect(exitCode).toBe(1);
+  expect(capture.output()).toEqual({
+    stdout: '',
+    stderr:
+      'error [DATA_CREDENTIALS_MISSING]: OpenAIP credentials are missing.\n' +
+      'Cause: OPENAIP_API_KEY is required for the first Navaid Snapshot bootstrap.\n' +
+      'Action: Set OPENAIP_API_KEY and retry planning.\n' +
+      'Active data remains unchanged.\n',
   });
 });
 
@@ -364,6 +386,7 @@ test('writes a complete normal Route Plan to stdout and exits 0', async () => {
     args: [' aaaa ', 'bbbb'],
     env: {RADIAL_DATABASE_PATH: database.databasePath},
     io: capture.io,
+    openApplication: openSyntheticApplication,
   });
 
   expect(exitCode).toBe(0);
@@ -412,6 +435,7 @@ test('writes a degraded NDB Route Plan to stdout, ordered warnings to stderr, an
     args: ['AAAA', 'BBBB'],
     env: {RADIAL_DATABASE_PATH: database.databasePath},
     io: capture.io,
+    openApplication: openSyntheticApplication,
   });
 
   expect(exitCode).toBe(0);
@@ -465,6 +489,7 @@ test.each([
     args: ['AAAA', 'BBBB'],
     env: {RADIAL_DATABASE_PATH: database.databasePath},
     io: capture.io,
+    openApplication: openSyntheticApplication,
   });
 
   expect(exitCode).toBe(1);
@@ -484,6 +509,7 @@ test('writes no partial Route Plan when exhaustive search finds no route and exi
     args: ['AAAA', 'BBBB'],
     env: {RADIAL_DATABASE_PATH: database.databasePath},
     io: capture.io,
+    openApplication: openSyntheticApplication,
   });
 
   expect(exitCode).toBe(1);
@@ -547,6 +573,26 @@ function syntheticApplication(
       },
     },
     async [Symbol.asyncDispose]() {},
+  };
+}
+
+async function openSyntheticApplication(
+  config: ApplicationTypes['ApplicationConfig']
+): Promise<ApplicationTypes['ApplicationOpenResult']> {
+  return {
+    ok: true,
+    value: {
+      databasePath: config.databasePath,
+      planning: {
+        open: () => openRoutePlanner(config),
+      },
+      dataManagement: {
+        async reloadNavaids() {
+          throw new Error('Navaid reload is not used by this test.');
+        },
+      },
+      async [Symbol.asyncDispose]() {},
+    },
   };
 }
 

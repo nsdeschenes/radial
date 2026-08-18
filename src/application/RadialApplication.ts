@@ -1,5 +1,6 @@
 import sharedDuckDBRuntime from '#radial/application/internal/SharedDuckDBRuntime.js';
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
+import ensureFirstNavaidSnapshot from '#radial/data-producer/internal/BootstrapNavaidSnapshot.js';
 import reloadNavaids from '#radial/data-producer/internal/NavaidDataProducer.js';
 import validation from '#radial/route-planner/internal/validation.js';
 import openRoutePlanner from '#radial/route-planner/RoutePlanner.js';
@@ -9,6 +10,16 @@ type Application = RadialApplicationTypes['Application'];
 type RoutePlanner = RoutePlannerTypes['RoutePlanner'];
 type SharedDuckDBRuntime = Awaited<ReturnType<typeof sharedDuckDBRuntime.acquire>>;
 type NavaidDataProducerDependencies = NonNullable<Parameters<typeof reloadNavaids>[2]>;
+type ApplicationDependencies = NavaidDataProducerDependencies &
+  Readonly<{
+    openAipApiKey?: string;
+  }>;
+type BootstrapResult = Awaited<ReturnType<typeof ensureFirstNavaidSnapshot>>;
+
+const firstBootstrapByRuntime = new WeakMap<
+  SharedDuckDBRuntime,
+  Promise<BootstrapResult>
+>();
 
 class ActivityGate {
   #activeOperationCount = 0;
@@ -80,6 +91,7 @@ class RadialApplication implements Application {
   readonly #activityGate = new ActivityGate();
   readonly #configuredDatabasePath: string;
   readonly #maxRouteFactor: number;
+  readonly #openAipApiKey: string;
   readonly #navaidDataProducerDependencies: NavaidDataProducerDependencies;
   readonly #runtime: SharedDuckDBRuntime;
   #disposePromise: Promise<void> | undefined;
@@ -88,11 +100,13 @@ class RadialApplication implements Application {
     runtime: SharedDuckDBRuntime,
     configuredDatabasePath: string,
     maxRouteFactor: number,
+    openAipApiKey: string,
     navaidDataProducerDependencies: NavaidDataProducerDependencies
   ) {
     this.#runtime = runtime;
     this.#configuredDatabasePath = configuredDatabasePath;
     this.#maxRouteFactor = maxRouteFactor;
+    this.#openAipApiKey = openAipApiKey;
     this.#navaidDataProducerDependencies = navaidDataProducerDependencies;
     this.databasePath = runtime.databasePath;
     this.dataManagement = Object.freeze({
@@ -126,8 +140,24 @@ class RadialApplication implements Application {
     );
   }
 
-  async #openPlanning(): Promise<RoutePlannerTypes['PlannerOpenResult']> {
+  async #openPlanning(): Promise<RadialApplicationTypes['PlanningOpenResult']> {
     return this.#activityGate.run(async () => {
+      let bootstrapped: BootstrapResult;
+      try {
+        bootstrapped = await this.#ensureFirstNavaidSnapshot();
+      } catch {
+        return {
+          ok: false,
+          failure: {
+            code: 'database-unavailable',
+            databasePath: this.#configuredDatabasePath,
+          },
+        };
+      }
+      if (!bootstrapped.ok) {
+        return bootstrapped;
+      }
+
       const opened = await openRoutePlanner(
         {
           databasePath: this.databasePath,
@@ -153,6 +183,30 @@ class RadialApplication implements Application {
     });
   }
 
+  async #ensureFirstNavaidSnapshot(): Promise<BootstrapResult> {
+    let bootstrap = firstBootstrapByRuntime.get(this.#runtime);
+    if (bootstrap === undefined) {
+      bootstrap = (async () =>
+        ensureFirstNavaidSnapshot(
+          await this.#runtime.instance(),
+          this.#openAipApiKey,
+          this.#navaidDataProducerDependencies
+        ))();
+      firstBootstrapByRuntime.set(this.#runtime, bootstrap);
+    }
+
+    try {
+      const result = await bootstrap;
+      if (!result.ok) {
+        firstBootstrapByRuntime.delete(this.#runtime);
+      }
+      return result;
+    } catch (error) {
+      firstBootstrapByRuntime.delete(this.#runtime);
+      throw error;
+    }
+  }
+
   [Symbol.asyncDispose](): Promise<void> {
     this.#disposePromise ??= this.#dispose();
     return this.#disposePromise;
@@ -166,7 +220,7 @@ class RadialApplication implements Application {
 
 async function openRadialApplication(
   config: RadialApplicationTypes['ApplicationConfig'],
-  navaidDataProducerDependencies: NavaidDataProducerDependencies = {}
+  navaidDataProducerDependencies: ApplicationDependencies = {}
 ): Promise<RadialApplicationTypes['ApplicationOpenResult']> {
   const validatedConfig = validation.validatePlannerConfig(config);
   if (!validatedConfig.ok) {
@@ -181,6 +235,7 @@ async function openRadialApplication(
         runtime,
         validatedConfig.value.databasePath,
         validatedConfig.value.maxRouteFactor,
+        config.openAipApiKey ?? navaidDataProducerDependencies.openAipApiKey ?? '',
         navaidDataProducerDependencies
       ),
     };
