@@ -5,6 +5,7 @@ import {DuckDBInstance} from '@duckdb/node-api';
 import type RoutePlannerAcceptanceTypes from '#radial/acceptance/RoutePlannerAcceptanceTypes.js';
 import verifyAcceptanceRoutePlan from '#radial/acceptance/verifyAcceptanceRoutePlan.js';
 import verifyAcceptanceSnapshot from '#radial/acceptance/verifyAcceptanceSnapshot.js';
+import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import runCli from '#radial/cli/main.js';
 import openRoutePlanner from '#radial/route-planner/RoutePlanner.js';
 import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
@@ -125,8 +126,29 @@ async function runAcceptanceCli(
         stderr += text;
       },
     },
+    openApplication: openAcceptanceApplication,
   });
   return {exitCode, stdout, stderr};
+}
+
+async function openAcceptanceApplication(
+  config: RadialApplicationTypes['ApplicationConfig']
+): Promise<RadialApplicationTypes['ApplicationOpenResult']> {
+  return {
+    ok: true,
+    value: {
+      databasePath: config.databasePath,
+      planning: {
+        open: () => openRoutePlanner(config),
+      },
+      dataManagement: {
+        async reloadNavaids() {
+          throw new Error('Navaid reload is not used by acceptance smoke.');
+        },
+      },
+      async [Symbol.asyncDispose]() {},
+    },
+  };
 }
 
 function hashCliRun(cliRun: CliRun): string {
