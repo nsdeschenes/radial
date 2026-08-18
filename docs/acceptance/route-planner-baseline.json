@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "snapshot": {
+    "sha256": "29c2b12c8553a34203681e6a084270a2dfae19671ad65212fe89a067c35045ca",
+    "schemaVersion": 1,
+    "provenance": {
+      "source": "https://inherjer.github.io/GA-Dispatcher-Aviation-Data/cycles/snapshot-2026-07-28/manifest.json (SHA-256 2126e09ad33d7069fc306bbc1d921ca06cffd8809ee3c7d45a1e1e5e5b25565b), US airport and Navaid packs derived from OpenAIP",
+      "retrievedAt": "2026-08-17T20:32:03.000Z"
+    },
+    "recordCounts": {
+      "airports": 2600,
+      "vorFamilyNavaids": 64,
+      "fallbackNavaids": 19
+    },
+    "magneticReference": null
+  },
+  "route": {
+    "departureIcao": "KATL",
+    "arrivalIcao": "KMIA",
+    "maxRouteFactor": 1.5,
+    "searchMode": "vor-family",
+    "orderedNavaids": [
+      {
+        "databaseId": "openaip:682b6b74490af4c3702468bf",
+        "identifier": "OTK"
+      },
+      {
+        "databaseId": "openaip:62616dd0abdcc7f0ccbc1251",
+        "identifier": "RSW"
+      }
+    ]
+  },
+  "cliOutputSha256": "dab351f83b3cb75bb8b6f28db4d587a5c46c604bd9bc5e50572b8630707d82c6",
+  "approval": {
+    "approvedBy": "nsdeschenes",
+    "approvedAt": "2026-08-17T20:34:36.000Z"
+  },
+  "benchmark": {
+    "radialRevision": "c224f866cebfc7328afdf7c2900eb7a322757725",
+    "representativeMachineId": "nicholas-m5-max-48gb",
+    "machine": {
+      "platform": "darwin",
+      "architecture": "arm64",
+      "cpuModel": "Apple M5 Max",
+      "logicalCpuCount": 18,
+      "totalMemoryBytes": 51539607552
+    },
+    "runtime": {
+      "nodeVersion": "v26.5.0",
+      "duckdbVersion": "v1.5.5"
+    },
+    "warmupMs": 7.440125000000023,
+    "samplesMs": [
+      5.477834000000001, 5.630291999999997, 4.8325840000000255, 5.3333749999999895,
+      4.968666000000013
+    ],
+    "medianMs": 5.3333749999999895,
+    "worstMs": 5.630291999999997
+  }
+}
