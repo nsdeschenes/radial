@@ -4,6 +4,7 @@ import type RadialApplicationTypes from '#radial/application/RadialApplicationTy
 import reloadNavaids from '#radial/data-producer/internal/NavaidDataProducer.js';
 import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import publicationGateRegistry from '#radial/data-producer/internal/PublicationGateRegistry.js';
+import isDuckDBBusyError from '#radial/db/duckdb/isDuckDBBusyError.js';
 
 type DataFailure = RadialApplicationTypes['DataFailure'];
 type NavaidDataProducerDependencies = NonNullable<Parameters<typeof reloadNavaids>[2]>;
@@ -36,8 +37,8 @@ async function ensureFirstNavaidSnapshot(
       await initializeProducerSchema(instance);
       return 'bootstrap';
     });
-  } catch {
-    return databaseInvalid();
+  } catch (error) {
+    return isDuckDBBusyError(error) ? databaseBusy() : databaseInvalid();
   }
 
   if (readiness === 'ready') {
@@ -75,6 +76,20 @@ function databaseInvalid(): BootstrapResult {
       summary: 'The configured database is invalid.',
       cause: 'The Producer Schema could not be prepared safely.',
       action: 'Inspect the configured database and retry planning.',
+      activeDataPreserved: true,
+    },
+  };
+}
+
+function databaseBusy(): BootstrapResult {
+  return {
+    ok: false,
+    failure: {
+      code: 'DATA_DATABASE_BUSY',
+      summary: 'The configured database is busy.',
+      cause: 'Another process owns the native DuckDB database file.',
+      action:
+        'Route the operation through the owning process or obtain exclusive maintenance access.',
       activeDataPreserved: true,
     },
   };
