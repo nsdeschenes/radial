@@ -223,7 +223,7 @@ function qualifyingRecord(
   openAipFrequencyHz: number
 ): QualifyingRecord | undefined {
   const facilityType = stringOrNull(record['NAV_TYPE'])?.trim().toUpperCase();
-  if (!['VOR', 'VOR/DME', 'VORTAC'].includes(facilityType ?? '')) {
+  if (!isMatchableFacilityType(facilityType)) {
     return undefined;
   }
   const identifier = normalizeIdentifier(stringOrNull(record['NAV_ID']) ?? '');
@@ -333,6 +333,10 @@ function isOutsideSourceCoverage(
 
 function normalizeIdentifier(value: string): string {
   return value.trim().toUpperCase();
+}
+
+function isMatchableFacilityType(value: string | undefined): boolean {
+  return ['VOR', 'VOR/DME', 'VORTAC'].includes(value ?? '');
 }
 
 function stringOrNull(value: unknown): string | null {
@@ -503,10 +507,12 @@ function validateRecordStructure(
       `FAA NASR NAV_BASE record ${index + 1} effective date does not match its cycle`
     );
   }
+  const facilityType = String(record['NAV_TYPE']).trim().toUpperCase();
   if (
     String(record['NAV_ID']).trim() === '' ||
     String(record['NAV_TYPE']).trim() === '' ||
-    decimalFrequencyHz(String(record['FREQ'])) === undefined ||
+    (isMatchableFacilityType(facilityType) &&
+      decimalFrequencyHz(String(record['FREQ'])) === undefined) ||
     finiteCoordinate(record['LAT_DECIMAL'], -90, 90) === undefined ||
     finiteCoordinate(record['LONG_DECIMAL'], -180, 180) === undefined
   ) {
