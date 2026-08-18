@@ -12,8 +12,13 @@ type AcceptanceBaseline = Readonly<{
   version: 1;
   snapshot: Readonly<{
     sha256: string;
+    schemaVersion: number;
     provenance: Readonly<{source: string; retrievedAt: string}>;
-    recordCounts: Readonly<{airports: number; navaids: number}>;
+    recordCounts: Readonly<{
+      airports: number;
+      vorFamilyNavaids: number;
+      fallbackNavaids: number;
+    }>;
     magneticReference: SnapshotMagneticReference | null;
   }>;
   route: Readonly<{
@@ -26,6 +31,7 @@ type AcceptanceBaseline = Readonly<{
   cliOutputSha256: string;
   approval: Readonly<{approvedBy: string; approvedAt: string}>;
   benchmark: Readonly<{
+    radialRevision: string;
     representativeMachineId: string;
     machine: Readonly<{
       platform: string;
@@ -35,6 +41,7 @@ type AcceptanceBaseline = Readonly<{
       totalMemoryBytes: number;
     }>;
     runtime: Readonly<{nodeVersion: string; duckdbVersion: string}>;
+    warmupMs: number;
     samplesMs: readonly [number, number, number, number, number];
     medianMs: number;
     worstMs: number;

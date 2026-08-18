@@ -45,11 +45,16 @@ test('atomically replaces the active snapshot and regenerates Cached Airport pro
         {snapshot_id: FIRST_SNAPSHOT_ID, identifier: 'YYZ'},
       ]);
       const projectedAirports = await connection.runAndReadAll(
-        `SELECT CAST(snapshot_id AS VARCHAR) AS snapshot_id, icao
+        `SELECT CAST(snapshot_id AS VARCHAR) AS snapshot_id, icao,
+                magnetic_declination_deg_east
          FROM planner_airports`
       );
       expect(projectedAirports.getRowObjectsJS()).toEqual([
-        {snapshot_id: FIRST_SNAPSHOT_ID, icao: 'CYYZ'},
+        {
+          snapshot_id: FIRST_SNAPSHOT_ID,
+          icao: 'CYYZ',
+          magnetic_declination_deg_east: expect.any(Number),
+        },
       ]);
       const facilityVariation = await connection.runAndReadAll(`
         SELECT
@@ -86,7 +91,7 @@ test('atomically replaces the active snapshot and regenerates Cached Airport pro
       connection.closeSync();
     }
 
-    const equivalentCandidate = candidateAt('2026-08-18T12:00:00.000Z');
+    const equivalentCandidate = candidateAt('2026-08-17T13:00:00.000Z');
     expect(equivalentCandidate.snapshotChecksum).toBe(firstCandidate.snapshotChecksum);
     await publishNavaidSnapshot(instance, equivalentCandidate, {
       snapshotId: SECOND_SNAPSHOT_ID,
@@ -192,15 +197,6 @@ function candidateAt(retrievedAt: string) {
       sourceIdentity: 'fixture:openaip-navaids:v1',
       derivationPolicyIdentity: 'radial:navaid-derivation:v1',
       matchingPolicyIdentity: 'radial:faa-nasr-match:v1',
-      magneticModel: {
-        model: 'fixture magnetic model',
-        version: '1',
-        epochYear: 2025,
-        referenceDate: '2026-08-17',
-        source: 'fixture:wmm:v1',
-        coefficientChecksum:
-          'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      },
     },
     retrievedAt,
     retrievalCompletedAt,

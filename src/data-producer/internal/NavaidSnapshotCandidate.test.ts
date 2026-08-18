@@ -7,23 +7,17 @@ const PROVENANCE = {
   sourceIdentity: 'fixture:openaip-navaids:v1',
   derivationPolicyIdentity: 'radial:navaid-derivation:v1',
   matchingPolicyIdentity: 'radial:faa-nasr-match:v1',
-  magneticModel: {
-    model: 'fixture magnetic model',
-    version: '1',
-    epochYear: 2025,
-    referenceDate: '2026-08-17',
-    source: 'fixture:wmm:v1',
-    coefficientChecksum:
-      'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-  },
 } as const;
 
-function nasrCyclesAt(retrievedAt: string) {
+function nasrCyclesAt(retrievedAt: string, effectiveDate = '2026-07-09') {
+  const publishedAt = new Date(
+    Date.parse(`${effectiveDate}T12:00:00.000Z`) - 14 * 24 * 60 * 60 * 1_000
+  ).toISOString();
   return [
     createSyntheticFAANasrCycle(
       [
         {
-          EFF_DATE: '2026-07-09',
+          EFF_DATE: effectiveDate,
           FREQ: '112.150',
           LAT_DECIMAL: '43.6589',
           LONG_DECIMAL: '-79.6139',
@@ -34,7 +28,7 @@ function nasrCyclesAt(retrievedAt: string) {
           NAV_TYPE: 'VOR/DME',
         },
       ],
-      {retrievedAt}
+      {effectiveDate, publishedAt, retrievedAt}
     ),
   ] as const;
 }
@@ -108,17 +102,22 @@ test('canonically preserves and deterministically partitions every raw Navaid', 
     retrievalCompletedAt: '2026-08-17T12:00:01.000Z',
   });
   const reordered = buildNavaidSnapshotCandidate({
-    faaNasrCycles: nasrCyclesAt('2026-08-18T12:00:00.500Z'),
+    faaNasrCycles: nasrCyclesAt('2026-08-17T13:00:00.500Z'),
     rawNavaids: records.toReversed(),
+    provenance: PROVENANCE,
+    retrievedAt: '2026-08-17T13:00:00.000Z',
+    retrievalCompletedAt: '2026-08-17T13:00:01.000Z',
+  });
+  const nextDate = buildNavaidSnapshotCandidate({
+    faaNasrCycles: nasrCyclesAt('2026-08-18T12:00:00.500Z'),
+    rawNavaids: records,
     provenance: PROVENANCE,
     retrievedAt: '2026-08-18T12:00:00.000Z',
     retrievalCompletedAt: '2026-08-18T12:00:01.000Z',
   });
 
   expect(candidate.snapshotChecksum).toBe(reordered.snapshotChecksum);
-  expect(candidate.snapshotChecksum).toBe(
-    'sha256:c704fe8d41677a8a7621f280a056dabbb6eb09e8ce7b52b5c98c21519b4c1958'
-  );
+  expect(candidate.snapshotChecksum).not.toBe(nextDate.snapshotChecksum);
   expect(candidate.componentChecksums).toEqual(reordered.componentChecksums);
   expect(candidate.rawNavaids).toHaveLength(7);
   expect(candidate.plannerNavaids.map(row => row.family)).toEqual(['NDB', 'VOR-DME']);
@@ -156,6 +155,47 @@ test('canonically preserves and deterministically partitions every raw Navaid', 
   expect(candidate.rawNavaids.map(row => row.sourceRecordId)).toEqual(
     reordered.rawNavaids.map(row => row.sourceRecordId)
   );
+  expect(candidate.provenance.magneticModel).toEqual({
+    model: 'WMM',
+    version: 'WMM2025',
+    epochYear: 2025,
+    referenceDate: '2026-08-17',
+    source: 'https://doi.org/10.25921/aqfd-sd83',
+    coefficientChecksum:
+      'sha256:dfa8597825af4e0b87ff4198a5b4fb661b3c49f4cd090cd0164e0259b075582f',
+  });
+  expect(
+    candidate.plannerNavaids.every(
+      row =>
+        row.magneticDeclinationDegEast !== null &&
+        !Number.isInteger(row.magneticDeclinationDegEast) &&
+        row.magneticDeclinationDegEast >= -180 &&
+        row.magneticDeclinationDegEast < 180
+    )
+  ).toBe(true);
+});
+
+test('preserves an eligible Navaid with unavailable Blackout Zone declination', () => {
+  const candidate = buildNavaidSnapshotCandidate({
+    faaNasrCycles: nasrCyclesAt('2025-01-01T00:00:00.500Z', '2024-12-05'),
+    rawNavaids: [
+      {
+        _id: 'blackout-vor',
+        type: 3,
+        identifier: 'BOZ',
+        geometry: {type: 'Point', coordinates: [139.298, 85.762]},
+        frequency: {value: '113.000', unit: 2},
+        range: {value: 100, unit: 2},
+      },
+    ],
+    provenance: PROVENANCE,
+    retrievedAt: '2025-01-01T00:00:00.000Z',
+    retrievalCompletedAt: '2025-01-01T00:00:01.000Z',
+  });
+
+  expect(candidate.plannerNavaids).toHaveLength(1);
+  expect(candidate.plannerNavaids[0]?.magneticDeclinationDegEast).toBeNull();
+  expect(candidate.exclusions).toEqual([]);
 });
 
 test('rejects duplicate source IDs and non-canonicalizable raw values', () => {

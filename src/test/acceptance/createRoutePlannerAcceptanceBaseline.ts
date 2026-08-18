@@ -25,11 +25,12 @@ function createRoutePlannerAcceptanceBaseline({
     version: 1,
     snapshot: {
       sha256: snapshotSha256,
+      schemaVersion: 1,
       provenance: {
         source: 'Synthetic acceptance snapshot',
         retrievedAt: '2026-08-17T00:00:00.000Z',
       },
-      recordCounts: {airports: 2, navaids: 1},
+      recordCounts: {airports: 2, vorFamilyNavaids: 1, fallbackNavaids: 0},
       magneticReference,
     },
     route: {
@@ -45,9 +46,11 @@ function createRoutePlannerAcceptanceBaseline({
       approvedAt: '2026-08-17T00:00:00.000Z',
     },
     benchmark: {
+      radialRevision: '0'.repeat(40),
       representativeMachineId: 'acceptance-test',
       machine,
       runtime: {nodeVersion: 'test', duckdbVersion: 'test'},
+      warmupMs: 1,
       samplesMs: [1, 1, 1, 1, 1],
       medianMs: 1,
       worstMs: 1,

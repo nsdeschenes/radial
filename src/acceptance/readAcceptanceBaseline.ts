@@ -25,11 +25,16 @@ const acceptanceBaseline = z
     snapshot: z
       .object({
         sha256,
+        schemaVersion: positiveInteger,
         provenance: z
           .object({source: nonEmptyText, retrievedAt: z.iso.datetime()})
           .strict(),
         recordCounts: z
-          .object({airports: positiveInteger, navaids: positiveInteger})
+          .object({
+            airports: positiveInteger,
+            vorFamilyNavaids: positiveInteger,
+            fallbackNavaids: z.number().int().nonnegative(),
+          })
           .strict(),
         magneticReference: magneticReference.nullable(),
       })
@@ -49,6 +54,7 @@ const acceptanceBaseline = z
     approval: z.object({approvedBy: nonEmptyText, approvedAt: z.iso.datetime()}).strict(),
     benchmark: z
       .object({
+        radialRevision: z.string().regex(/^[0-9a-f]{40}$/u),
         representativeMachineId: nonEmptyText,
         machine: z
           .object({
@@ -62,6 +68,7 @@ const acceptanceBaseline = z
         runtime: z
           .object({nodeVersion: nonEmptyText, duckdbVersion: nonEmptyText})
           .strict(),
+        warmupMs: finiteNonNegativeNumber,
         samplesMs: z.tuple([
           finiteNonNegativeNumber,
           finiteNonNegativeNumber,
