@@ -1,9 +1,11 @@
 import openRadialApplication from '#radial/application/RadialApplication.js';
 import airportReloadOutput from '#radial/cli/formatAirportReload.js';
+import dataStatusOutput from '#radial/cli/formatDataStatus.js';
 import diagnostics from '#radial/cli/formatDiagnostics.js';
 import navaidReloadOutput from '#radial/cli/formatNavaidReload.js';
 import formatRoutePlan from '#radial/cli/formatRoutePlan.js';
 import formatRoutePlanningWarnings from '#radial/cli/formatRoutePlanningWarnings.js';
+import readDataStatus from '#radial/data-producer/internal/DataStatus.js';
 import validation from '#radial/route-planner/internal/validation.js';
 
 type CliIo = {
@@ -42,9 +44,24 @@ async function runCli({
   if (isAirportReload(args)) {
     return runAirportReload({args, env, io, openApplication});
   }
+  if (isDataStatusHelp(args)) {
+    io.writeStdout('Usage: radial data status\n');
+    return 0;
+  }
+  if (isDataStatus(args)) {
+    return runDataStatus({env, io});
+  }
   if (args[0] === 'data') {
     if (args[1] === 'reload' && args[2] === 'airport') {
       writeAirportReloadUsage(io);
+      return 2;
+    }
+    if (args[1] === 'status') {
+      io.writeStderr(
+        'error [DATA_USAGE]: Invalid data command.\n' +
+          'Cause: The data status command accepts no arguments or operational flags.\n' +
+          'Action: Run "radial data status".\n'
+      );
       return 2;
     }
     io.writeStderr(
@@ -151,12 +168,38 @@ function isAirportReloadHelp(args: readonly string[]): boolean {
   );
 }
 
+function isDataStatus(args: readonly string[]): boolean {
+  return args.length === 2 && args[0] === 'data' && args[1] === 'status';
+}
+
+function isDataStatusHelp(args: readonly string[]): boolean {
+  return (
+    args.length === 3 &&
+    args[0] === 'data' &&
+    args[1] === 'status' &&
+    args[2] === '--help'
+  );
+}
+
 function writeAirportReloadUsage(io: CliIo): void {
   io.writeStderr(
     'error [DATA_USAGE]: Invalid data command.\n' +
       'Cause: The Airport reload accepts exactly one ICAO and no operational flags.\n' +
       'Action: Run "radial data reload airport <ICAO>".\n'
   );
+}
+
+async function runDataStatus({
+  env,
+  io,
+}: Omit<CliInput, 'args' | 'openApplication'>): Promise<number> {
+  const result = await readDataStatus(env['RADIAL_DATABASE_PATH'] ?? '');
+  if (!result.ok) {
+    io.writeStderr(dataStatusOutput.formatFailure(result.failure));
+    return 1;
+  }
+  io.writeStdout(dataStatusOutput.formatSuccess(result.value));
+  return 0;
 }
 
 async function runNavaidReload({
