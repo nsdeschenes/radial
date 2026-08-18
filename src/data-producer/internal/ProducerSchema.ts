@@ -1,4 +1,4 @@
-import type {DuckDBInstance} from '@duckdb/node-api';
+import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 
 const INITIAL_SCHEMA_SQL = `
   CREATE SCHEMA radial_producer;
@@ -219,6 +219,16 @@ type ProducerSchemaMigration = {
   readonly to: ProducerSchemaVersion;
 };
 
+type ProducerSchemaInspection =
+  | Readonly<{kind: 'absent'}>
+  | Readonly<{
+      kind: 'current';
+      producerSchemaVersion: number;
+      plannerContractVersion: number;
+      checksumManifestVersion: number;
+    }>
+  | Readonly<{kind: 'invalid'}>;
+
 const CURRENT_VERSION: ProducerSchemaVersion = [1, 1, 1];
 const RECOGNIZED_MIGRATIONS: readonly ProducerSchemaMigration[] = [];
 
@@ -348,9 +358,7 @@ async function hasCurrentObjects(
   );
 }
 
-async function hasPublicPlannerObjects(
-  connection: Awaited<ReturnType<DuckDBInstance['connect']>>
-): Promise<boolean> {
+async function hasPublicPlannerObjects(connection: DuckDBConnection): Promise<boolean> {
   const objects = await connection.runAndReadAll(`
     SELECT table_name
     FROM information_schema.tables
@@ -358,6 +366,39 @@ async function hasPublicPlannerObjects(
       AND table_name IN ('planner_airports', 'planner_metadata', 'planner_navaids')
   `);
   return objects.getRowObjectsJS().length > 0;
+}
+
+async function inspectProducerSchema(
+  connection: DuckDBConnection
+): Promise<ProducerSchemaInspection> {
+  const schemas = await connection.runAndReadAll(`
+    SELECT schema_name
+    FROM information_schema.schemata
+    WHERE schema_name = 'radial_producer'
+  `);
+  if (schemas.getRowObjectsJS().length === 0) {
+    return {kind: 'absent'};
+  }
+
+  if (!(await hasCurrentObjects(connection))) {
+    return {kind: 'invalid'};
+  }
+
+  let version: ProducerSchemaVersion;
+  try {
+    version = await readStoredVersion(connection);
+  } catch {
+    return {kind: 'invalid'};
+  }
+  if (!versionsMatch(version, CURRENT_VERSION)) {
+    return {kind: 'invalid'};
+  }
+  return {
+    kind: 'current',
+    producerSchemaVersion: version[0],
+    plannerContractVersion: version[1],
+    checksumManifestVersion: version[2],
+  };
 }
 
 async function readStoredVersion(
@@ -490,6 +531,7 @@ async function readActiveNavaidSnapshotId(
 }
 
 export default Object.assign(initializeProducerSchema, {
+  inspect: inspectProducerSchema,
   producerSchemaExists,
   readActiveNavaidSnapshotId,
 });

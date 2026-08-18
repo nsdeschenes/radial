@@ -105,6 +105,80 @@ type AirportReloadSuccess = Readonly<{
 
 type AirportReloadResult = Result<AirportReloadSuccess, DataFailure>;
 
+type DataStatusExclusionCount = Readonly<{
+  reason: string;
+  count: number;
+}>;
+
+type DataStatusCachedAirport = Readonly<{
+  icao: string;
+  sourceId: string;
+  name: string;
+  longitude: number;
+  latitude: number;
+  recordChecksum: string;
+  sourceIdentity: string;
+  retrievedAt: string;
+  publishedAt: string;
+}>;
+
+type DataStatusSuccess = Readonly<{
+  databasePath: string;
+  status: 'ready' | 'uninitialized';
+  legacyObjects: readonly string[];
+  producerSchema: Readonly<{
+    producerSchemaVersion: number;
+    plannerContractVersion: number;
+    checksumManifestVersion: number;
+  }> | null;
+  snapshot: Readonly<{
+    snapshotId: string;
+    snapshotChecksum: string;
+    componentChecksums: Readonly<{
+      rawNavaids: string;
+      plannerNavaids: string;
+      exclusions: string;
+      facilityVariationAudits: string;
+    }>;
+    retrievedAt: string;
+    retrievalCompletedAt: string;
+    publishedAt: string;
+    sourceIdentity: string;
+    derivationPolicyIdentity: string;
+    matchingPolicyIdentity: string;
+    nasr: Readonly<{
+      sourceUrl: string;
+      retrievedAt: string;
+      archiveIdentity: string;
+      archiveChecksum: string;
+      contentChecksum: string;
+      cycleId: string;
+      effectiveDate: string;
+    }>;
+    magneticModel: Readonly<{
+      model: string;
+      version: string;
+      epochYear: number;
+      referenceDate: string;
+      source: string;
+      coefficientChecksum: string;
+    }>;
+    rawNavaidCount: number;
+    plannerNavaidCount: number;
+    vorFamilyNavaidCount: number;
+    fallbackNavaidCount: number;
+    exclusionCount: number;
+    exclusionCounts: readonly DataStatusExclusionCount[];
+    facilityVariationPresentCount: number;
+    facilityVariationMissingCount: number;
+    facilityVariationMissingReasons: readonly DataStatusExclusionCount[];
+    facilityVariationEpochYearMissingCount: number;
+  }> | null;
+  cachedAirports: readonly DataStatusCachedAirport[];
+}>;
+
+type DataStatusResult = Result<DataStatusSuccess, DataFailure>;
+
 type PlanningOpenFailure = RoutePlannerTypes['PlannerOpenFailure'] | DataFailure;
 type PlanningOpenResult = Result<RoutePlannerTypes['RoutePlanner'], PlanningOpenFailure>;
 
@@ -113,6 +187,7 @@ interface PlanningCapability {
 }
 
 interface DataManagementCapability {
+  status(): Promise<DataStatusResult>;
   reloadNavaids(request: NavaidReloadRequest): Promise<NavaidReloadResult>;
   reloadAirport(request: AirportReloadRequest): Promise<AirportReloadResult>;
 }
@@ -138,6 +213,9 @@ export default interface RadialApplicationTypes {
   AirportReloadRequest: AirportReloadRequest;
   AirportReloadResult: AirportReloadResult;
   AirportReloadSuccess: AirportReloadSuccess;
+  DataStatusCachedAirport: DataStatusCachedAirport;
+  DataStatusResult: DataStatusResult;
+  DataStatusSuccess: DataStatusSuccess;
   NavaidReloadProgress: NavaidReloadProgress;
   NavaidReloadRequest: NavaidReloadRequest;
   NavaidReloadResult: NavaidReloadResult;

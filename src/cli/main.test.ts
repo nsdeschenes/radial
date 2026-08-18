@@ -1,4 +1,4 @@
-import {mkdtemp, rm} from 'node:fs/promises';
+import {mkdtemp, readdir, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
@@ -45,6 +45,65 @@ test('reports malformed command input on stderr and exits 2', async () => {
       'Usage: radial <departure-icao> <arrival-icao>\n' +
       'Example: radial CYYZ CYOW\n',
   });
+});
+
+test('provides data status help and rejects unsupported options', async () => {
+  const helpCapture = captureOutput();
+  const usageCapture = captureOutput();
+
+  await expect(
+    runCli({args: ['data', 'status', '--help'], env: {}, io: helpCapture.io})
+  ).resolves.toBe(0);
+  await expect(
+    runCli({args: ['data', 'status', '--force'], env: {}, io: usageCapture.io})
+  ).resolves.toBe(2);
+
+  expect(helpCapture.output()).toEqual({
+    stdout: 'Usage: radial data status\n',
+    stderr: '',
+  });
+  expect(usageCapture.output()).toEqual({
+    stdout: '',
+    stderr:
+      'error [DATA_USAGE]: Invalid data command.\n' +
+      'Cause: The data status command accepts no arguments or operational flags.\n' +
+      'Action: Run "radial data status".\n',
+  });
+});
+
+test('reports a nonexistent database as uninitialized without creating it', async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-cli-status-'));
+  const databasePath = join(temporaryDirectory, 'missing.duckdb');
+  const capture = captureOutput();
+
+  try {
+    await expect(
+      runCli({
+        args: ['data', 'status'],
+        env: {RADIAL_DATABASE_PATH: databasePath},
+        io: capture.io,
+      })
+    ).resolves.toBe(0);
+    expect(capture.output()).toEqual({
+      stdout:
+        'Radial data status\n' +
+        'Database\n' +
+        `  Path: ${databasePath}\n` +
+        '  State: uninitialized\n' +
+        '  Producer Schema version: —\n' +
+        '  Planner contract version: —\n' +
+        '  Checksum manifest version: —\n' +
+        '  Legacy data: —\n' +
+        '\nNavaid Snapshot\n' +
+        '  State: uninitialized\n' +
+        '\nCached Airports\n' +
+        '  —\n',
+      stderr: '',
+    });
+    await expect(readdir(temporaryDirectory)).resolves.toEqual([]);
+  } finally {
+    await rm(temporaryDirectory, {recursive: true});
+  }
 });
 
 test('validates Navaid reload configuration before opening the application', async () => {
@@ -700,6 +759,9 @@ test('reports the failed query operation without writing a partial Route Plan an
       },
     },
     dataManagement: {
+      async status() {
+        throw new Error('Data status is not used by this test.');
+      },
       async reloadNavaids() {
         throw new Error('Navaid reload is not used by this test.');
       },
@@ -732,6 +794,9 @@ function syntheticApplication(
   return {
     databasePath: ':synthetic:',
     dataManagement: {
+      async status() {
+        throw new Error('Data status is not used by this test.');
+      },
       reloadNavaids,
       async reloadAirport() {
         throw new Error('Airport reload is not used by this test.');
@@ -752,6 +817,9 @@ function syntheticAirportApplication(
   return {
     databasePath: ':synthetic:',
     dataManagement: {
+      async status() {
+        throw new Error('Data status is not used by this test.');
+      },
       async reloadNavaids() {
         throw new Error('Navaid reload is not used by this test.');
       },
@@ -777,6 +845,9 @@ async function openSyntheticApplication(
         open: () => openRoutePlanner(config),
       },
       dataManagement: {
+        async status() {
+          throw new Error('Data status is not used by this test.');
+        },
         async reloadNavaids() {
           throw new Error('Navaid reload is not used by this test.');
         },
