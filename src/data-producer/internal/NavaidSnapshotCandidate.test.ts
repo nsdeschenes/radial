@@ -175,6 +175,35 @@ test('canonically preserves and deterministically partitions every raw Navaid', 
   ).toBe(true);
 });
 
+test('uses the default published range when OpenAIP omits range', () => {
+  const candidate = buildNavaidSnapshotCandidate({
+    faaNasrCycles: nasrCyclesAt('2026-08-17T12:00:00.500Z'),
+    rawNavaids: [
+      {
+        _id: 'nil-range',
+        type: 4,
+        identifier: 'YHZ',
+        name: 'Halifax',
+        country: 'CA',
+        geometry: {type: 'Point', coordinates: [-63.401944, 44.923056]},
+        frequency: {value: '115.100', unit: 2},
+      },
+    ],
+    provenance: PROVENANCE,
+    retrievedAt: '2026-08-17T12:00:00.000Z',
+    retrievalCompletedAt: '2026-08-17T12:00:01.000Z',
+  });
+
+  expect(candidate.plannerNavaids).toMatchObject([
+    {
+      sourceRecordId: 'nil-range',
+      identifier: 'YHZ',
+      publishedRangeNm: 90,
+    },
+  ]);
+  expect(candidate.exclusions).toEqual([]);
+});
+
 test('preserves an eligible Navaid with unavailable Blackout Zone declination', () => {
   const candidate = buildNavaidSnapshotCandidate({
     faaNasrCycles: nasrCyclesAt('2025-01-01T00:00:00.500Z', '2024-12-05'),
