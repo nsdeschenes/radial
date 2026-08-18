@@ -73,9 +73,14 @@ class AirportResolutionCoordinator {
           ...dependencies,
           publicationGate: this.#publicationGate,
         }),
-      signal
+      signal,
+      () =>
+        request.onProgress?.({
+          stage: 'database',
+          message: 'Waiting for the active data operation.',
+        })
     );
-    return abortableOperation.awaitWithAbort(work, signal);
+    return work;
   }
 
   close(): void {
@@ -97,14 +102,15 @@ class AirportResolutionCoordinator {
   #enqueue<Value>(
     normalizedIcao: string,
     operation: () => Promise<Value>,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onQueued?: () => void
   ): Promise<Value> {
     let queue = this.#queues.get(normalizedIcao);
     if (queue === undefined) {
       queue = new FifoOperationCoordinator();
       this.#queues.set(normalizedIcao, queue);
     }
-    const work = queue.run(operation, signal);
+    const work = queue.run(operation, signal, onQueued);
     void work.then(
       () => this.#deleteQueue(normalizedIcao, queue),
       () => this.#deleteQueue(normalizedIcao, queue)

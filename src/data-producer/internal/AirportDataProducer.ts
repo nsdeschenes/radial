@@ -2,6 +2,7 @@ import {createHash} from 'node:crypto';
 
 import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 
+import abortableOperation from '#radial/application/internal/AbortableOperation.js';
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import OpenAIP from '#radial/clients/OpenAIP/OpenAIP.js';
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
@@ -14,6 +15,7 @@ type AirportPageRequest = Readonly<{
   search: string;
   page: number;
   limit: number;
+  signal?: AbortSignal;
 }>;
 
 type AirportPage = Readonly<{
@@ -101,6 +103,7 @@ async function reloadAirport(
       'Provide exactly one four-letter ICAO and retry the Airport reload.'
     );
   }
+  abortableOperation.throwIfAborted(request.signal);
   if (request.openAipApiKey.trim() === '') {
     return failure(
       'DATA_CREDENTIALS_MISSING',
@@ -112,8 +115,12 @@ async function reloadAirport(
 
   request.onProgress?.({stage: 'database', message: 'Preparing Producer Schema.'});
   try {
-    await publicationGate.run(() => initializeProducerSchema(instance));
+    await publicationGate.run(() => initializeProducerSchema(instance), request.signal);
+    abortableOperation.throwIfAborted(request.signal);
   } catch {
+    if (request.signal?.aborted) {
+      throw abortableOperation.abortError(request.signal);
+    }
     return failure(
       'DATA_DATABASE_INVALID',
       'The configured database is invalid.',
@@ -123,6 +130,7 @@ async function reloadAirport(
   }
 
   const cached = await readCachedAirport(instance, normalizedIcao);
+  abortableOperation.throwIfAborted(request.signal);
   if (cached.kind === 'database-error') {
     return failure(
       'DATA_DATABASE_UNAVAILABLE',
@@ -136,7 +144,8 @@ async function reloadAirport(
     request.openAipApiKey,
     normalizedIcao,
     dependencies,
-    progress => request.onProgress?.(progress)
+    progress => request.onProgress?.(progress),
+    request.signal
   );
   if (!acquired.ok) {
     return mapAirportReloadFailure(acquired.failure);
@@ -150,9 +159,16 @@ async function reloadAirport(
       acquired.retrievedAt,
       acquired.publishedAt,
       publicationGate,
-      dependencies.beforeAirportCommit
+      dependencies.beforeAirportCommit,
+      request.signal
     );
   } catch (error) {
+    if (
+      request.signal?.aborted &&
+      (!(error instanceof AirportPublicationError) || error.activeDataPreserved)
+    ) {
+      throw abortableOperation.abortError(request.signal);
+    }
     return failure(
       'DATA_PUBLICATION_FAILED',
       'Cached Airport publication failed.',
@@ -224,8 +240,10 @@ async function acquireAirportRecord(
   apiKey: string,
   normalizedIcao: string,
   dependencies: AirportDataProducerDependencies,
-  reportProgress?: (progress: AirportAcquisitionProgress) => void
+  reportProgress?: (progress: AirportAcquisitionProgress) => void,
+  signal?: AbortSignal
 ): Promise<AirportAcquisitionResult> {
+  abortableOperation.throwIfAborted(signal);
   reportProgress?.({
     stage: 'openaip',
     message: `Looking up Airport ${normalizedIcao} in OpenAIP.`,
@@ -243,9 +261,16 @@ async function acquireAirportRecord(
     records = await fetchAirportRecords(
       apiKey,
       normalizedIcao,
-      dependencies.listOpenAIPAirports
+      dependencies.listOpenAIPAirports,
+      signal
     );
   } catch (error) {
+    if (signal?.aborted) {
+      throw abortableOperation.abortError(signal);
+    }
+    if (abortableOperation.isAbortError(error)) {
+      throw error;
+    }
     return {
       ok: false,
       failure: {
@@ -258,6 +283,7 @@ async function acquireAirportRecord(
   }
 
   reportProgress?.({stage: 'derive', message: 'Validating exact Airport match.'});
+  abortableOperation.throwIfAborted(signal);
   const selected = selectAirport(records, normalizedIcao);
   if (!selected.ok) {
     return selected;
@@ -267,6 +293,7 @@ async function acquireAirportRecord(
     stage: 'derive',
     message: 'Deriving planner-ready Airport projection.',
   });
+  abortableOperation.throwIfAborted(signal);
   let publishedAt: string;
   try {
     publishedAt = now().toISOString();
@@ -335,7 +362,8 @@ async function fetchAirportRecords(
   normalizedIcao: string,
   listOpenAIPAirports:
     | ((request: AirportPageRequest) => Promise<AirportPage> | AirportPage)
-    | undefined
+    | undefined,
+  signal?: AbortSignal
 ): Promise<readonly unknown[]> {
   const listPage = listOpenAIPAirports ?? awaitableAirportPage(new OpenAIP(apiKey));
 
@@ -346,14 +374,27 @@ async function fetchAirportRecords(
     totalPages === undefined || pageNumber <= totalPages;
     pageNumber += 1
   ) {
+    abortableOperation.throwIfAborted(signal);
     let page: unknown;
     try {
-      page = await listPage({
-        search: normalizedIcao,
-        page: pageNumber,
-        limit: AIRPORT_PAGE_LIMIT,
-      });
+      page = await abortableOperation.awaitWithAbort(
+        Promise.resolve(
+          listPage({
+            search: normalizedIcao,
+            page: pageNumber,
+            limit: AIRPORT_PAGE_LIMIT,
+            ...(signal === undefined ? {} : {signal}),
+          })
+        ),
+        signal
+      );
     } catch (error) {
+      if (signal?.aborted) {
+        throw abortableOperation.abortError(signal);
+      }
+      if (abortableOperation.isAbortError(error)) {
+        throw error;
+      }
       if (error instanceof AirportSourceInvalidError) {
         throw error;
       }
@@ -377,11 +418,14 @@ function awaitableAirportPage(
   client: OpenAIP
 ): (request: AirportPageRequest) => Promise<AirportPage> {
   return async (request: AirportPageRequest): Promise<AirportPage> => {
-    const page = await client.airports({
-      page: request.page,
-      limit: request.limit,
-      search: request.search,
-    });
+    const page = await client.airports(
+      {
+        page: request.page,
+        limit: request.limit,
+        search: request.search,
+      },
+      request.signal
+    );
     return {
       page: page.page,
       totalPages: page.totalPages,
@@ -563,10 +607,20 @@ async function publishAirport(
   retrievedAt: string,
   publishedAt: string,
   publicationGate: PublicationGate = publicationGateRegistry.forInstance(instance),
-  beforeCommit?: () => void | Promise<void>
+  beforeCommit?: () => void | Promise<void>,
+  signal?: AbortSignal
 ): Promise<void> {
-  await publicationGate.run(() =>
-    publishAirportWithinGate(instance, airport, retrievedAt, publishedAt, beforeCommit)
+  await publicationGate.run(
+    () =>
+      publishAirportWithinGate(
+        instance,
+        airport,
+        retrievedAt,
+        publishedAt,
+        beforeCommit,
+        signal
+      ),
+    signal
   );
 }
 
@@ -575,12 +629,16 @@ async function publishAirportWithinGate(
   airport: AirportRecord,
   retrievedAt: string,
   publishedAt: string,
-  beforeCommit?: () => void | Promise<void>
+  beforeCommit?: () => void | Promise<void>,
+  signal?: AbortSignal
 ): Promise<void> {
+  abortableOperation.throwIfAborted(signal);
   const connection = await instance.connect();
+  let commitStarted = false;
   try {
     await connection.run('BEGIN TRANSACTION');
     try {
+      abortableOperation.throwIfAborted(signal);
       const active = await connection.runAndReadAll(`
         SELECT
           CAST(state.active_navaid_snapshot_id AS VARCHAR) AS snapshot_id,
@@ -623,6 +681,7 @@ async function publishAirportWithinGate(
         ]
       );
 
+      abortableOperation.throwIfAborted(signal);
       if (typeof snapshotId === 'string') {
         if (typeof magneticReferenceDate !== 'string') {
           throw new Error('Active Navaid Snapshot magnetic reference date is missing.');
@@ -651,7 +710,10 @@ async function publishAirportWithinGate(
           ]
         );
       }
+      abortableOperation.throwIfAborted(signal);
       await beforeCommit?.();
+      abortableOperation.throwIfAborted(signal);
+      commitStarted = true;
       await connection.run('COMMIT');
     } catch (error) {
       try {
@@ -663,7 +725,7 @@ async function publishAirportWithinGate(
         );
       }
       throw new AirportPublicationError(
-        true,
+        !commitStarted,
         error instanceof Error ? error.message : 'Cached Airport publication failed.'
       );
     }

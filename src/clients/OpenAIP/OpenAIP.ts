@@ -57,13 +57,15 @@ class OpenAIP {
 
   async #fetchData<TSchema extends z.ZodType>(
     endpoint: string,
-    responseSchema: TSchema
+    responseSchema: TSchema,
+    signal?: AbortSignal
   ): Promise<z.output<TSchema>> {
     const url = `${API_URL}${endpoint}`;
     const response = await fetch(url, {
       headers: {
         'x-openaip-api-key': this.#apiKey,
       },
+      ...(signal === undefined ? {} : {signal}),
     });
 
     let responseData: unknown;
@@ -102,11 +104,15 @@ class OpenAIP {
     return parsedResponse.data;
   }
 
-  async airports(queryParams: z.infer<typeof OpenAIPAirportListParametersSchema> = {}) {
+  async airports(
+    queryParams: z.infer<typeof OpenAIPAirportListParametersSchema> = {},
+    signal?: AbortSignal
+  ) {
     const params = OpenAIPAirportListParametersSchema.parse(queryParams);
     return this.#fetchData(
       endpointWithQuery('/airports', params),
-      OpenAIPAirportListSchema
+      OpenAIPAirportListSchema,
+      signal
     );
   }
 
