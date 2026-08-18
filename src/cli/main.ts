@@ -1,4 +1,5 @@
 import openRadialApplication from '#radial/application/RadialApplication.js';
+import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import airportReloadOutput from '#radial/cli/formatAirportReload.js';
 import dataStatusOutput from '#radial/cli/formatDataStatus.js';
 import diagnostics from '#radial/cli/formatDiagnostics.js';
@@ -18,20 +19,31 @@ type CliInput = {
   env: Readonly<Record<string, string | undefined>>;
   io: CliIo;
   openApplication?: typeof openRadialApplication;
+  signal?: AbortSignal;
 };
 
-async function runCli({
+async function runCli(input: CliInput): Promise<number> {
+  const interrupt = createInterruptSignal(input.signal);
+  try {
+    return await runCliWithSignal({...input, signal: interrupt.signal});
+  } finally {
+    interrupt.dispose();
+  }
+}
+
+async function runCliWithSignal({
   args,
   env,
   io,
   openApplication = openRadialApplication,
-}: CliInput): Promise<number> {
+  signal,
+}: Omit<CliInput, 'signal'> & {signal: AbortSignal}): Promise<number> {
   if (isNavaidReloadHelp(args)) {
     io.writeStdout('Usage: radial data reload navaids\n');
     return 0;
   }
   if (isNavaidReload(args)) {
-    return runNavaidReload({env, io, openApplication});
+    return runNavaidReload({env, io, openApplication, signal});
   }
   if (isAirportReloadHelp(args)) {
     io.writeStdout('Usage: radial data reload airport <ICAO>\n');
@@ -42,7 +54,7 @@ async function runCli({
     return 2;
   }
   if (isAirportReload(args)) {
-    return runAirportReload({args, env, io, openApplication});
+    return runAirportReload({args, env, io, openApplication, signal});
   }
   if (isDataStatusHelp(args)) {
     io.writeStdout('Usage: radial data status\n');
@@ -104,7 +116,10 @@ async function runCli({
     }
 
     try {
-      const result = await openedPlanner.value.planRoute(validatedRequest.value);
+      const result = await openedPlanner.value.planRoute({
+        ...validatedRequest.value,
+        signal,
+      });
       if (!result.ok) {
         io.writeStderr(diagnostics.formatRoutePlanningDiagnostic(result.failure));
         return result.failure.code === 'invalid-request' ? 2 : 1;
@@ -206,8 +221,10 @@ async function runNavaidReload({
   env,
   io,
   openApplication,
+  signal,
 }: Omit<CliInput, 'args'> & {
   openApplication: typeof openRadialApplication;
+  signal: AbortSignal;
 }): Promise<number> {
   if ((env['RADIAL_DATABASE_PATH'] ?? '').trim() === '') {
     io.writeStderr(
@@ -234,9 +251,18 @@ async function runNavaidReload({
     return 1;
   }
 
-  const openedApplication = await openApplication({
-    databasePath: env['RADIAL_DATABASE_PATH']!,
-  });
+  let openedApplication: Awaited<ReturnType<typeof openRadialApplication>>;
+  try {
+    openedApplication = await openApplication({
+      databasePath: env['RADIAL_DATABASE_PATH']!,
+    });
+  } catch (error) {
+    if (isInterrupted(error, signal)) {
+      return 130;
+    }
+    io.writeStderr(navaidReloadOutput.formatFailure(unexpectedDataFailure()));
+    return 1;
+  }
   if (!openedApplication.ok) {
     io.writeStderr(
       navaidReloadOutput.formatFailure({
@@ -250,22 +276,44 @@ async function runNavaidReload({
     return 1;
   }
 
+  let result: ApplicationTypes['NavaidReloadResult'] | undefined;
+  let interrupted = false;
   try {
-    const result = await openedApplication.value.dataManagement.reloadNavaids({
+    result = await openedApplication.value.dataManagement.reloadNavaids({
       openAipApiKey: env['OPENAIP_API_KEY']!,
       onProgress(progress) {
         io.writeStderr(navaidReloadOutput.formatProgress(progress));
       },
+      signal,
     });
-    if (!result.ok) {
-      io.writeStderr(navaidReloadOutput.formatFailure(result.failure));
-      return 1;
+  } catch (error) {
+    if (isInterrupted(error, signal)) {
+      interrupted = true;
+    } else {
+      io.writeStderr(navaidReloadOutput.formatFailure(unexpectedDataFailure()));
     }
-    io.writeStdout(navaidReloadOutput.formatSuccess(result.value));
-    return 0;
-  } finally {
-    await openedApplication.value[Symbol.asyncDispose]();
   }
+  let disposed = true;
+  try {
+    await openedApplication.value[Symbol.asyncDispose]();
+  } catch {
+    disposed = false;
+    if (!interrupted) {
+      io.writeStderr(navaidReloadOutput.formatFailure(unexpectedDataFailure()));
+    }
+  }
+  if (interrupted) {
+    return 130;
+  }
+  if (!disposed || result === undefined) {
+    return 1;
+  }
+  if (!result.ok) {
+    io.writeStderr(navaidReloadOutput.formatFailure(result.failure));
+    return 1;
+  }
+  io.writeStdout(navaidReloadOutput.formatSuccess(result.value));
+  return 0;
 }
 
 async function runAirportReload({
@@ -273,9 +321,11 @@ async function runAirportReload({
   env,
   io,
   openApplication,
+  signal,
 }: Omit<CliInput, 'args'> & {
   args: readonly string[];
   openApplication: typeof openRadialApplication;
+  signal: AbortSignal;
 }): Promise<number> {
   if ((env['RADIAL_DATABASE_PATH'] ?? '').trim() === '') {
     io.writeStderr(
@@ -318,9 +368,18 @@ async function runAirportReload({
     return 1;
   }
 
-  const openedApplication = await openApplication({
-    databasePath: env['RADIAL_DATABASE_PATH']!,
-  });
+  let openedApplication: Awaited<ReturnType<typeof openRadialApplication>>;
+  try {
+    openedApplication = await openApplication({
+      databasePath: env['RADIAL_DATABASE_PATH']!,
+    });
+  } catch (error) {
+    if (isInterrupted(error, signal)) {
+      return 130;
+    }
+    io.writeStderr(airportReloadOutput.formatFailure(unexpectedDataFailure()));
+    return 1;
+  }
   if (!openedApplication.ok) {
     io.writeStderr(
       airportReloadOutput.formatFailure({
@@ -334,23 +393,83 @@ async function runAirportReload({
     return 1;
   }
 
+  let result: ApplicationTypes['AirportReloadResult'] | undefined;
+  let interrupted = false;
   try {
-    const result = await openedApplication.value.dataManagement.reloadAirport({
+    result = await openedApplication.value.dataManagement.reloadAirport({
       icao: validatedIcao.value,
       openAipApiKey: env['OPENAIP_API_KEY']!,
       onProgress(progress) {
         io.writeStderr(airportReloadOutput.formatProgress(progress));
       },
+      signal,
     });
-    if (!result.ok) {
-      io.writeStderr(airportReloadOutput.formatFailure(result.failure));
-      return result.failure.code === 'DATA_INVALID_ICAO' ? 2 : 1;
+  } catch (error) {
+    if (isInterrupted(error, signal)) {
+      interrupted = true;
+    } else {
+      io.writeStderr(airportReloadOutput.formatFailure(unexpectedDataFailure()));
     }
-    io.writeStdout(airportReloadOutput.formatSuccess(result.value));
-    return 0;
-  } finally {
-    await openedApplication.value[Symbol.asyncDispose]();
   }
+  let disposed = true;
+  try {
+    await openedApplication.value[Symbol.asyncDispose]();
+  } catch {
+    disposed = false;
+    if (!interrupted) {
+      io.writeStderr(airportReloadOutput.formatFailure(unexpectedDataFailure()));
+    }
+  }
+  if (interrupted) {
+    return 130;
+  }
+  if (!disposed || result === undefined) {
+    return 1;
+  }
+  if (!result.ok) {
+    io.writeStderr(airportReloadOutput.formatFailure(result.failure));
+    return result.failure.code === 'DATA_INVALID_ICAO' ? 2 : 1;
+  }
+  io.writeStdout(airportReloadOutput.formatSuccess(result.value));
+  return 0;
+}
+
+function createInterruptSignal(parentSignal: AbortSignal | undefined): {
+  signal: AbortSignal;
+  dispose: () => void;
+} {
+  const controller = new AbortController();
+  const onInterrupt = () => controller.abort();
+  const onParentAbort = () => controller.abort();
+  process.on('SIGINT', onInterrupt);
+  process.on('SIGTERM', onInterrupt);
+  parentSignal?.addEventListener('abort', onParentAbort, {once: true});
+  if (parentSignal?.aborted) {
+    onParentAbort();
+  }
+
+  return {
+    signal: controller.signal,
+    dispose() {
+      process.removeListener('SIGINT', onInterrupt);
+      process.removeListener('SIGTERM', onInterrupt);
+      parentSignal?.removeEventListener('abort', onParentAbort);
+    },
+  };
+}
+
+function isInterrupted(error: unknown, signal: AbortSignal): boolean {
+  return signal.aborted || (error instanceof Error && error.name === 'AbortError');
+}
+
+function unexpectedDataFailure(): ApplicationTypes['DataFailure'] {
+  return {
+    code: 'DATA_DATABASE_UNAVAILABLE',
+    summary: 'The configured database is unavailable.',
+    cause: 'Radial could not complete the data operation.',
+    action: 'Check RADIAL_DATABASE_PATH and retry.',
+    activeDataPreserved: true,
+  };
 }
 
 export default runCli;
