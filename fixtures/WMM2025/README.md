@@ -19,6 +19,7 @@ the same pinned NOAA release; routine tests never contact NOAA.
   coefficient rows, and terminators without changing numeric text. Runtime
   parsing accepts exactly six finite numeric fields per coefficient and exactly
   90 coefficient rows.
+- Fixture generator: `radial:fixture-generator:v1`
 
 ## Golden vectors
 
@@ -31,6 +32,8 @@ the same pinned NOAA release; routine tests never contact NOAA.
   results at zero-kilometre WGS84 ellipsoid height across northern, equatorial,
   and southern locations and both published epochs. Longitude 240 degrees is
   represented by its equivalent normalized longitude, -120 degrees.
+- The extracted vectors are committed in `test-vectors.json` and verified by
+  the hermetic acceptance suite.
 
 NOAA states that the WMM source code is public domain. The coefficients and
 test values are U.S. Government material and are retained only to reproduce and

@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "records": [
+    {
+      "fixtureId": "openaip-api-contract",
+      "sourceIdentity": "openaip:api-contract:v1",
+      "sourceUrl": "https://api.core.openaip.net/api",
+      "retrievedAt": "2026-08-17T00:00:00.000Z",
+      "versionOrCycle": "api-contract-v1",
+      "licenseNote": "OpenAIP response shapes are retained as non-authoritative test fixtures; no operational data is distributed.",
+      "sha256": "sha256:5fbb6f3c59823df2d6bad3b6a45f801c64ebd0c2581e87a7fd7c0595e88cafbb",
+      "extractionPolicyVersion": "radial:openaip-api-fixtures:v1",
+      "generatorVersion": "radial:fixture-generator:v1",
+      "files": [
+        {
+          "path": "fixtures/OpenAIP/empty-list.json",
+          "sha256": "sha256:7efb6febdb9a283e421a945c287f54f2bd148af00109088bf00ae6de441b8bfc"
+        },
+        {
+          "path": "fixtures/OpenAIP/error.json",
+          "sha256": "sha256:470347becdca18024197073c0edeee679c21dc8ec497dd79d8070a95f2bb4d7d"
+        },
+        {
+          "path": "fixtures/OpenAIP/invalid-list.json",
+          "sha256": "sha256:0343639fac1511a32a4c9a92c7655a6e9f9ad3a600fc6f30b5bdad6806160a97"
+        },
+        {
+          "path": "fixtures/OpenAIP/success/airports.json",
+          "sha256": "sha256:3249fce74e5cd3215ca8927a8b3f330569bf714ecc71936f8919d6a5e9fcaa5b"
+        },
+        {
+          "path": "fixtures/OpenAIP/success/airspaces.json",
+          "sha256": "sha256:042ffc0970c512616875b478aa77e842ab94fc828a9826d7df5ee694607ac3d7"
+        },
+        {
+          "path": "fixtures/OpenAIP/success/hotspots.json",
+          "sha256": "sha256:a39acfe091a54a6c3902d997a8c60816d8970d8518afd841e5b298a37e623277"
+        },
+        {
+          "path": "fixtures/OpenAIP/success/navaids.json",
+          "sha256": "sha256:e7d851896f166b293c5124cea2dda61283af1ccb4b4c9a36e2089532f7f80e47"
+        },
+        {
+          "path": "fixtures/OpenAIP/success/obstacles.json",
+          "sha256": "sha256:2155cf219fb4b588c66ca21b95d2d78ff0b05fc8eaff17ced230a907eef6c377"
+        },
+        {
+          "path": "fixtures/OpenAIP/success/reporting-points.json",
+          "sha256": "sha256:92d61bb22f430414be2d9f033469f31fbb02eaa36053f7efd4150510a8790b8c"
+        }
+      ]
+    },
+    {
+      "fixtureId": "wmm2025-test-vectors",
+      "sourceIdentity": "noaa:wmm2025-test-values:v1",
+      "sourceUrl": "https://www.ncei.noaa.gov/sites/default/files/2025-02/WMM2025_TEST_VALUES.txt",
+      "retrievedAt": "2026-08-17T00:00:00.000Z",
+      "versionOrCycle": "WMM2025",
+      "licenseNote": "NOAA WMM2025 test values are U.S. Government material and public domain.",
+      "sha256": "sha256:6a4a4ec19b046e4c6b3a4a1055a08e3a1479d7bb5c8e32074b9c773a6bfb61ac",
+      "extractionPolicyVersion": "radial:wmm2025-test-vectors:v1",
+      "generatorVersion": "radial:fixture-generator:v1",
+      "files": [
+        {
+          "path": "fixtures/WMM2025/test-vectors.json",
+          "sha256": "sha256:8a27a1566d59a69639f1443bcb49bbbe73ec9bc890cf6c4f667930e190e1edb6"
+        }
+      ]
+    },
+    {
+      "fixtureId": "faa-nasr-2607-nav-base",
+      "sourceIdentity": "faa:nasr:2607:NAV_BASE.csv",
+      "sourceUrl": "https://nfdc.faa.gov/webContent/28DaySub/extra/09_Jul_2026_NAV_CSV.zip",
+      "retrievedAt": "2026-08-17T00:00:00.000Z",
+      "versionOrCycle": "2607",
+      "licenseNote": "FAA NASR navigation data is a public-domain U.S. Government source; this is a minimal synthetic compatibility fixture.",
+      "sha256": "sha256:d439a1111950b8d53f094e7b4b4e77e2e9aa017259c2f0c5d17ca3414e99d16e",
+      "extractionPolicyVersion": "radial:faa-nasr-nav-base:v1",
+      "generatorVersion": "radial:fixture-generator:v1",
+      "files": [
+        {
+          "path": "fixtures/FAA/2607-NAV_BASE.csv",
+          "sha256": "sha256:b8e2a05d93288440c876ae1200e8b71edc087e7f830cadebf97634187e8acca1"
+        }
+      ]
+    }
+  ]
+}

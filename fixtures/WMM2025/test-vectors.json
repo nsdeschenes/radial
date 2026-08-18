@@ -1,0 +1,26 @@
+[
+  {
+    "referenceDate": "2025-01-01",
+    "latitude": 80,
+    "longitude": 0,
+    "expectedDeclination": 1.28
+  },
+  {
+    "referenceDate": "2025-01-01",
+    "latitude": 0,
+    "longitude": 120,
+    "expectedDeclination": -0.16
+  },
+  {
+    "referenceDate": "2025-01-01",
+    "latitude": -80,
+    "longitude": -120,
+    "expectedDeclination": 68.78
+  },
+  {
+    "referenceDate": "2027-07-02",
+    "latitude": 80,
+    "longitude": 0,
+    "expectedDeclination": 2.59
+  }
+]
