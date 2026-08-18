@@ -29,6 +29,7 @@ const FAMILY_BY_TYPE = new Map<number, NavaidFamily>([
   [7, 'DVOR-DME'],
   [8, 'DVORTAC'],
 ]);
+const DEFAULT_PUBLISHED_RANGE_NM = 90;
 
 type JsonObject = Readonly<Record<string, unknown>>;
 
@@ -384,6 +385,9 @@ function frequencyFrom(
 }
 
 function rangeFrom(value: unknown): number | undefined {
+  if (value === undefined) {
+    return DEFAULT_PUBLISHED_RANGE_NM;
+  }
   if (!isJsonObject(value) || value['unit'] !== 2) {
     return undefined;
   }
