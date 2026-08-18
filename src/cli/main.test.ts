@@ -700,6 +700,9 @@ test('reports the failed query operation without writing a partial Route Plan an
       },
     },
     dataManagement: {
+      async status() {
+        throw new Error('Data status is not used by this test.');
+      },
       async reloadNavaids() {
         throw new Error('Navaid reload is not used by this test.');
       },
@@ -732,6 +735,9 @@ function syntheticApplication(
   return {
     databasePath: ':synthetic:',
     dataManagement: {
+      async status() {
+        throw new Error('Data status is not used by this test.');
+      },
       reloadNavaids,
       async reloadAirport() {
         throw new Error('Airport reload is not used by this test.');
@@ -752,6 +758,9 @@ function syntheticAirportApplication(
   return {
     databasePath: ':synthetic:',
     dataManagement: {
+      async status() {
+        throw new Error('Data status is not used by this test.');
+      },
       async reloadNavaids() {
         throw new Error('Navaid reload is not used by this test.');
       },
@@ -777,6 +786,9 @@ async function openSyntheticApplication(
         open: () => openRoutePlanner(config),
       },
       dataManagement: {
+        async status() {
+          throw new Error('Data status is not used by this test.');
+        },
         async reloadNavaids() {
           throw new Error('Navaid reload is not used by this test.');
         },

@@ -142,6 +142,9 @@ async function openAcceptanceApplication(
         open: () => openRoutePlanner(config),
       },
       dataManagement: {
+        async status() {
+          throw new Error('Data status is not used by acceptance smoke.');
+        },
         async reloadNavaids() {
           throw new Error('Navaid reload is not used by acceptance smoke.');
         },

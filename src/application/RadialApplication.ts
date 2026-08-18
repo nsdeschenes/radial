@@ -2,6 +2,7 @@ import sharedDuckDBRuntime from '#radial/application/internal/SharedDuckDBRuntim
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import ensureCachedAirport from '#radial/data-producer/internal/AirportDataProducer.js';
 import ensureFirstNavaidSnapshot from '#radial/data-producer/internal/BootstrapNavaidSnapshot.js';
+import readDataStatus from '#radial/data-producer/internal/DataStatus.js';
 import reloadNavaids from '#radial/data-producer/internal/NavaidDataProducer.js';
 import validation from '#radial/route-planner/internal/validation.js';
 import openRoutePlanner from '#radial/route-planner/RoutePlanner.js';
@@ -160,12 +161,17 @@ class RadialApplication implements Application {
     this.#airportDataProducerDependencies = dependencies;
     this.databasePath = runtime.databasePath;
     this.dataManagement = Object.freeze({
+      status: () => this.#readDataStatus(),
       reloadNavaids: (request: RadialApplicationTypes['NavaidReloadRequest']) =>
         this.#reloadNavaids(request),
       reloadAirport: (request: RadialApplicationTypes['AirportReloadRequest']) =>
         this.#reloadAirport(request),
     });
     this.planning = Object.freeze({open: () => this.#openPlanning()});
+  }
+
+  async #readDataStatus(): Promise<RadialApplicationTypes['DataStatusResult']> {
+    return readDataStatus.fromInstance(await this.#runtime.instance(), this.databasePath);
   }
 
   async #reloadNavaids(
