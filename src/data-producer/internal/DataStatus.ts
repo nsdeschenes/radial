@@ -6,6 +6,7 @@ import type {DuckDBConnection} from '@duckdb/node-api';
 
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import isDuckDBBusyError from '#radial/db/duckdb/isDuckDBBusyError.js';
 
 type DataStatusResult = RadialApplicationTypes['DataStatusResult'];
 type DataStatusSuccess = RadialApplicationTypes['DataStatusSuccess'];
@@ -62,7 +63,15 @@ async function readDataStatus(databasePath: string): Promise<DataStatusResult> {
   let instance: DuckDBInstance;
   try {
     instance = await DuckDBInstance.create(databasePath, {access_mode: 'READ_ONLY'});
-  } catch {
+  } catch (error) {
+    if (isDuckDBBusyError(error)) {
+      return failure(
+        'DATA_DATABASE_BUSY',
+        'The configured database is busy.',
+        'Another process owns the native DuckDB database file.',
+        'Route the operation through the owning process or obtain exclusive maintenance access.'
+      );
+    }
     return failure(
       'DATA_DATABASE_UNAVAILABLE',
       'The configured database is unavailable.',
@@ -85,7 +94,15 @@ async function readDataStatusFromInstance(
   let connection: DuckDBConnection;
   try {
     connection = await instance.connect();
-  } catch {
+  } catch (error) {
+    if (isDuckDBBusyError(error)) {
+      return failure(
+        'DATA_DATABASE_BUSY',
+        'The configured database is busy.',
+        'Another process owns the native DuckDB database file.',
+        'Route the operation through the owning process or obtain exclusive maintenance access.'
+      );
+    }
     return failure(
       'DATA_DATABASE_UNAVAILABLE',
       'The configured database is unavailable.',
@@ -104,6 +121,14 @@ async function readDataStatusFromInstance(
           'The configured database is invalid.',
           error.message,
           'Inspect the configured database and retry with a valid Radial database.'
+        );
+      }
+      if (isDuckDBBusyError(error)) {
+        return failure(
+          'DATA_DATABASE_BUSY',
+          'The configured database is busy.',
+          'Another process owns the native DuckDB database file.',
+          'Route the operation through the owning process or obtain exclusive maintenance access.'
         );
       }
       return failure(

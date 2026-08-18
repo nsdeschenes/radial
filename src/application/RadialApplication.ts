@@ -5,6 +5,7 @@ import ensureCachedAirport from '#radial/data-producer/internal/AirportDataProdu
 import ensureFirstNavaidSnapshot from '#radial/data-producer/internal/BootstrapNavaidSnapshot.js';
 import readDataStatus from '#radial/data-producer/internal/DataStatus.js';
 import reloadNavaids from '#radial/data-producer/internal/NavaidDataProducer.js';
+import isDuckDBBusyError from '#radial/db/duckdb/isDuckDBBusyError.js';
 import validation from '#radial/route-planner/internal/validation.js';
 import openRoutePlanner from '#radial/route-planner/RoutePlanner.js';
 import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
@@ -175,12 +176,27 @@ class RadialApplication implements Application {
   }
 
   async #readDataStatus(): Promise<RadialApplicationTypes['DataStatusResult']> {
-    return readDataStatus.fromInstance(await this.#runtime.instance(), this.databasePath);
+    try {
+      return readDataStatus.fromInstance(
+        await this.#runtime.instance(),
+        this.databasePath
+      );
+    } catch (error) {
+      return {
+        ok: false,
+        failure: databaseFailure(
+          error,
+          'The committed data status could not be read.',
+          'Check database availability and retry.'
+        ),
+      };
+    }
   }
 
   async #reloadNavaids(
     request: RadialApplicationTypes['NavaidReloadRequest']
   ): Promise<RadialApplicationTypes['NavaidReloadResult']> {
+    abortableOperation.throwIfAborted(request.signal);
     if (request.openAipApiKey.trim() === '') {
       return {
         ok: false,
@@ -193,24 +209,43 @@ class RadialApplication implements Application {
         },
       };
     }
-    return this.#activityGate.run(async () =>
-      abortableOperation.awaitWithAbort(
-        this.#runtime.navaidOperationCoordinator.run(
-          async () =>
-            reloadNavaids(await this.#runtime.instance(), request, {
-              ...this.#navaidDataProducerDependencies,
-              publicationGate: this.#runtime.publicationGate,
-            }),
-          request.signal
-        ),
-        request.signal
-      )
-    );
+    return this.#activityGate.run(async () => {
+      abortableOperation.throwIfAborted(request.signal);
+      let instance: Awaited<ReturnType<SharedDuckDBRuntime['instance']>>;
+      try {
+        instance = await this.#runtime.instance();
+      } catch (error) {
+        return {
+          ok: false,
+          failure: databaseFailure(
+            error,
+            'The database could not be opened for the Navaid reload.',
+            'Check RADIAL_DATABASE_PATH and retry the Navaid reload.'
+          ),
+        };
+      }
+      abortableOperation.throwIfAborted(request.signal);
+
+      return this.#runtime.navaidOperationCoordinator.run(
+        async () =>
+          reloadNavaids(instance, request, {
+            ...this.#navaidDataProducerDependencies,
+            publicationGate: this.#runtime.publicationGate,
+          }),
+        request.signal,
+        () =>
+          request.onProgress?.({
+            stage: 'database',
+            message: 'Waiting for the active data operation.',
+          })
+      );
+    });
   }
 
   async #reloadAirport(
     request: RadialApplicationTypes['AirportReloadRequest']
   ): Promise<RadialApplicationTypes['AirportReloadResult']> {
+    abortableOperation.throwIfAborted(request.signal);
     const validatedIcao = validation.validateAirportIcao(request.icao);
     if (!validatedIcao.ok) {
       return {
@@ -238,26 +273,43 @@ class RadialApplication implements Application {
     }
 
     return this.#activityGate.run(async () => {
+      abortableOperation.throwIfAborted(request.signal);
+      let instance: Awaited<ReturnType<SharedDuckDBRuntime['instance']>>;
+      try {
+        instance = await this.#runtime.instance();
+      } catch (error) {
+        if (request.signal?.aborted) {
+          throw abortableOperation.abortError(request.signal);
+        }
+        return {
+          ok: false,
+          failure: databaseFailure(
+            error,
+            'The database could not be opened for the Airport reload.',
+            'Check RADIAL_DATABASE_PATH and retry the Airport reload.'
+          ),
+        };
+      }
+      abortableOperation.throwIfAborted(request.signal);
+
       try {
         return await this.#runtime.airportResolutionCoordinator.reload(
-          await this.#runtime.instance(),
+          instance,
           {...request, icao: validatedIcao.value},
           this.#airportDataProducerDependencies,
           request.signal
         );
       } catch (error) {
         if (request.signal?.aborted) {
-          throw error;
+          throw abortableOperation.abortError(request.signal);
         }
         return {
           ok: false,
-          failure: {
-            code: 'DATA_DATABASE_UNAVAILABLE',
-            summary: 'The configured database is unavailable.',
-            cause: 'The database could not be opened for the Airport reload.',
-            action: 'Check RADIAL_DATABASE_PATH and retry the Airport reload.',
-            activeDataPreserved: true,
-          },
+          failure: databaseFailure(
+            error,
+            'The database could not be opened for the Airport reload.',
+            'Check RADIAL_DATABASE_PATH and retry the Airport reload.'
+          ),
         };
       }
     });
@@ -268,7 +320,17 @@ class RadialApplication implements Application {
       let bootstrapped: BootstrapResult;
       try {
         bootstrapped = await this.#ensureFirstNavaidSnapshot();
-      } catch {
+      } catch (error) {
+        if (isDuckDBBusyError(error)) {
+          return {
+            ok: false,
+            failure: databaseFailure(
+              error,
+              'The database could not be opened for planning.',
+              'Route the operation through the owning process or obtain exclusive maintenance access.'
+            ),
+          };
+        }
         return {
           ok: false,
           failure: {
@@ -331,6 +393,30 @@ class RadialApplication implements Application {
     await this.#activityGate.stopAndDrain();
     await sharedDuckDBRuntime.release(this.#runtime);
   }
+}
+
+function databaseFailure(
+  error: unknown,
+  unavailableCause: string,
+  unavailableAction: string
+): RadialApplicationTypes['DataFailure'] {
+  if (isDuckDBBusyError(error)) {
+    return {
+      code: 'DATA_DATABASE_BUSY',
+      summary: 'The configured database is busy.',
+      cause: 'Another process owns the native DuckDB database file.',
+      action:
+        'Route the operation through the owning process or obtain exclusive maintenance access.',
+      activeDataPreserved: true,
+    };
+  }
+  return {
+    code: 'DATA_DATABASE_UNAVAILABLE',
+    summary: 'The configured database is unavailable.',
+    cause: unavailableCause,
+    action: unavailableAction,
+    activeDataPreserved: true,
+  };
 }
 
 async function openRadialApplication(

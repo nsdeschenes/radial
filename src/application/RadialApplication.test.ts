@@ -134,6 +134,57 @@ test('bootstraps the first Navaid Snapshot when planning opens and reuses it off
   }
 });
 
+test('cancels Navaid acquisition before publication without activating a snapshot', async () => {
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), 'radial-application-interruption-')
+  );
+  const databasePath = join(temporaryDirectory, 'radial.duckdb');
+  const requestStarted = Promise.withResolvers<void>();
+  const controller = new AbortController();
+
+  try {
+    const opened = await openRadialApplication(
+      {databasePath},
+      {
+        now: () => new Date('2026-07-10T00:00:00.000Z'),
+        createOpenAIPTransport: () => async request => {
+          requestStarted.resolve();
+          return new Promise((_resolve, reject) => {
+            request.signal?.addEventListener(
+              'abort',
+              () => {
+                const error = new Error('The acquisition was interrupted.');
+                error.name = 'AbortError';
+                reject(error);
+              },
+              {once: true}
+            );
+          });
+        },
+      }
+    );
+    if (!opened.ok) {
+      throw new Error('Expected the application to open.');
+    }
+
+    const reload = opened.value.dataManagement.reloadNavaids({
+      openAipApiKey: 'test-key',
+      signal: controller.signal,
+    });
+    await requestStarted.promise;
+    controller.abort();
+
+    await expect(reload).rejects.toMatchObject({name: 'AbortError'});
+    await expect(opened.value.dataManagement.status()).resolves.toMatchObject({
+      ok: true,
+      value: {status: 'uninitialized', snapshot: null, cachedAirports: []},
+    });
+    await opened.value[Symbol.asyncDispose]();
+  } finally {
+    await rm(temporaryDirectory, {recursive: true});
+  }
+});
+
 test('concurrent first planners share one Navaid Snapshot bootstrap attempt', async () => {
   const temporaryDirectory = await mkdtemp(
     join(tmpdir(), 'radial-application-bootstrap-concurrent-')

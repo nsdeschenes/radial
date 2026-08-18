@@ -2,6 +2,7 @@ import {createHash} from 'node:crypto';
 
 import {unzipSync} from 'fflate';
 
+import abortableOperation from '#radial/application/internal/AbortableOperation.js';
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
 import FAANasrCycleSourceError from '#radial/data-producer/internal/FAANasrCycleSourceError.js';
 import faaNasrFacilityVariation from '#radial/data-producer/internal/FAANasrFacilityVariation.js';
@@ -28,12 +29,15 @@ const MAX_ELAPSED_MS = 5 * 60 * 1000;
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 
 async function acquireProductionFAANasrCycle(
-  retrievalStartedAt: string
+  retrievalStartedAt: string,
+  signal?: AbortSignal
 ): Promise<readonly FAANasrCycleArtifact[]> {
+  abortableOperation.throwIfAborted(signal);
   const effectiveDate = applicableEffectiveDate(retrievalStartedAt);
   const archiveIdentity = `${formatArchiveDate(effectiveDate)}_NAV_CSV.zip`;
   const sourceUrl = `https://nfdc.faa.gov/webContent/28DaySub/extra/${archiveIdentity}`;
-  const downloadedArchive = await fetchArchive(sourceUrl);
+  const downloadedArchive = await fetchArchive(sourceUrl, signal);
+  abortableOperation.throwIfAborted(signal);
 
   try {
     return await buildCycleArtifact(
@@ -105,13 +109,23 @@ async function buildCycleArtifact(
   ];
 }
 
-async function fetchArchive(sourceUrl: string): Promise<DownloadedArchive> {
+async function fetchArchive(
+  sourceUrl: string,
+  signal?: AbortSignal
+): Promise<DownloadedArchive> {
   const startedAt = Date.now();
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    abortableOperation.throwIfAborted(signal);
     let response: ArchiveResponse;
     try {
-      response = await requestArchive(sourceUrl);
+      response = await requestArchive(sourceUrl, signal);
     } catch (error) {
+      if (signal?.aborted) {
+        throw abortableOperation.abortError(signal);
+      }
+      if (abortableOperation.isAbortError(error)) {
+        throw error;
+      }
       if (error instanceof FAANasrCycleSourceError) {
         throw error;
       }
@@ -121,7 +135,7 @@ async function fetchArchive(sourceUrl: string): Promise<DownloadedArchive> {
           'FAA NASR archive is unavailable.'
         );
       }
-      await waitBeforeRetry(attempt, undefined, startedAt);
+      await waitBeforeRetry(attempt, undefined, startedAt, signal);
       continue;
     }
     if (response.downloadedArchive !== undefined) {
@@ -133,15 +147,20 @@ async function fetchArchive(sourceUrl: string): Promise<DownloadedArchive> {
         'FAA NASR archive is unavailable.'
       );
     }
-    await waitBeforeRetry(attempt, response.retryAfter, startedAt);
+    await waitBeforeRetry(attempt, response.retryAfter, startedAt, signal);
   }
   throw new FAANasrCycleSourceError('unavailable', 'FAA NASR archive is unavailable.');
 }
 
-async function requestArchive(sourceUrl: string): Promise<ArchiveResponse> {
+async function requestArchive(
+  sourceUrl: string,
+  signal?: AbortSignal
+): Promise<ArchiveResponse> {
   const controller = new AbortController();
   const connectionTimer = setTimeout(() => controller.abort(), 10_000);
   const requestTimer = setTimeout(() => controller.abort(), 60_000);
+  const onAbort = () => controller.abort();
+  signal?.addEventListener('abort', onAbort, {once: true});
   try {
     const response = await fetch(sourceUrl, {
       headers: {accept: 'application/zip'},
@@ -182,23 +201,24 @@ async function requestArchive(sourceUrl: string): Promise<ArchiveResponse> {
   } finally {
     clearTimeout(connectionTimer);
     clearTimeout(requestTimer);
+    signal?.removeEventListener('abort', onAbort);
   }
 }
 
 async function waitBeforeRetry(
   failedAttempt: number,
   retryAfter: string | null | undefined,
-  startedAt: number
+  startedAt: number,
+  signal?: AbortSignal
 ): Promise<void> {
+  abortableOperation.throwIfAborted(signal);
   const retryAfterMs = parseRetryAfter(retryAfter);
   const jitterCeilingMs = Math.min(30_000, 1000 * 2 ** (failedAttempt - 1));
   const delayMs = retryAfterMs ?? Math.floor(Math.random() * jitterCeilingMs);
   if (Date.now() - startedAt + delayMs > MAX_ELAPSED_MS) {
     throw new Error('FAA NASR acquisition exceeded its elapsed-time ceiling.');
   }
-  await new Promise(resolve => {
-    setTimeout(resolve, delayMs);
-  });
+  await abortableOperation.sleep(delayMs, signal);
 }
 
 function parseRetryAfter(value: string | null | undefined): number | undefined {

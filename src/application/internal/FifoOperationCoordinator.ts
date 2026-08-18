@@ -15,12 +15,21 @@ class FifoOperationCoordinator {
   #isClosed = false;
   #isRunning = false;
 
-  run<Value>(operation: () => Promise<Value>, signal?: AbortSignal): Promise<Value> {
+  run<Value>(
+    operation: () => Promise<Value>,
+    signal?: AbortSignal,
+    onQueued?: () => void
+  ): Promise<Value> {
     if (this.#isClosed) {
       return Promise.reject(new Error('The operation coordinator has been closed.'));
     }
     if (signal?.aborted) {
       return Promise.reject(abortableOperation.abortError(signal));
+    }
+
+    const isWaiting = this.#isRunning || this.#queue.length > 0;
+    if (isWaiting) {
+      onQueued?.();
     }
 
     return new Promise<Value>((resolve, reject) => {

@@ -369,6 +369,67 @@ test('writes a stable Navaid reload failure only to stderr', async () => {
   expect(capture.output().stderr).not.toContain('secret-api-key');
 });
 
+test('cancels a pre-publication Navaid reload with exit status 130', async () => {
+  const capture = captureOutput();
+  const controller = new AbortController();
+  const started = Promise.withResolvers<void>();
+  const application = syntheticApplication(
+    request =>
+      new Promise<ApplicationTypes['NavaidReloadResult']>((_resolve, reject) => {
+        started.resolve();
+        request.signal?.addEventListener(
+          'abort',
+          () => {
+            const error = new Error('The reload was interrupted.');
+            error.name = 'AbortError';
+            reject(error);
+          },
+          {once: true}
+        );
+      })
+  );
+
+  const running = runCli({
+    args: ['data', 'reload', 'navaids'],
+    env: {RADIAL_DATABASE_PATH: ':memory:', OPENAIP_API_KEY: 'secret-api-key'},
+    io: capture.io,
+    signal: controller.signal,
+    async openApplication() {
+      return {ok: true, value: application};
+    },
+  });
+  await started.promise;
+  controller.abort();
+
+  await expect(running).resolves.toBe(130);
+  expect(capture.output()).toEqual({stdout: '', stderr: ''});
+});
+
+test('waits for a publication result after interruption', async () => {
+  const capture = captureOutput();
+  const controller = new AbortController();
+  const reload = Promise.withResolvers<ApplicationTypes['NavaidReloadResult']>();
+  const application = syntheticApplication(async () => reload.promise);
+
+  const running = runCli({
+    args: ['data', 'reload', 'navaids'],
+    env: {RADIAL_DATABASE_PATH: ':memory:', OPENAIP_API_KEY: 'secret-api-key'},
+    io: capture.io,
+    signal: controller.signal,
+    async openApplication() {
+      return {ok: true, value: application};
+    },
+  });
+  await Promise.resolve();
+  controller.abort();
+  await Promise.resolve();
+
+  expect(capture.output()).toEqual({stdout: '', stderr: ''});
+  reload.resolve({ok: true, value: syntheticNavaidReloadSuccess()});
+  await expect(running).resolves.toBe(0);
+  expect(capture.output().stdout).toContain('Navaid Snapshot replaced\n');
+});
+
 test('streams Airport reload progress and writes success only after commit', async () => {
   const capture = captureOutput();
   const reload = Promise.withResolvers<ApplicationTypes['AirportReloadResult']>();

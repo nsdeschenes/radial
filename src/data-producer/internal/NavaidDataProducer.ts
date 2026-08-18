@@ -1,5 +1,6 @@
 import type {DuckDBInstance} from '@duckdb/node-api';
 
+import abortableOperation from '#radial/application/internal/AbortableOperation.js';
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import FAANasrCycleSourceError from '#radial/data-producer/internal/FAANasrCycleSourceError.js';
 import faaNasrFacilityVariation from '#radial/data-producer/internal/FAANasrFacilityVariation.js';
@@ -21,7 +22,10 @@ type ReloadResult = RadialApplicationTypes['NavaidReloadResult'];
 type ReloadRequest = RadialApplicationTypes['NavaidReloadRequest'];
 
 type NavaidDataProducerDependencies = Readonly<{
-  acquireFAANasrCycles?: (retrievalStartedAt: string) => Promise<FAANasrCycles>;
+  acquireFAANasrCycles?: (
+    retrievalStartedAt: string,
+    signal?: AbortSignal
+  ) => Promise<FAANasrCycles>;
   createOpenAIPTransport?: (apiKey: string) => OpenAIPNavaidTransport;
   now?: () => Date;
   beforeNavaidCommit?: () => void | Promise<void>;
@@ -44,11 +48,14 @@ async function reloadNavaids(
       true
     );
   }
+  abortableOperation.throwIfAborted(request.signal);
 
   request.onProgress?.({stage: 'database', message: 'Preparing Producer Schema.'});
   try {
-    await publicationGate.run(() => initializeProducerSchema(instance));
-  } catch {
+    await publicationGate.run(() => initializeProducerSchema(instance), request.signal);
+    abortableOperation.throwIfAborted(request.signal);
+  } catch (error) {
+    rethrowIfInterrupted(error, request.signal);
     return failure(
       'DATA_DATABASE_INVALID',
       'The configured database is invalid.',
@@ -59,6 +66,7 @@ async function reloadNavaids(
   }
 
   const now = dependencies.now ?? (() => new Date());
+  abortableOperation.throwIfAborted(request.signal);
   let captured: Awaited<ReturnType<typeof captureOpenAIPNavaids>>;
   request.onProgress?.({stage: 'openaip', message: 'Acquiring OpenAIP Navaids.'});
   try {
@@ -75,8 +83,10 @@ async function reloadNavaids(
             `(${progress.cumulativeRecordCount} records)`,
         });
       },
+      ...(request.signal === undefined ? {} : {signal: request.signal}),
     });
   } catch (error) {
+    rethrowIfInterrupted(error, request.signal);
     const code: RadialApplicationTypes['DataFailure']['code'] =
       error instanceof OpenAIPNavaidCaptureError
         ? (
@@ -99,12 +109,14 @@ async function reloadNavaids(
   }
 
   let faaNasrCycles: FAANasrCycles;
+  abortableOperation.throwIfAborted(request.signal);
   request.onProgress?.({stage: 'nasr', message: 'Acquiring FAA NASR data.'});
   try {
     faaNasrCycles = await (
       dependencies.acquireFAANasrCycles ?? acquireProductionFAANasrCycle
-    )(captured.retrievedAt);
+    )(captured.retrievedAt, request.signal);
   } catch (error) {
+    rethrowIfInterrupted(error, request.signal);
     return failure(
       error instanceof FAANasrCycleSourceError && error.code === 'invalid-response'
         ? 'DATA_NASR_INVALID_RESPONSE'
@@ -118,8 +130,10 @@ async function reloadNavaids(
     );
   }
   try {
+    abortableOperation.throwIfAborted(request.signal);
     faaNasrFacilityVariation.selectApplicableCycle(faaNasrCycles, captured.retrievedAt);
-  } catch {
+  } catch (error) {
+    rethrowIfInterrupted(error, request.signal);
     return failure(
       'DATA_NASR_INVALID_RESPONSE',
       'FAA NASR source validation failed.',
@@ -147,6 +161,7 @@ async function reloadNavaids(
       retrievalCompletedAt: now().toISOString(),
     });
   } catch (error) {
+    rethrowIfInterrupted(error, request.signal);
     if (error instanceof Error && error.message.startsWith('WMM2025 ')) {
       return failure(
         'DATA_MAGNETIC_MODEL_INVALID',
@@ -165,6 +180,7 @@ async function reloadNavaids(
     );
   }
 
+  abortableOperation.throwIfAborted(request.signal);
   request.onProgress?.({stage: 'publish', message: 'publishing Navaid Snapshot'});
   try {
     const published = await publishNavaidSnapshot(instance, candidate, {
@@ -172,6 +188,7 @@ async function reloadNavaids(
         ? {}
         : {beforeCommit: dependencies.beforeNavaidCommit}),
       publicationGate,
+      ...(request.signal === undefined ? {} : {signal: request.signal}),
     });
     request.onProgress?.({stage: 'complete', message: 'Navaid Snapshot committed.'});
     return {
@@ -185,6 +202,11 @@ async function reloadNavaids(
       },
     };
   } catch (error) {
+    if (
+      !(error instanceof NavaidSnapshotPublicationError && !error.activeDataPreserved)
+    ) {
+      rethrowIfInterrupted(error, request.signal);
+    }
     if (error instanceof NavaidSnapshotValidationError) {
       return failure(
         'DATA_VALIDATION_FAILED',
@@ -245,6 +267,15 @@ function failure(
     ok: false,
     failure: {code, summary, cause, action, activeDataPreserved},
   };
+}
+
+function rethrowIfInterrupted(error: unknown, signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw abortableOperation.abortError(signal);
+  }
+  if (abortableOperation.isAbortError(error)) {
+    throw error;
+  }
 }
 
 export default reloadNavaids;

@@ -1,3 +1,4 @@
+import abortableOperation from '#radial/application/internal/AbortableOperation.js';
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
 import parseJsonWithUniqueKeys from '#radial/data-producer/internal/JsonWithUniqueKeys.js';
 import OpenAIPNavaidCaptureError from '#radial/data-producer/internal/OpenAIPNavaidCaptureError.js';
@@ -30,6 +31,7 @@ type CaptureOpenAIPNavaidsRequest = Readonly<{
     totalPages: number;
     cumulativeRecordCount: number;
   }) => void;
+  signal?: AbortSignal;
 }>;
 
 type CapturedOpenAIPNavaids = Readonly<{
@@ -53,6 +55,7 @@ type CaptureDependencies = Readonly<{
   sleep: (milliseconds: number) => Promise<void>;
   random: () => number;
   onProgress?: CaptureOpenAIPNavaidsRequest['onProgress'];
+  signal?: AbortSignal;
 }>;
 
 class CollectionDriftError extends Error {}
@@ -61,24 +64,24 @@ async function captureOpenAIPNavaids(
   request: CaptureOpenAIPNavaidsRequest
 ): Promise<CapturedOpenAIPNavaids> {
   const now = request.now ?? (() => new Date());
+  abortableOperation.throwIfAborted(request.signal);
   const startedAt = now();
   const dependencies: CaptureDependencies = {
     transport: request.transport,
     now,
     sleep:
       request.sleep ??
-      (milliseconds =>
-        new Promise(resolve => {
-          setTimeout(resolve, milliseconds);
-        })),
+      (milliseconds => abortableOperation.sleep(milliseconds, request.signal)),
     random: request.random ?? Math.random,
     ...(request.onProgress === undefined ? {} : {onProgress: request.onProgress}),
+    ...(request.signal === undefined ? {} : {signal: request.signal}),
   };
 
   try {
     for (let attempt = 1; attempt <= MAX_CAPTURE_ATTEMPTS; attempt += 1) {
       try {
         const rawNavaids = await captureOneCollection(dependencies);
+        abortableOperation.throwIfAborted(dependencies.signal);
         return Object.freeze({
           rawNavaids: Object.freeze(rawNavaids),
           retrievedAt: startedAt.toISOString(),
@@ -97,6 +100,12 @@ async function captureOpenAIPNavaids(
       }
     }
   } catch (error) {
+    if (request.signal?.aborted) {
+      throw abortableOperation.abortError(request.signal);
+    }
+    if (abortableOperation.isAbortError(error)) {
+      throw error;
+    }
     if (error instanceof OpenAIPNavaidCaptureError) {
       throw error;
     }
@@ -119,7 +128,9 @@ async function captureOneCollection(
   let pageNumber = 1;
 
   while (true) {
+    abortableOperation.throwIfAborted(dependencies.signal);
     const response = await requestPageWithRetry(pageNumber, dependencies);
+    abortableOperation.throwIfAborted(dependencies.signal);
     const envelope = parsePageEnvelope(response.body);
     if (envelope.page !== pageNumber || envelope.limit !== PAGE_LIMIT) {
       throw new CollectionDriftError();
@@ -189,6 +200,7 @@ async function requestPageWithRetry(
 ): Promise<OpenAIPNavaidTransportResponse> {
   const requestStartedAtMs = dependencies.now().getTime();
   for (let attempt = 1; attempt <= MAX_REQUEST_ATTEMPTS; attempt += 1) {
+    abortableOperation.throwIfAborted(dependencies.signal);
     assertElapsedCeiling(requestStartedAtMs, dependencies);
     let response: OpenAIPNavaidTransportResponse;
     try {
@@ -199,8 +211,15 @@ async function requestPageWithRetry(
         sortDesc: false,
         connectionTimeoutMs: 10_000,
         requestTimeoutMs: 60_000,
+        ...(dependencies.signal === undefined ? {} : {signal: dependencies.signal}),
       });
     } catch (error) {
+      if (dependencies.signal?.aborted) {
+        throw abortableOperation.abortError(dependencies.signal);
+      }
+      if (abortableOperation.isAbortError(error)) {
+        throw error;
+      }
       if (error instanceof OpenAIPNavaidTransportError && !error.retryable) {
         throw new OpenAIPNavaidCaptureError(
           'invalid-response',
@@ -217,6 +236,7 @@ async function requestPageWithRetry(
       continue;
     }
 
+    abortableOperation.throwIfAborted(dependencies.signal);
     assertElapsedCeiling(requestStartedAtMs, dependencies);
     if (response.status === 200) {
       return response;
@@ -267,7 +287,10 @@ async function waitBeforeRetry(
   if (elapsedMilliseconds(requestStartedAtMs, dependencies) + delayMs > MAX_ELAPSED_MS) {
     throw new Error('OpenAIP Navaid request exceeded its 5-minute elapsed ceiling.');
   }
-  await dependencies.sleep(delayMs);
+  await abortableOperation.awaitWithAbort(
+    dependencies.sleep(delayMs),
+    dependencies.signal
+  );
 }
 
 function parseRetryAfter(value: string | undefined, now: Date): number | undefined {

@@ -1,3 +1,4 @@
+import abortableOperation from '#radial/application/internal/AbortableOperation.js';
 import type OpenAIPNavaidTransport from '#radial/data-producer/internal/OpenAIPNavaidTransport.js';
 import OpenAIPNavaidTransportError from '#radial/data-producer/internal/OpenAIPNavaidTransportError.js';
 
@@ -6,6 +7,7 @@ const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
 
 function createProductionOpenAIPNavaidTransport(apiKey: string): OpenAIPNavaidTransport {
   return async request => {
+    abortableOperation.throwIfAborted(request.signal);
     const url = new URL(OPENAIP_NAVAIDS_URL);
     url.searchParams.set('page', String(request.page));
     url.searchParams.set('limit', String(request.limit));
@@ -18,6 +20,8 @@ function createProductionOpenAIPNavaidTransport(apiKey: string): OpenAIPNavaidTr
       request.connectionTimeoutMs
     );
     const requestTimer = setTimeout(() => controller.abort(), request.requestTimeoutMs);
+    const onAbort = () => controller.abort();
+    request.signal?.addEventListener('abort', onAbort, {once: true});
     try {
       const response = await fetch(url, {
         method: 'GET',
@@ -37,6 +41,9 @@ function createProductionOpenAIPNavaidTransport(apiKey: string): OpenAIPNavaidTr
         body,
       };
     } catch (error) {
+      if (request.signal?.aborted) {
+        throw abortableOperation.abortError(request.signal);
+      }
       if (error instanceof OpenAIPNavaidTransportError) {
         throw error;
       }
@@ -47,6 +54,7 @@ function createProductionOpenAIPNavaidTransport(apiKey: string): OpenAIPNavaidTr
     } finally {
       clearTimeout(connectionTimer);
       clearTimeout(requestTimer);
+      request.signal?.removeEventListener('abort', onAbort);
     }
   };
 }

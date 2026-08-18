@@ -2,6 +2,7 @@ import {createHash, randomUUID} from 'node:crypto';
 
 import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 
+import abortableOperation from '#radial/application/internal/AbortableOperation.js';
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
 import type buildNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidate.js';
 import NavaidSnapshotPublicationError from '#radial/data-producer/internal/NavaidSnapshotPublicationError.js';
@@ -21,6 +22,7 @@ type PublicationOptions = Readonly<{
   publishedAt?: () => string;
   beforeCommit?: () => void | Promise<void>;
   publicationGate?: PublicationGate;
+  signal?: AbortSignal;
 }>;
 
 type PublicationResult = Readonly<{
@@ -36,6 +38,7 @@ async function publishNavaidSnapshot(
   candidate: NavaidSnapshotCandidate,
   options: PublicationOptions = {}
 ): Promise<PublicationResult> {
+  abortableOperation.throwIfAborted(options.signal);
   try {
     validateCandidate(candidate);
   } catch (error) {
@@ -43,12 +46,14 @@ async function publishNavaidSnapshot(
       error instanceof Error ? error.message : 'Navaid Snapshot candidate is invalid.'
     );
   }
+  abortableOperation.throwIfAborted(options.signal);
   const snapshotId = options.snapshotId ?? randomUUID();
   validateUuid(snapshotId);
   const publicationGate =
     options.publicationGate ?? publicationGateRegistry.forInstance(instance);
-  return publicationGate.run(() =>
-    publishNavaidSnapshotWithinGate(instance, candidate, snapshotId, options)
+  return publicationGate.run(
+    () => publishNavaidSnapshotWithinGate(instance, candidate, snapshotId, options),
+    options.signal
   );
 }
 
@@ -58,18 +63,23 @@ async function publishNavaidSnapshotWithinGate(
   snapshotId: string,
   options: PublicationOptions
 ): Promise<PublicationResult> {
+  abortableOperation.throwIfAborted(options.signal);
   const connection = await instance.connect();
+  let commitStarted = false;
 
   try {
     await connection.run('BEGIN TRANSACTION');
     try {
+      abortableOperation.throwIfAborted(options.signal);
       const previousSnapshotId = await activeSnapshotId(connection);
-      await insertCandidateRows(connection, snapshotId, candidate);
+      await insertCandidateRows(connection, snapshotId, candidate, options.signal);
       await regenerateAirportProjections(
         connection,
         snapshotId,
-        candidate.provenance.magneticModel.referenceDate
+        candidate.provenance.magneticModel.referenceDate,
+        options.signal
       );
+      abortableOperation.throwIfAborted(options.signal);
       await verifyStoredCandidate(connection, snapshotId, candidate);
 
       const publishedAt = (options.publishedAt ?? (() => new Date().toISOString()))();
@@ -82,18 +92,21 @@ async function publishNavaidSnapshotWithinGate(
          WHERE singleton`,
         [snapshotId]
       );
+      abortableOperation.throwIfAborted(options.signal);
       await verifyActiveJoins(connection, snapshotId, candidate);
       if (previousSnapshotId !== null) {
-        await removeSnapshot(connection, previousSnapshotId);
+        await removeSnapshot(connection, previousSnapshotId, options.signal);
       }
       await verifyNoCrossSnapshotReferences(connection);
       await options.beforeCommit?.();
+      abortableOperation.throwIfAborted(options.signal);
+      commitStarted = true;
       await connection.run('COMMIT');
     } catch (publicationError) {
       try {
         await connection.run('ROLLBACK');
         throw new NavaidSnapshotPublicationError(
-          true,
+          !commitStarted,
           publicationError instanceof Error
             ? publicationError.message
             : 'Navaid Snapshot publication failed.'
@@ -474,9 +487,11 @@ async function insertSnapshotMetadata(
 async function insertCandidateRows(
   connection: DuckDBConnection,
   snapshotId: string,
-  candidate: NavaidSnapshotCandidate
+  candidate: NavaidSnapshotCandidate,
+  signal?: AbortSignal
 ): Promise<void> {
   for (const raw of candidate.rawNavaids) {
+    abortableOperation.throwIfAborted(signal);
     await connection.run(
       `INSERT INTO radial_producer.raw_navaids
        VALUES (CAST(? AS UUID), ?, CAST(? AS JSON), ?)`,
@@ -484,6 +499,7 @@ async function insertCandidateRows(
     );
   }
   for (const navaid of candidate.plannerNavaids) {
+    abortableOperation.throwIfAborted(signal);
     await connection.run(
       `INSERT INTO radial_producer.planner_navaids VALUES (
         CAST(? AS UUID), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS DATE)
@@ -508,12 +524,14 @@ async function insertCandidateRows(
     );
   }
   for (const exclusion of candidate.exclusions) {
+    abortableOperation.throwIfAborted(signal);
     await connection.run(
       `INSERT INTO radial_producer.navaid_exclusions VALUES (CAST(? AS UUID), ?, ?)`,
       [snapshotId, exclusion.sourceRecordId, exclusion.reason]
     );
   }
   for (const audit of candidate.facilityVariationAudits) {
+    abortableOperation.throwIfAborted(signal);
     await connection.run(
       `INSERT INTO radial_producer.facility_variation_audits
        VALUES (CAST(? AS UUID), ?, ?, ?, CAST(? AS JSON))`,
@@ -531,13 +549,15 @@ async function insertCandidateRows(
 async function regenerateAirportProjections(
   connection: DuckDBConnection,
   snapshotId: string,
-  magneticReferenceDate: string
+  magneticReferenceDate: string,
+  signal?: AbortSignal
 ): Promise<void> {
   const cachedAirports = await connection.runAndReadAll(
     `SELECT icao, database_id, name, longitude, latitude
      FROM radial_producer.cached_airports ORDER BY icao`
   );
   for (const airport of cachedAirports.getRowObjectsJS()) {
+    abortableOperation.throwIfAborted(signal);
     const icao = airport['icao'];
     const databaseId = airport['database_id'];
     const name = airport['name'];
@@ -700,7 +720,8 @@ async function activeSnapshotId(connection: DuckDBConnection): Promise<string | 
 
 async function removeSnapshot(
   connection: DuckDBConnection,
-  snapshotId: string
+  snapshotId: string,
+  signal?: AbortSignal
 ): Promise<void> {
   for (const table of [
     'raw_navaids',
@@ -709,6 +730,7 @@ async function removeSnapshot(
     'facility_variation_audits',
     'planner_airports',
   ]) {
+    abortableOperation.throwIfAborted(signal);
     await connection.run(
       `DELETE FROM radial_producer.${table} WHERE snapshot_id = CAST(? AS UUID)`,
       [snapshotId]
