@@ -15,12 +15,22 @@ const {localMagneticDeclinationFromWmm2025, wmm2025Provenance} = Wmm2025;
 
 type NavaidSnapshotCandidate = ReturnType<typeof buildNavaidSnapshotCandidate>;
 
+type NavaidPublicationBoundary =
+  | 'before-transaction'
+  | 'before-transaction-start'
+  | 'transaction-started'
+  | 'candidate-write'
+  | 'candidate-verified'
+  | 'active-marker-changed'
+  | 'before-commit';
+
 const MAXIMUM_FACILITY_MATCH_DISTANCE_NM = 1 + 0.001 / 1852;
 
 type PublicationOptions = Readonly<{
   snapshotId?: string;
   publishedAt?: () => string;
   beforeCommit?: () => void | Promise<void>;
+  onBoundary?: (boundary: NavaidPublicationBoundary) => void | Promise<void>;
   publicationGate?: PublicationGate;
   signal?: AbortSignal;
 }>;
@@ -64,15 +74,42 @@ async function publishNavaidSnapshotWithinGate(
   options: PublicationOptions
 ): Promise<PublicationResult> {
   abortableOperation.throwIfAborted(options.signal);
-  const connection = await instance.connect();
+  let connection: DuckDBConnection | undefined;
+  try {
+    await options.onBoundary?.('before-transaction');
+    connection = await instance.connect();
+    await connection.run('LOAD spatial');
+  } catch (error) {
+    connection?.closeSync();
+    if (abortableOperation.isAbortError(error)) {
+      throw error;
+    }
+    throw new NavaidSnapshotPublicationError(
+      true,
+      error instanceof Error ? error.message : 'Navaid Snapshot publication failed.'
+    );
+  }
+  if (connection === undefined) {
+    throw new NavaidSnapshotPublicationError(true);
+  }
   let commitStarted = false;
+  let transactionStarted = false;
 
   try {
-    await connection.run('BEGIN TRANSACTION');
     try {
+      await options.onBoundary?.('before-transaction-start');
+      await connection.run('BEGIN TRANSACTION');
+      transactionStarted = true;
+      await options.onBoundary?.('transaction-started');
       abortableOperation.throwIfAborted(options.signal);
       const previousSnapshotId = await activeSnapshotId(connection);
-      await insertCandidateRows(connection, snapshotId, candidate, options.signal);
+      await insertCandidateRows(
+        connection,
+        snapshotId,
+        candidate,
+        options.signal,
+        options.onBoundary
+      );
       await regenerateAirportProjections(
         connection,
         snapshotId,
@@ -81,6 +118,7 @@ async function publishNavaidSnapshotWithinGate(
       );
       abortableOperation.throwIfAborted(options.signal);
       await verifyStoredCandidate(connection, snapshotId, candidate);
+      await options.onBoundary?.('candidate-verified');
 
       const publishedAt = (options.publishedAt ?? (() => new Date().toISOString()))();
       validateTimestamp(publishedAt, 'publishedAt');
@@ -92,6 +130,7 @@ async function publishNavaidSnapshotWithinGate(
          WHERE singleton`,
         [snapshotId]
       );
+      await options.onBoundary?.('active-marker-changed');
       abortableOperation.throwIfAborted(options.signal);
       await verifyActiveJoins(connection, snapshotId, candidate);
       if (previousSnapshotId !== null) {
@@ -99,10 +138,19 @@ async function publishNavaidSnapshotWithinGate(
       }
       await verifyNoCrossSnapshotReferences(connection);
       await options.beforeCommit?.();
+      await options.onBoundary?.('before-commit');
       abortableOperation.throwIfAborted(options.signal);
       commitStarted = true;
       await connection.run('COMMIT');
     } catch (publicationError) {
+      if (!transactionStarted) {
+        throw new NavaidSnapshotPublicationError(
+          true,
+          publicationError instanceof Error
+            ? publicationError.message
+            : 'Navaid Snapshot publication failed.'
+        );
+      }
       try {
         await connection.run('ROLLBACK');
         throw new NavaidSnapshotPublicationError(
@@ -488,7 +536,8 @@ async function insertCandidateRows(
   connection: DuckDBConnection,
   snapshotId: string,
   candidate: NavaidSnapshotCandidate,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onBoundary?: PublicationOptions['onBoundary']
 ): Promise<void> {
   for (const raw of candidate.rawNavaids) {
     abortableOperation.throwIfAborted(signal);
@@ -497,6 +546,7 @@ async function insertCandidateRows(
        VALUES (CAST(? AS UUID), ?, CAST(? AS JSON), ?)`,
       [snapshotId, raw.sourceRecordId, raw.canonicalRecord, raw.recordChecksum]
     );
+    await onBoundary?.('candidate-write');
   }
   for (const navaid of candidate.plannerNavaids) {
     abortableOperation.throwIfAborted(signal);
@@ -522,6 +572,7 @@ async function insertCandidateRows(
         navaid.facilityVariationEffectiveDate,
       ]
     );
+    await onBoundary?.('candidate-write');
   }
   for (const exclusion of candidate.exclusions) {
     abortableOperation.throwIfAborted(signal);
@@ -529,6 +580,7 @@ async function insertCandidateRows(
       `INSERT INTO radial_producer.navaid_exclusions VALUES (CAST(? AS UUID), ?, ?)`,
       [snapshotId, exclusion.sourceRecordId, exclusion.reason]
     );
+    await onBoundary?.('candidate-write');
   }
   for (const audit of candidate.facilityVariationAudits) {
     abortableOperation.throwIfAborted(signal);
@@ -543,6 +595,7 @@ async function insertCandidateRows(
         canonicalizeJson(audit),
       ]
     );
+    await onBoundary?.('candidate-write');
   }
 }
 
