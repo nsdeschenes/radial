@@ -86,10 +86,14 @@ jobs:
         run: nub run test
 
   coverage:
-    name: Diagnostic coverage
+    name: Diagnostic coverage (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
 
     steps:
       - name: Checkout repository
@@ -102,4 +106,4 @@ jobs:
         run: nub install --frozen-lockfile
 
       - name: Report percentage coverage without an acceptance threshold
-        run: nub run test:coverage
+        run: nub run test:coverage --shard=${{ matrix.shard }}/4
