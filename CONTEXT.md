@@ -47,3 +47,11 @@ _Avoid_: VOR when referring to the whole family
 **Fallback Navaid**:
 An NDB admitted only when no route plan using VOR-family navaids can be found.
 _Avoid_: Secondary waypoint
+
+**Navaid Snapshot**:
+The complete set of OpenAIP Navaid records imported together and committed atomically. It is created when a database has no successful Navaid Snapshot and replaced only by an explicit reload.
+_Avoid_: Navigation-point cache, startup refresh
+
+**Cached Airport**:
+An airport record fetched from OpenAIP for a requested departure or arrival ICAO and retained for later Route Plans. An explicit reload replaces it only after the replacement has been fetched and validated successfully.
+_Avoid_: Airport Snapshot
