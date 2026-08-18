@@ -120,6 +120,23 @@ type RoutePlanningFailure =
   | InvalidRequestFailure
   | {code: 'airport-not-found'; role: 'departure' | 'arrival'; normalizedIcao: string}
   | {code: 'airport-ambiguous'; role: 'departure' | 'arrival'; normalizedIcao: string}
+  | {
+      code: 'airport-resolution-failed';
+      role: 'departure' | 'arrival';
+      normalizedIcao: string;
+      reason:
+        | 'credentials-missing'
+        | 'mismatched'
+        | 'publication-failed'
+        | 'source-invalid'
+        | 'source-unavailable'
+        | 'unusable';
+    }
+  | {
+      code: 'airport-cache-corrupt';
+      role: 'departure' | 'arrival';
+      normalizedIcao: string;
+    }
   | {code: 'database-query-failed'; operation: string}
   | {
       code: 'no-route';

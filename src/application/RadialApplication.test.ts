@@ -485,6 +485,9 @@ function bootstrapDependencies(onOpenAipRequest: () => void) {
         }),
       };
     },
+    async listOpenAIPAirports({page}: {page: number}) {
+      return {page, totalPages: 1, items: []};
+    },
     async acquireFAANasrCycles() {
       return [nasrCycle];
     },
