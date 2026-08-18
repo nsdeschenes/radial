@@ -64,7 +64,7 @@ jobs:
       - name: Typecheck
         run: nub run typecheck
 
-  test:
+  acceptance:
     name: Deterministic acceptance evidence
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -82,15 +82,10 @@ jobs:
       - name: Run acceptance tooling evidence
         run: nub run test:acceptance
 
-  coverage:
-    name: Diagnostic coverage (shard ${{ matrix.shard }}/4)
+  test:
+    name: Deterministic test suite
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
 
     steps:
       - name: Checkout repository
@@ -102,5 +97,5 @@ jobs:
       - name: Install dependencies
         run: nub install --frozen-lockfile
 
-      - name: Report percentage coverage without an acceptance threshold
-        run: nub run test:coverage --shard=${{ matrix.shard }}/4
+      - name: Run complete deterministic test suite
+        run: nub run test
