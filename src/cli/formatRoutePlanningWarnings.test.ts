@@ -1,6 +1,7 @@
 import {expect, test} from 'vitest';
 
 import formatRoutePlanningWarnings from '#radial/cli/formatRoutePlanningWarnings.js';
+import formatRoutePlanningWarningSummary from '#radial/cli/formatRoutePlanningWarningSummary.js';
 import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
 
 test('renders ordered warnings separately with their Route Leg endpoint context', () => {
@@ -44,26 +45,55 @@ test('renders ordered warnings separately with their Route Leg endpoint context'
   };
 
   expect(formatRoutePlanningWarnings(success)).toBe(
-    'Warning: NDB fallback was used after the VOR-family search was exhausted.\n' +
-      'Warning: Route Leg 1 departure magnetic course is unavailable at CYYZ because Local Magnetic Declination is unavailable.\n' +
-      'Warning: Route Leg 1 arrival VOR Guidance is unavailable at YTP because Facility Variation of Record is unavailable.\n' +
-      'Warning: Route Leg 2 departure VOR Guidance at YTP uses Facility Variation of Record without an effective date.\n'
+    'Warnings (4)\n' +
+      '\n' +
+      'NDB fallback\n' +
+      '  The VOR-family search was exhausted. The route uses NDBs instead.\n' +
+      '  Applies to the whole route.\n' +
+      '\n' +
+      'Magnetic course unavailable\n' +
+      '  Local Magnetic Declination is missing, so magnetic courses could not be calculated.\n' +
+      '  Leg 1: CYYZ departure\n' +
+      '\n' +
+      'VOR guidance unavailable\n' +
+      '  Facility Variation of Record is missing, so VOR guidance could not be calculated.\n' +
+      '  Leg 1: YTP arrival\n' +
+      '\n' +
+      'Facility variation date unavailable\n' +
+      '  VOR guidance uses Facility Variation of Record without an effective date.\n' +
+      '  Leg 2: YTP departure\n'
   );
 });
 
 test('renders no stderr text when a successful Route Plan has no warnings', () => {
+  const success: RoutePlannerTypes['RoutePlanningSuccess'] = {
+    plan: {
+      totalDistanceNm: 0,
+      searchMode: 'vor-family',
+      routePoints: [],
+      routeLegs: [],
+      magneticReference: null,
+    },
+    warnings: [],
+  };
+
+  expect(formatRoutePlanningWarningSummary(success)).toBe('');
+  expect(formatRoutePlanningWarnings(success)).toBe('');
+});
+
+test('summarizes a single warning with the details flag', () => {
   expect(
-    formatRoutePlanningWarnings({
+    formatRoutePlanningWarningSummary({
       plan: {
         totalDistanceNm: 0,
-        searchMode: 'vor-family',
+        searchMode: 'ndb-fallback',
         routePoints: [],
         routeLegs: [],
         magneticReference: null,
       },
-      warnings: [],
+      warnings: [{code: 'ndb-fallback-used'}],
     })
-  ).toBe('');
+  ).toBe('Route completed with 1 warning. Re-run with --warnings to view details.\n');
 });
 
 function airport(
