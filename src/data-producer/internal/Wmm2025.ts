@@ -137,6 +137,7 @@ function localMagneticDeclinationFromWmm2025(request: DeclinationRequest): numbe
   if (field.horizontalIntensityNt < WMM2025_BLACKOUT_HORIZONTAL_INTENSITY_NT) {
     return null;
   }
+
   return normalizeDegrees(field.declinationDegEast);
 }
 
@@ -145,6 +146,7 @@ function noaaDecimalYearFromUtcDate(referenceDate: string): number {
   if (match === null) {
     throw new Error('WMM2025 reference date must be an ISO UTC date.');
   }
+
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
@@ -153,12 +155,14 @@ function noaaDecimalYearFromUtcDate(referenceDate: string): number {
   if (canonicalDate !== referenceDate) {
     throw new Error('WMM2025 reference date must be an ISO UTC date.');
   }
+
   const yearStart = Date.UTC(year, 0, 1);
   const nextYearStart = Date.UTC(year + 1, 0, 1);
   const decimalYear = year + (timestamp - yearStart) / (nextYearStart - yearStart);
   if (decimalYear < WMM2025_EPOCH || decimalYear >= WMM2025_END) {
     throw new Error('WMM2025 reference date must be in [2025.0, 2030.0).');
   }
+
   return decimalYear;
 }
 
@@ -197,6 +201,7 @@ function calculateField(decimalYear: number, latitude: number, longitude: number
   for (let degree = 1; degree <= WMM2025_MAX_DEGREE; degree += 1) {
     radiusPowers[degree] = valueAt(radiusPowers, degree - 1) * radiusRatio;
   }
+
   for (let order = 2; order <= WMM2025_MAX_DEGREE; order += 1) {
     cosineOrders[order] =
       valueAt(cosineOrders, order - 1) * valueAt(cosineOrders, 1) -
@@ -231,6 +236,7 @@ function calculateField(decimalYear: number, latitude: number, longitude: number
         timedH * valueAt(cosineOrders, coefficient.order)) *
       valueAt(polynomials, index);
   }
+
   sphericalEast =
     Math.abs(cosGeocentricLatitude) > 1e-10
       ? sphericalEast / cosGeocentricLatitude
@@ -253,6 +259,7 @@ function calculateField(decimalYear: number, latitude: number, longitude: number
   ) {
     throw new Error('WMM2025 calculation produced invalid arithmetic.');
   }
+
   return {horizontalIntensityNt, declinationDegEast};
 }
 
@@ -321,6 +328,7 @@ function associatedLegendreFunctions(sinLatitude: number) {
         -valueAt(derivatives, index) * valueAt(schmidtNormalization, index);
     }
   }
+
   return {polynomials, derivatives};
 }
 
@@ -342,6 +350,7 @@ function calculatePolarEast(
     if (coefficient === undefined) {
       throw new Error('WMM2025 coefficient set is incomplete.');
     }
+
     const nextZonalNormalization = zonalNormalization * ((2 * degree - 1) / degree);
     const sectoralNormalization =
       nextZonalNormalization * Math.sqrt((degree * 2) / (degree + 1));
@@ -356,6 +365,7 @@ function calculatePolarEast(
       polynomialTwoDegreesBack = polynomialPrevious;
       polynomialPrevious = polynomial;
     }
+
     const timedG = coefficient.mainG + yearOffset * coefficient.secularG;
     const timedH = coefficient.mainH + yearOffset * coefficient.secularH;
     east +=
@@ -365,6 +375,7 @@ function calculatePolarEast(
       sectoralNormalization;
     zonalNormalization = nextZonalNormalization;
   }
+
   return east;
 }
 
@@ -375,15 +386,18 @@ function parseCoefficients(): readonly Coefficient[] {
   if (embeddedChecksum !== WMM2025_COEFFICIENT_CHECKSUM) {
     throw new Error('WMM2025 coefficients do not match the pinned checksum.');
   }
+
   const coefficients: Coefficient[] = [];
   for (const line of WMM2025_COEFFICIENTS.split('\n').slice(1)) {
     if (line.startsWith('9999')) {
       break;
     }
+
     const values = line.trim().split(/\s+/).map(Number);
     if (values.length !== 6 || values.some(value => !Number.isFinite(value))) {
       throw new Error('WMM2025 coefficient set is invalid.');
     }
+
     coefficients.push({
       degree: requiredValue(values, 0),
       order: requiredValue(values, 1),
@@ -393,9 +407,11 @@ function parseCoefficients(): readonly Coefficient[] {
       secularH: requiredValue(values, 5),
     });
   }
+
   if (coefficients.length !== 90) {
     throw new Error('WMM2025 coefficient set is incomplete.');
   }
+
   return Object.freeze(coefficients);
 }
 
@@ -403,9 +419,11 @@ function validateCoordinates(latitude: number, longitude: number): void {
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
     throw new Error('WMM2025 coordinates must be finite WGS84 degrees.');
   }
+
   if (latitude < -90 || latitude > 90) {
     throw new Error('WMM2025 latitude must be in [-90, 90].');
   }
+
   if (longitude < -180 || longitude >= 180) {
     throw new Error('WMM2025 longitude must be in [-180, 180).');
   }
@@ -428,6 +446,7 @@ function requiredValue(values: readonly number[], index: number): number {
   if (value === undefined) {
     throw new Error('WMM2025 calculation accessed incomplete model data.');
   }
+
   return value;
 }
 

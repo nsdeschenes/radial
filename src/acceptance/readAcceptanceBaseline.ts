@@ -101,6 +101,7 @@ const acceptanceBaseline = z
         path: ['benchmark', 'medianMs'],
       });
     }
+
     if (baseline.benchmark.worstMs !== Math.max(...baseline.benchmark.samplesMs)) {
       context.addIssue({
         code: 'custom',

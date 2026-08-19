@@ -26,6 +26,7 @@ function deriveWarnings(
           endpoint,
         });
       }
+
       if (routePoint.kind === 'vor-family' && vorGuidance === null) {
         vorGuidanceWarnings.push({
           code: 'vor-guidance-unavailable',
@@ -33,6 +34,7 @@ function deriveWarnings(
           endpoint,
         });
       }
+
       if (
         routePoint.kind === 'vor-family' &&
         routePoint.facilityVariation !== null &&

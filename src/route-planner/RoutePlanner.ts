@@ -90,6 +90,7 @@ class DuckDbRoutePlanner implements RoutePlanner {
       if (!departure.ok) {
         return departure;
       }
+
       const arrival = resolveAirport(
         airportResolution.arrival,
         'arrival',
@@ -114,6 +115,7 @@ class DuckDbRoutePlanner implements RoutePlanner {
             : 'find-ndb-fallback-route'
         );
       }
+
       if (searchResult.status === 'exhausted') {
         return {
           ok: false,
@@ -135,6 +137,7 @@ class DuckDbRoutePlanner implements RoutePlanner {
         if (legDeparture === undefined || legArrival === undefined) {
           throw new Error('Selected Route Plan continuity invariant failed.');
         }
+
         return navigation.createRouteLeg(legDeparture, legArrival, distanceNm);
       });
 
@@ -269,6 +272,7 @@ function resolveAirport(
   if (matches.length === 0) {
     return {ok: false, failure: {code: 'airport-not-found', role, normalizedIcao}};
   }
+
   if (matches.length > 1) {
     return {ok: false, failure: {code: 'airport-ambiguous', role, normalizedIcao}};
   }
@@ -277,6 +281,7 @@ function resolveAirport(
   if (airport === undefined) {
     throw new Error('Airport resolution invariant failed.');
   }
+
   return {ok: true, value: airport};
 }
 

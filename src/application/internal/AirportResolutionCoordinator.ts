@@ -36,6 +36,7 @@ class AirportResolutionCoordinator {
     if (this.#isClosed) {
       return Promise.reject(new Error('The Airport coordinator has been closed.'));
     }
+
     if (signal?.aborted) {
       return Promise.reject(abortableOperation.abortError(signal));
     }
@@ -45,6 +46,7 @@ class AirportResolutionCoordinator {
       leaseWork = new Map();
       this.#ordinaryWork.set(leaseToken, leaseWork);
     }
+
     let work = leaseWork.get(normalizedIcao);
     if (work === undefined) {
       const createdWork = this.#enqueue(normalizedIcao, () =>
@@ -63,6 +65,7 @@ class AirportResolutionCoordinator {
       );
       work = createdWork;
     }
+
     return abortableOperation.awaitWithAbort(work, signal);
   }
 
@@ -75,9 +78,11 @@ class AirportResolutionCoordinator {
     if (this.#isClosed) {
       return Promise.reject(new Error('The Airport coordinator has been closed.'));
     }
+
     if (signal?.aborted) {
       return Promise.reject(abortableOperation.abortError(signal));
     }
+
     const work = this.#enqueue(
       request.icao,
       () =>
@@ -101,10 +106,12 @@ class AirportResolutionCoordinator {
     if (this.#isClosed) {
       return;
     }
+
     this.#isClosed = true;
     for (const queue of this.#queues.values()) {
       queue.close();
     }
+
     this.#queues.clear();
     this.#ordinaryWork.clear();
   }
@@ -124,6 +131,7 @@ class AirportResolutionCoordinator {
       queue = new FifoOperationCoordinator();
       this.#queues.set(normalizedIcao, queue);
     }
+
     const work = queue.run(operation, signal, onQueued);
     void work.then(
       () => this.#deleteQueue(normalizedIcao, queue),

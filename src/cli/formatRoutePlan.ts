@@ -183,6 +183,7 @@ function formatTable<Row>(
             if (column === undefined || width === undefined) {
               throw new Error('Table column invariant failed.');
             }
+
             return column.align === 'right' ? cell.padStart(width) : cell.padEnd(width);
           })
           .join('  ')

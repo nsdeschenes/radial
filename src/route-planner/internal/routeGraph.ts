@@ -36,6 +36,7 @@ class IncrementalRouteGraph {
           `Route graph candidate was admitted more than once: ${databaseId}`
         );
       }
+
       this.#candidateByDatabaseId.set(databaseId, candidate);
       this.#adjacencyByDatabaseId.set(databaseId, []);
     }
@@ -47,6 +48,7 @@ class IncrementalRouteGraph {
           `Route graph candidate pair was compared more than once: ${pairKey}`
         );
       }
+
       this.#comparedPairKeys.add(pairKey);
       const first = this.#candidateByDatabaseId.get(leg.firstDatabaseId);
       const second = this.#candidateByDatabaseId.get(leg.secondDatabaseId);
@@ -135,6 +137,7 @@ class IncrementalRouteGraph {
         if (adjacentCandidate === undefined) {
           continue;
         }
+
         const extendedRoute: SearchRoute = {
           currentDatabaseId: adjacent.databaseId,
           navaids: [...route.navaids, adjacentCandidate.routePoint],
@@ -164,6 +167,7 @@ function addRouteIfNondominated(
   if (routes.some(existingRoute => dominates(existingRoute, route))) {
     return;
   }
+
   routesByDatabaseId.set(
     route.currentDatabaseId,
     routes.filter(existingRoute => !dominates(route, existingRoute)).concat(route)
@@ -186,6 +190,7 @@ function dominates(first: SearchRoute, second: SearchRoute): boolean {
   ) {
     return false;
   }
+
   return (
     first.legDistancesNm.length < second.legDistancesNm.length ||
     compareNavaidSequences(first.navaids, second.navaids) <= 0
@@ -210,6 +215,7 @@ function compareNavaidSequences(
     if (firstNavaid === undefined || secondNavaid === undefined) {
       continue;
     }
+
     const identityComparison =
       compareString(firstNavaid.identifier, secondNavaid.identifier) ||
       compareString(firstNavaid.databaseId, secondNavaid.databaseId);
@@ -217,6 +223,7 @@ function compareNavaidSequences(
       return identityComparison;
     }
   }
+
   return compareNumber(first.length, second.length);
 }
 

@@ -56,6 +56,7 @@ async function runRoutePlannerBenchmark({
   if (medianMs === undefined) {
     throw new Error('Benchmark median invariant failed.');
   }
+
   const worstMs = Math.max(...samplesMs);
   const machine = currentMachineDetails();
   const representativeMachine =
@@ -106,6 +107,7 @@ async function measurePlanningCall(
       `Benchmark route planning failed: ${JSON.stringify(result.failure)}.`
     );
   }
+
   verifyAcceptanceRoutePlan(result.value.plan, baseline);
   return durationMs;
 }
@@ -119,6 +121,7 @@ async function readDuckDbVersion(snapshotPath: string): Promise<string> {
     if (typeof version !== 'string') {
       throw new Error('DuckDB version query returned an invalid value.');
     }
+
     return version;
   } finally {
     connection.closeSync();

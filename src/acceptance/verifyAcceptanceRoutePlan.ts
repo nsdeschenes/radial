@@ -26,11 +26,13 @@ function verifyAcceptanceRoutePlan(
       'Acceptance Route Plan airports do not match the normalized baseline route.'
     );
   }
+
   if (plan.searchMode !== baseline.route.searchMode) {
     throw new Error(
       `Route Search Mode mismatch: expected ${baseline.route.searchMode}, received ${plan.searchMode}.`
     );
   }
+
   if (
     JSON.stringify(plan.magneticReference) !==
     JSON.stringify(baseline.snapshot.magneticReference)
@@ -47,6 +49,7 @@ function verifyAcceptanceRoutePlan(
   if (JSON.stringify(orderedNavaids) !== JSON.stringify(baseline.route.orderedNavaids)) {
     throw new Error('Ordered Navaid identities do not match the baseline.');
   }
+
   if (plan.routeLegs.length !== plan.routePoints.length - 1) {
     throw new Error(
       'Route Plan does not contain exactly one Route Leg per adjacent pair.'
@@ -61,9 +64,11 @@ function verifyAcceptanceRoutePlan(
     ) {
       throw new Error(`Route Leg ${index + 1} is not continuous with its Route Points.`);
     }
+
     verifyNavigableRouteLeg(leg, index + 1);
     summedDistanceNm += leg.distanceNm;
   }
+
   if (summedDistanceNm !== plan.totalDistanceNm) {
     throw new Error('Route Plan total does not equal the exact ordered Route Leg sum.');
   }

@@ -47,11 +47,13 @@ class JsonSyntaxInspector {
     if (this.#consume('}')) {
       return;
     }
+
     while (true) {
       const key = this.#readString();
       if (keys.has(key)) {
         throw new SyntaxError('JSON object contained a duplicate key.');
       }
+
       keys.add(key);
       this.#skipWhitespace();
       this.#expect(':');
@@ -61,6 +63,7 @@ class JsonSyntaxInspector {
       if (this.#consume('}')) {
         return;
       }
+
       this.#expect(',');
       this.#skipWhitespace();
     }
@@ -72,12 +75,14 @@ class JsonSyntaxInspector {
     if (this.#consume(']')) {
       return;
     }
+
     while (true) {
       this.#inspectValue();
       this.#skipWhitespace();
       if (this.#consume(']')) {
         return;
       }
+
       this.#expect(',');
       this.#skipWhitespace();
     }
@@ -92,14 +97,17 @@ class JsonSyntaxInspector {
         this.#position += 1;
         return JSON.parse(this.#source.slice(start, this.#position)) as string;
       }
+
       if (character === '\\') {
         this.#position += 1;
         if (this.#source[this.#position] === 'u') {
           this.#position += 4;
         }
       }
+
       this.#position += 1;
     }
+
     throw new SyntaxError('Unterminated JSON string.');
   }
 
@@ -107,6 +115,7 @@ class JsonSyntaxInspector {
     if (this.#source.slice(this.#position, this.#position + literal.length) !== literal) {
       throw new SyntaxError('Invalid JSON literal.');
     }
+
     this.#position += literal.length;
   }
 
@@ -117,6 +126,7 @@ class JsonSyntaxInspector {
     if (match === null) {
       throw new SyntaxError('Invalid JSON value.');
     }
+
     this.#position += match[0].length;
   }
 
@@ -136,6 +146,7 @@ class JsonSyntaxInspector {
     if (this.#source[this.#position] !== character) {
       return false;
     }
+
     this.#position += 1;
     return true;
   }

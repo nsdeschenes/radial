@@ -24,6 +24,7 @@ async function findRoute(
   } catch {
     return {status: 'failed', phase: 'vor-family'};
   }
+
   if (!Number.isFinite(directDistanceNm) || directDistanceNm < 0) {
     throw new Error(`Route Search received invalid direct distance: ${directDistanceNm}`);
   }
@@ -43,6 +44,7 @@ async function findRoute(
   if (vorFamilySearch.status === 'failed') {
     return {status: 'failed', phase: 'vor-family'};
   }
+
   if (vorFamilySearch.route !== undefined) {
     return {
       status: 'found',
@@ -63,6 +65,7 @@ async function findRoute(
   if (ndbSearch.status === 'failed') {
     return {status: 'failed', phase: 'ndb-fallback'};
   }
+
   if (ndbSearch.route !== undefined) {
     return {
       status: 'found',
@@ -108,6 +111,7 @@ async function searchProgressively(
     } catch {
       return {status: 'failed'};
     }
+
     validateMeasuredCandidates(family, measuredCandidates);
     const newlyAdmittedCandidates = discoverySession.admitMeasuredCandidates(
       measuredCandidates,
@@ -123,6 +127,7 @@ async function searchProgressively(
       } catch {
         return {status: 'failed'};
       }
+
       validateNewPairDistances(
         newlyAdmittedCandidates,
         admittedDatabaseIds,
@@ -146,11 +151,13 @@ function validateMeasuredCandidates(
     if (databaseId.trim() === '') {
       throw new Error('Route Search received a candidate with a blank database ID.');
     }
+
     if (kind !== family) {
       throw new Error(
         `Route Search received a ${kind} candidate during ${family} discovery: ${databaseId}`
       );
     }
+
     if (
       !Number.isFinite(candidate.departureDistanceNm) ||
       candidate.departureDistanceNm < 0 ||
@@ -209,15 +216,18 @@ function validateNewPairDistances(
         `Route Search received an unexpected candidate pair: ${firstDatabaseId}, ${secondDatabaseId}`
       );
     }
+
     if (!Number.isFinite(distanceNm) || distanceNm < 0) {
       throw new Error(
         `Route Search received an invalid candidate-pair distance: ${firstDatabaseId}, ${secondDatabaseId}`
       );
     }
+
     const key = pairKey(firstDatabaseId, secondDatabaseId);
     if (measuredPairKeys.has(key)) {
       throw new Error(`Route Search received a duplicate candidate pair: ${key}`);
     }
+
     measuredPairKeys.add(key);
   }
 

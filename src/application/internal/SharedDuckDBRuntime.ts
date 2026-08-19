@@ -72,6 +72,7 @@ class ActivityGate {
     if (this.#activeOperationCount === 0) {
       return;
     }
+
     await new Promise<void>(resolve => {
       this.#resolveDrain = resolve;
     });
@@ -107,6 +108,7 @@ class ApplicationPlanner implements RoutePlanner {
         new Error('Cannot plan a route after the Route Planner has been disposed.')
       );
     }
+
     const validatedRequest = validation.validateRoutePlanningRequest(request);
     return validatedRequest.ok
       ? this.#plan(validatedRequest.value)
@@ -229,6 +231,7 @@ class SharedDuckDBRuntime {
     } catch (error) {
       failures.push(error);
     }
+
     for (const close of [
       () => this.#airportResolutionCoordinator.close(),
       () => this.#publicationGate.close(),
@@ -241,6 +244,7 @@ class SharedDuckDBRuntime {
         failures.push(error);
       }
     }
+
     this.#instance = undefined;
     this.#instancePromise = undefined;
     throwDisposalFailures(failures);
@@ -323,6 +327,7 @@ class DuckDBRuntimeLease {
         },
       });
     }
+
     return this.#activityGate.run(async () => {
       abortableOperation.throwIfAborted(request.signal);
       try {
@@ -334,6 +339,7 @@ class DuckDBRuntimeLease {
         if (request.signal?.aborted) {
           throw abortableOperation.abortError(request.signal);
         }
+
         return {
           ok: false,
           failure: databaseFailure(
@@ -363,6 +369,7 @@ class DuckDBRuntimeLease {
         },
       });
     }
+
     if (request.openAipApiKey.trim() === '') {
       return Promise.resolve({
         ok: false,
@@ -387,6 +394,7 @@ class DuckDBRuntimeLease {
         if (request.signal?.aborted) {
           throw abortableOperation.abortError(request.signal);
         }
+
         return {
           ok: false,
           failure: databaseFailure(
@@ -418,6 +426,7 @@ class DuckDBRuntimeLease {
             ),
           };
         }
+
         return {
           ok: false,
           failure: {
@@ -426,6 +435,7 @@ class DuckDBRuntimeLease {
           },
         };
       }
+
       if (!bootstrapped.ok) {
         return bootstrapped;
       }
@@ -487,6 +497,7 @@ class DuckDBRuntimeLease {
           };
         }
       }
+
       abortableOperation.throwIfAborted(signal);
       return planner.planRoute(request);
     });
@@ -498,15 +509,18 @@ class DuckDBRuntimeLease {
     for (const planner of this.#planners) {
       planner.stop();
     }
+
     try {
       await this.#activityGate.whenIdle();
     } catch (error) {
       failures.push(error);
     }
+
     const planners = [...this.#planners];
     for (const planner of planners) {
       planner.stop();
     }
+
     const plannerDisposals = await Promise.allSettled(
       planners.map(planner => planner[Symbol.asyncDispose]())
     );
@@ -515,11 +529,13 @@ class DuckDBRuntimeLease {
         failures.push(result.reason);
       }
     }
+
     try {
       await releaseSharedDuckDBRuntime(this.#runtime);
     } catch (error) {
       failures.push(error);
     }
+
     throwDisposalFailures(failures);
   }
 }
@@ -537,8 +553,10 @@ async function acquireSharedDuckDBRuntime(
       } catch {
         // The disposing lease reports close failures; a later acquisition gets a new core.
       }
+
       return acquireSharedDuckDBRuntime(config, dependencies);
     }
+
     current.referenceCount += 1;
     return new DuckDBRuntimeLease(current.runtime, config, dependencies);
   }
@@ -566,6 +584,7 @@ async function releaseSharedDuckDBRuntime(runtime: SharedDuckDBRuntime): Promise
       }
     })();
   }
+
   await current.closing;
 }
 
@@ -586,6 +605,7 @@ async function canonicalizeDatabasePath(databasePath: string): Promise<string> {
     if (parentPath === absolutePath) {
       throw error;
     }
+
     return join(await canonicalizeDatabasePath(parentPath), basename(absolutePath));
   }
 }
@@ -605,6 +625,7 @@ function databaseFailure(
       activeDataPreserved: true,
     };
   }
+
   return {
     code: 'DATA_DATABASE_UNAVAILABLE',
     summary: 'The configured database is unavailable.',
@@ -651,6 +672,7 @@ function throwDisposalFailures(failures: readonly unknown[]): void {
   if (failures.length === 1) {
     throw failures[0];
   }
+
   if (failures.length > 1) {
     throw new AggregateError(failures, 'DuckDB runtime disposal failed.');
   }

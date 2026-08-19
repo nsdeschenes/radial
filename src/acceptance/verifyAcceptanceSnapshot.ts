@@ -9,6 +9,7 @@ async function verifyAcceptanceSnapshot(baselinePath: string, snapshotPath: stri
   for await (const chunk of createReadStream(snapshotPath)) {
     snapshotHash.update(chunk);
   }
+
   const snapshotSha256 = snapshotHash.digest('hex');
 
   if (snapshotSha256 !== baseline.snapshot.sha256) {

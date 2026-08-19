@@ -43,6 +43,7 @@ async function runRoutePlannerSmoke({
     if (!result.ok) {
       throw new Error(`Route planning failed: ${JSON.stringify(result.failure)}.`);
     }
+
     plan = result.value.plan;
   } finally {
     await openedPlanner.value[Symbol.asyncDispose]();
@@ -55,6 +56,7 @@ async function runRoutePlannerSmoke({
   if (JSON.stringify(firstCliRun) !== JSON.stringify(secondCliRun)) {
     throw new Error('Repeated CLI runs were not byte-identical.');
   }
+
   if (firstCliRun.exitCode !== 0) {
     throw new Error(`Acceptance CLI exited with status ${firstCliRun.exitCode}.`);
   }

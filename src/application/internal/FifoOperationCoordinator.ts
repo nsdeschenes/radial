@@ -23,6 +23,7 @@ class FifoOperationCoordinator {
     if (this.#isClosed) {
       return Promise.reject(new Error('The operation coordinator has been closed.'));
     }
+
     if (signal?.aborted) {
       return Promise.reject(abortableOperation.abortError(signal));
     }
@@ -43,14 +44,17 @@ class FifoOperationCoordinator {
           if (entry.started) {
             return;
           }
+
           const index = this.#queue.indexOf(entry);
           if (index === -1) {
             return;
           }
+
           this.#queue.splice(index, 1);
           if (signal !== undefined) {
             entry.reject(abortableOperation.abortError(signal));
           }
+
           this.#resolveIdleIfNeeded();
           void this.#drain();
         },
@@ -66,12 +70,14 @@ class FifoOperationCoordinator {
     if (this.#isClosed) {
       return;
     }
+
     this.#isClosed = true;
     const queued = this.#queue.splice(0);
     for (const entry of queued) {
       entry.signal?.removeEventListener('abort', entry.onAbort);
       entry.reject(new Error('The operation coordinator has been closed.'));
     }
+
     this.#resolveIdleIfNeeded();
   }
 
@@ -79,6 +85,7 @@ class FifoOperationCoordinator {
     if (!this.#isRunning && this.#queue.length === 0) {
       return;
     }
+
     await new Promise<void>(resolve => this.#idleResolvers.push(resolve));
   }
 
@@ -86,6 +93,7 @@ class FifoOperationCoordinator {
     if (this.#isRunning) {
       return;
     }
+
     const entry = this.#queue.shift();
     if (entry === undefined) {
       this.#resolveIdleIfNeeded();
@@ -109,6 +117,7 @@ class FifoOperationCoordinator {
     if (this.#isRunning || this.#queue.length > 0) {
       return;
     }
+
     const resolvers = this.#idleResolvers.splice(0);
     for (const resolve of resolvers) {
       resolve();

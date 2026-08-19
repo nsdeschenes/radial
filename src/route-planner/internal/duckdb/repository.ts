@@ -217,6 +217,7 @@ class PlannerRepository {
     if (newlyAdmittedCandidates.length === 0) {
       return [];
     }
+
     const admittedIds = [
       ...newlyAdmittedCandidates.map(candidate => ({
         databaseId: candidate.routePoint.databaseId,
@@ -401,6 +402,7 @@ function conservativeBounds(
       },
     ];
   }
+
   if (maximumLongitude > 180) {
     return [
       {
@@ -449,6 +451,7 @@ function toVorFamilyRoutePoint(
   if (navaid.kind !== 'vor-family') {
     throw new Error(`Expected a VOR-family row; received ${navaid.kind}.`);
   }
+
   return navaid;
 }
 
@@ -457,6 +460,7 @@ function toNdbRoutePoint(row: Readonly<Record<string, unknown>>): NdbRoutePoint 
   if (navaid.kind !== 'ndb') {
     throw new Error(`Expected an NDB row; received ${navaid.kind}.`);
   }
+
   return navaid;
 }
 
@@ -464,6 +468,7 @@ function requiredString(value: unknown): string {
   if (typeof value !== 'string') {
     throw new Error('Expected a database string value.');
   }
+
   return value;
 }
 

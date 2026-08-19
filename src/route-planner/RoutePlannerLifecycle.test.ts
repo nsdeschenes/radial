@@ -38,6 +38,7 @@ test('each planning call observes one committed database snapshot', async () => 
   if (!opened.ok) {
     throw new Error(`Expected the synthetic database to open: ${opened.failure.code}`);
   }
+
   const writer = await instance.connect();
   await writer.run('BEGIN TRANSACTION');
   await writer.run(`
@@ -72,6 +73,7 @@ test('returns database query failures as structured planning failures', async ()
   if (!opened.ok) {
     throw new Error(`Expected the synthetic database to open: ${opened.failure.code}`);
   }
+
   const connection = await instance.connect();
   await connection.run('DROP VIEW planner_airports');
   connection.closeSync();
@@ -127,6 +129,7 @@ async function openPlanner(databasePath: string) {
   if (!opened.ok) {
     throw new Error(`Expected the synthetic database to open: ${opened.failure.code}`);
   }
+
   return opened.value;
 }
 
@@ -136,6 +139,7 @@ function routePointIds(
   if (!result.ok) {
     throw new Error(`Expected route planning to succeed: ${result.failure.code}`);
   }
+
   return result.value.plan.routePoints.map(routePoint => routePoint.databaseId);
 }
 
@@ -145,6 +149,7 @@ function routePointLongitudes(
   if (!result.ok) {
     throw new Error(`Expected route planning to succeed: ${result.failure.code}`);
   }
+
   return result.value.plan.routePoints.map(routePoint => routePoint.longitude);
 }
 

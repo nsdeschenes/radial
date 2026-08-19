@@ -76,6 +76,7 @@ test('resolves missing Airports across every page and caches the exact usable re
           ? airportPage(1, 2, [airport('mismatch', 'CXXX', -80, 44)])
           : airportPage(2, 2, [airport('airport-a', ' caaa ', -80, 44)]);
       }
+
       return airportPage(1, 1, [airport('airport-b', 'CBBB', -80.5, 44)]);
     });
     if (!opened.ok) {
@@ -104,10 +105,12 @@ test('resolves missing Airports across every page and caches the exact usable re
     if (!offline.ok) {
       throw new Error('Expected the committed database to open offline.');
     }
+
     const offlinePlanner = await offline.value.planning.open();
     if (!offlinePlanner.ok) {
       throw new Error('Expected the offline planner to open.');
     }
+
     await offlinePlanner.value.planRoute({departureIcao: 'CAAA', arrivalIcao: 'CBBB'});
     await offlinePlanner.value[Symbol.asyncDispose]();
     await offline.value[Symbol.asyncDispose]();
@@ -234,10 +237,12 @@ test('reports a corrupt committed Cached Airport instead of replacing it', async
     if (!bootstrapped.ok) {
       throw new Error('Expected the application to open.');
     }
+
     const bootstrapPlanner = await bootstrapped.value.planning.open();
     if (!bootstrapPlanner.ok) {
       throw new Error('Expected the bootstrap planner to open.');
     }
+
     await bootstrapPlanner.value[Symbol.asyncDispose]();
     await bootstrapped.value[Symbol.asyncDispose]();
 
@@ -260,6 +265,7 @@ test('reports a corrupt committed Cached Airport instead of replacing it', async
     if (!planner.ok) {
       throw new Error('Expected the planner to open.');
     }
+
     await expect(
       planner.value.planRoute({departureIcao: 'CAAA', arrivalIcao: 'CBBB'})
     ).resolves.toMatchObject({
@@ -299,6 +305,7 @@ test('forced Airport reload replaces the cache and derives magnetic projection f
         if (!useFreshTimes) {
           return new Date('2026-07-10T00:00:00.000Z');
         }
+
         nowCallCount += 1;
         return new Date(Date.parse('2026-07-10T00:00:00.000Z') + nowCallCount * 1000);
       }
@@ -311,6 +318,7 @@ test('forced Airport reload replaces the cache and derives magnetic projection f
     if (!bootstrapPlanner.ok) {
       throw new Error('Expected the Navaid Snapshot bootstrap to succeed.');
     }
+
     await bootstrapPlanner.value[Symbol.asyncDispose]();
     useFreshTimes = true;
 
@@ -325,6 +333,7 @@ test('forced Airport reload replaces the cache and derives magnetic projection f
     if (!firstReload.ok) {
       throw new Error('Expected the first Airport reload to succeed.');
     }
+
     const firstRetrievedAt = firstReload.value.retrievedAt;
 
     const secondReload = await opened.value.dataManagement.reloadAirport({
@@ -338,6 +347,7 @@ test('forced Airport reload replaces the cache and derives magnetic projection f
     if (!secondReload.ok) {
       throw new Error('Expected the second Airport reload to succeed.');
     }
+
     const secondRetrievedAt = secondReload.value.retrievedAt;
 
     expect(secondRetrievedAt).not.toBe(firstRetrievedAt);
@@ -372,6 +382,7 @@ test('failed forced Airport reload preserves the cached record and projection', 
       if (shouldFail) {
         throw new Error('OpenAIP is unavailable.');
       }
+
       return airportPage(1, 1, [airport('airport-original', request.search, -80, 44)]);
     });
     if (!opened.ok) {
@@ -382,6 +393,7 @@ test('failed forced Airport reload preserves the cached record and projection', 
     if (!bootstrapPlanner.ok) {
       throw new Error('Expected the Navaid Snapshot bootstrap to succeed.');
     }
+
     await bootstrapPlanner.value[Symbol.asyncDispose]();
 
     await expect(
@@ -557,6 +569,7 @@ async function cachedAirportProvenanceRow(databasePath: string) {
     if (row === undefined) {
       throw new Error('Expected one Cached Airport provenance row.');
     }
+
     return row;
   } finally {
     connection.closeSync();
@@ -593,6 +606,7 @@ async function projectedAirportDetails(databasePath: string) {
     if (row === undefined) {
       throw new Error('Expected one projected Cached Airport.');
     }
+
     return row;
   } finally {
     connection.closeSync();

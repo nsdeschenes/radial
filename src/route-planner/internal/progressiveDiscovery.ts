@@ -48,6 +48,7 @@ class ProgressiveDiscoverySession<Candidate extends MeasuredCandidate> {
           `Route Search candidate endpoint distances were measured more than once: ${databaseId}`
         );
       }
+
       batchDatabaseIds.add(databaseId);
     }
 
@@ -57,6 +58,7 @@ class ProgressiveDiscoverySession<Candidate extends MeasuredCandidate> {
     for (const databaseId of batchDatabaseIds) {
       this.#measuredDatabaseIdSet.add(databaseId);
     }
+
     this.#pendingCandidates.push(...measuredCandidates);
     const newlyAdmittedCandidates = this.#pendingCandidates.filter(candidate =>
       isNewlyAdmitted(
@@ -114,6 +116,7 @@ function nextLimitNm(
   if (scheduledLimit === undefined) {
     return undefined;
   }
+
   return provisionalRouteDistanceNm === undefined
     ? scheduledLimit
     : Math.min(scheduledLimit, provisionalRouteDistanceNm);

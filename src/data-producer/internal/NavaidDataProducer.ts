@@ -45,6 +45,7 @@ async function reloadNavaids(
       true
     );
   }
+
   abortableOperation.throwIfAborted(request.signal);
 
   request.onProgress?.({stage: 'database', message: 'Preparing Producer Schema.'});
@@ -126,6 +127,7 @@ async function reloadNavaids(
       true
     );
   }
+
   try {
     abortableOperation.throwIfAborted(request.signal);
     faaNasrFacilityVariation.selectApplicableCycle(faaNasrCycles, captured.retrievedAt);
@@ -168,6 +170,7 @@ async function reloadNavaids(
         true
       );
     }
+
     return failure(
       'DATA_DERIVATION_FAILED',
       'Navaid Snapshot derivation failed.',
@@ -203,6 +206,7 @@ async function reloadNavaids(
     ) {
       rethrowIfInterrupted(error, request.signal);
     }
+
     if (error instanceof NavaidSnapshotValidationError) {
       return failure(
         'DATA_VALIDATION_FAILED',
@@ -212,6 +216,7 @@ async function reloadNavaids(
         true
       );
     }
+
     return failure(
       'DATA_PUBLICATION_FAILED',
       'Navaid Snapshot publication failed.',
@@ -230,6 +235,7 @@ function committedCounts(candidate: ReturnType<typeof buildNavaidSnapshotCandida
       (exclusionCounts.get(exclusion.reason) ?? 0) + 1
     );
   }
+
   return {
     vorFamilyNavaidCount: candidate.plannerNavaids.filter(
       navaid => navaid.family !== 'NDB'
@@ -269,6 +275,7 @@ function rethrowIfInterrupted(error: unknown, signal: AbortSignal | undefined): 
   if (signal?.aborted) {
     throw abortableOperation.abortError(signal);
   }
+
   if (abortableOperation.isAbortError(error)) {
     throw error;
   }

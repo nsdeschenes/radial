@@ -132,6 +132,7 @@ test('restarts drifted collections from page one while preserving retrieval star
         })),
       });
     }
+
     if (requestedPages.length === 2) {
       return jsonResponse({
         page: 2,
@@ -141,6 +142,7 @@ test('restarts drifted collections from page one while preserving retrieval star
         items: [{_id: '1001'}, {_id: '1002'}],
       });
     }
+
     return jsonResponse({
       page: 1,
       limit: 1000,
@@ -188,9 +190,11 @@ test('retries transient failures with bounded jitter and valid Retry-After', asy
     if (requests === 1) {
       throw new OpenAIPNavaidTransportError('request timed out', true);
     }
+
     if (requests === 2) {
       return {status: 503, headers: {'retry-after': '2'}, body: ''};
     }
+
     return jsonResponse({
       page: 1,
       limit: 1000,
@@ -234,6 +238,7 @@ test.each([429, 500, 502, 504])('retries transient HTTP %i failures', async stat
     if (requests === 1) {
       return {status, headers: {}, body: ''};
     }
+
     return jsonResponse({
       page: 1,
       limit: 1000,

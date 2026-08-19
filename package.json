@@ -43,6 +43,7 @@
   },
   "devDependencies": {
     "@j178/prek": "^0.4.13",
+    "@stylistic/eslint-plugin": "^5.10.0",
     "@types/node": "^26.1.1",
     "@vitest/coverage-v8": "4.1.10",
     "msw": "^2.15.0",

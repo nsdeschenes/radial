@@ -100,6 +100,7 @@ async function reloadAirport(
       'Provide exactly one four-letter ICAO and retry the Airport reload.'
     );
   }
+
   abortableOperation.throwIfAborted(request.signal);
   if (request.openAipApiKey.trim() === '') {
     return failure(
@@ -118,6 +119,7 @@ async function reloadAirport(
     if (request.signal?.aborted) {
       throw abortableOperation.abortError(request.signal);
     }
+
     return failure(
       'DATA_DATABASE_INVALID',
       'The configured database is invalid.',
@@ -166,6 +168,7 @@ async function reloadAirport(
     ) {
       throw abortableOperation.abortError(request.signal);
     }
+
     return failure(
       'DATA_PUBLICATION_FAILED',
       'Cached Airport publication failed.',
@@ -174,6 +177,7 @@ async function reloadAirport(
       error instanceof AirportPublicationError ? error.activeDataPreserved : true
     );
   }
+
   request.onProgress?.({stage: 'complete', message: 'Cached Airport committed.'});
   return {
     ok: true,
@@ -229,6 +233,7 @@ async function ensureCachedAirport(
   } catch {
     return {ok: false, failure: {reason: 'publication-failed'}};
   }
+
   return {ok: true};
 }
 
@@ -264,9 +269,11 @@ async function acquireAirportRecord(
     if (signal?.aborted) {
       throw abortableOperation.abortError(signal);
     }
+
     if (abortableOperation.isAbortError(error)) {
       throw error;
     }
+
     return {
       ok: false,
       failure: {
@@ -296,6 +303,7 @@ async function acquireAirportRecord(
   } catch {
     return {ok: false, failure: {reason: 'publication-failed'}};
   }
+
   return {
     ok: true,
     airport: selected.airport,
@@ -342,6 +350,7 @@ async function readCachedAirport(
     if (rows.length === 0) {
       return {kind: 'missing'};
     }
+
     if (rows.length !== 1) {
       return {kind: 'corrupt'};
     }
@@ -388,25 +397,31 @@ async function fetchAirportRecords(
       if (signal?.aborted) {
         throw abortableOperation.abortError(signal);
       }
+
       if (abortableOperation.isAbortError(error)) {
         throw error;
       }
+
       if (error instanceof AirportSourceInvalidError) {
         throw error;
       }
+
       throw new AirportSourceUnavailableError({cause: error});
     }
 
     if (!validAirportPage(page, pageNumber)) {
       throw new AirportSourceInvalidError();
     }
+
     if (totalPages === undefined) {
       totalPages = page.totalPages;
     } else if (page.totalPages !== totalPages) {
       throw new AirportSourceInvalidError();
     }
+
     records.push(...page.items);
   }
+
   return records;
 }
 
@@ -434,6 +449,7 @@ function validAirportPage(value: unknown, requestedPage: number): value is Airpo
   if (!isJsonObject(value)) {
     return false;
   }
+
   const page = value['page'];
   const totalPages = value['totalPages'];
   const items = value['items'];
@@ -444,6 +460,7 @@ function validAirportPage(value: unknown, requestedPage: number): value is Airpo
   ) {
     return false;
   }
+
   return (
     Number.isSafeInteger(page) &&
     page === requestedPage &&
@@ -483,10 +500,12 @@ function selectAirport(
   if (usableRecords.length > 1) {
     return {ok: false, failure: {reason: 'ambiguous'}};
   }
+
   const airport = usableRecords[0];
   if (airport === undefined) {
     return {ok: false, failure: {reason: 'unusable'}};
   }
+
   return {ok: true, airport};
 }
 
@@ -518,6 +537,7 @@ function parseAirportRecord(value: unknown): ParsedAirportRecord {
   } catch {
     return {normalizedIcao, airport: undefined};
   }
+
   return {
     normalizedIcao,
     airport: {
@@ -539,6 +559,7 @@ function parseCachedAirport(
   if (row === undefined) {
     return undefined;
   }
+
   const icao = typeof row['icao'] === 'string' ? row['icao'] : '';
   const sourceId = nonEmptyString(row['database_id']);
   const name = nonEmptyString(row['name']);
@@ -579,9 +600,11 @@ function parseCachedAirport(
   } catch {
     return undefined;
   }
+
   if (!isJsonObject(record)) {
     return undefined;
   }
+
   const parsed = parseAirportRecord(record);
   if (
     parsed.airport === undefined ||
@@ -594,6 +617,7 @@ function parseCachedAirport(
   ) {
     return undefined;
   }
+
   return parsed.airport;
 }
 
@@ -648,6 +672,7 @@ async function publishAirportWithinGate(
       if (activeRow === undefined) {
         throw new Error('Producer Schema state is missing its singleton row.');
       }
+
       const snapshotId = activeRow['snapshot_id'];
       const magneticReferenceDate = activeRow['magnetic_reference_date'];
       if (
@@ -682,6 +707,7 @@ async function publishAirportWithinGate(
         if (typeof magneticReferenceDate !== 'string') {
           throw new Error('Active Navaid Snapshot magnetic reference date is missing.');
         }
+
         const magneticDeclinationDegEast = Wmm2025.localMagneticDeclinationFromWmm2025({
           referenceDate: magneticReferenceDate,
           longitude: airport.longitude,
@@ -706,6 +732,7 @@ async function publishAirportWithinGate(
           ]
         );
       }
+
       abortableOperation.throwIfAborted(signal);
       await beforeCommit?.();
       abortableOperation.throwIfAborted(signal);
@@ -720,6 +747,7 @@ async function publishAirportWithinGate(
           error instanceof Error ? error.message : 'Cached Airport publication failed.'
         );
       }
+
       throw new AirportPublicationError(
         !commitStarted,
         error instanceof Error ? error.message : 'Cached Airport publication failed.'
@@ -810,6 +838,7 @@ function normalizedIcaoValue(value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
   }
+
   const normalized = normalizeIcao(value);
   return ICAO_PATTERN.test(normalized) ? normalized : null;
 }
@@ -818,6 +847,7 @@ function nonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string' || value.trim() === '') {
     return null;
   }
+
   return value.trim();
 }
 
@@ -827,10 +857,12 @@ function parsePoint(
   if (!isJsonObject(value) || value['type'] !== 'Point') {
     return undefined;
   }
+
   const coordinates = value['coordinates'];
   if (!Array.isArray(coordinates) || coordinates.length !== 2) {
     return undefined;
   }
+
   const longitude = coordinates[0];
   const latitude = coordinates[1];
   if (
@@ -840,6 +872,7 @@ function parsePoint(
   ) {
     return undefined;
   }
+
   return {longitude, latitude};
 }
 

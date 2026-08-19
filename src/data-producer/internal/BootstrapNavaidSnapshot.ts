@@ -43,6 +43,7 @@ async function ensureFirstNavaidSnapshot(
   if (readiness === 'ready') {
     return {ok: true};
   }
+
   if (readiness === 'credentials-missing') {
     return {
       ok: false,

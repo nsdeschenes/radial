@@ -97,12 +97,14 @@ function selectApplicableCycle(
   if (selected === undefined) {
     throw new Error('no published FAA 28-Day NASR cycle is effective by retrieval start');
   }
+
   if (
     applicable.filter(cycle => cycle.effectiveDate === selected.effectiveDate).length !==
     1
   ) {
     throw new Error('FAA NASR cycle metadata contains a duplicate effective date');
   }
+
   verifySelectedCycle(selected);
   const {archiveBytes: _, ...verified} = selected;
   return Object.freeze(verified);
@@ -116,10 +118,12 @@ function match(
   if (matchingPolicyIdentity.trim() === '') {
     throw new Error('Facility Variation matching policy identity must not be empty');
   }
+
   const openAipFrequencyHz = decimalFrequencyHz(navaid.frequencyValue.toFixed(6));
   if (openAipFrequencyHz === undefined) {
     throw new Error('OpenAIP VOR-family frequency cannot be normalized exactly');
   }
+
   const baseAudit = {
     sourceRecordId: navaid.sourceRecordId,
     sourceIdentity: null,
@@ -226,6 +230,7 @@ function qualifyingRecord(
   if (!isMatchableFacilityType(facilityType)) {
     return undefined;
   }
+
   const identifier = normalizeIdentifier(stringOrNull(record['NAV_ID']) ?? '');
   const frequencyHz = decimalFrequencyHz(stringOrNull(record['FREQ']) ?? '');
   const latitude = finiteCoordinate(record['LAT_DECIMAL'], -90, 90);
@@ -238,6 +243,7 @@ function qualifyingRecord(
   ) {
     return undefined;
   }
+
   const separationMeters = wgs84DistanceMeters(
     {latitude: navaid.latitude, longitude: navaid.longitude},
     {latitude, longitude}
@@ -245,6 +251,7 @@ function qualifyingRecord(
   if (separationMeters > 1852 + VINCENTY_NUMERICAL_ERROR_METERS) {
     return undefined;
   }
+
   const separationNm = separationMeters / 1852;
   return {
     record,
@@ -273,6 +280,7 @@ function parseFacilityVariation(
   ) {
     return undefined;
   }
+
   const magnitude = Number(rawMagnitude);
   const epochYear = Number(rawEpochYear);
   const degreesEast = hemisphere === 'W' ? -magnitude : magnitude;
@@ -285,6 +293,7 @@ function parseFacilityVariation(
   ) {
     return undefined;
   }
+
   return {degreesEast: Object.is(degreesEast, -0) ? 0 : degreesEast, epochYear};
 }
 
@@ -293,6 +302,7 @@ function decimalFrequencyHz(value: string): number | undefined {
   if (match === null) {
     return undefined;
   }
+
   const hertz = Number(match[1]) * 1_000_000 + Number((match[2] ?? '').padEnd(6, '0'));
   return Number.isSafeInteger(hertz) && hertz > 0 ? hertz : undefined;
 }
@@ -305,6 +315,7 @@ function finiteCoordinate(
   if (typeof value !== 'string' || value.trim() === '') {
     return undefined;
   }
+
   const coordinate = Number(value);
   return Number.isFinite(coordinate) && coordinate >= minimum && coordinate <= maximum
     ? coordinate
@@ -320,6 +331,7 @@ function isOutsideSourceCoverage(
   if (navaidCountryCodes.length === 0) {
     return false;
   }
+
   const coveredCountryCodes = new Set(
     records.map(record => {
       const countryCode = stringOrNull(record['COUNTRY_CODE'])?.trim().toUpperCase();
@@ -377,6 +389,7 @@ function wgs84DistanceMeters(
     if (sinSigma === 0) {
       return 0;
     }
+
     cosSigma =
       Math.sin(firstReducedLatitude) * Math.sin(secondReducedLatitude) +
       Math.cos(firstReducedLatitude) * Math.cos(secondReducedLatitude) * cosLambda;
@@ -409,6 +422,7 @@ function wgs84DistanceMeters(
     if (Math.abs(lambda - previousLambda) <= 1e-12) {
       break;
     }
+
     if (iteration === 199) {
       return Number.POSITIVE_INFINITY;
     }
@@ -442,6 +456,7 @@ function validateCycleMetadata(cycle: FAANasrCycleArtifact): FAANasrCycleArtifac
   } catch {
     throw new Error('FAA NASR source URL must use the official HTTPS origin');
   }
+
   if (
     sourceUrl.protocol !== 'https:' ||
     sourceUrl.hostname !== 'nfdc.faa.gov' ||
@@ -449,15 +464,19 @@ function validateCycleMetadata(cycle: FAANasrCycleArtifact): FAANasrCycleArtifac
   ) {
     throw new Error('FAA NASR source URL must use the official HTTPS origin');
   }
+
   if (!/^\d{4}$/.test(cycle.cycleId)) {
     throw new Error('FAA NASR cycle identity must use the four-digit AIRAC cycle');
   }
+
   if (cycle.archiveIdentity.trim() === '') {
     throw new Error('FAA NASR archive identity must not be empty');
   }
+
   if (sourceUrl.pathname.split('/').at(-1) !== cycle.archiveIdentity) {
     throw new Error('FAA NASR archive identity does not match its official URL');
   }
+
   validateDate(cycle.effectiveDate, 'FAA NASR effectiveDate');
   validateTimestamp(cycle.publishedAt, 'FAA NASR publishedAt');
   validateTimestamp(cycle.retrievedAt, 'FAA NASR retrievedAt');
@@ -470,9 +489,11 @@ function verifySelectedCycle(cycle: FAANasrCycleArtifact): void {
   if (bytesChecksum(cycle.archiveBytes) !== cycle.archiveChecksum) {
     throw new Error('FAA NASR archive checksum does not match its content');
   }
+
   if (cycle.records.length === 0) {
     throw new Error('FAA NASR selected cycle contains no NAV_BASE records');
   }
+
   const canonicalRecords = cycle.records
     .map(record => canonicalizeJson(record))
     .toSorted(compareStrings)
@@ -480,6 +501,7 @@ function verifySelectedCycle(cycle: FAANasrCycleArtifact): void {
   if (textChecksum(canonicalizeJson(canonicalRecords)) !== cycle.contentChecksum) {
     throw new Error('FAA NASR canonical content checksum does not match its records');
   }
+
   for (const [index, record] of canonicalRecords.entries()) {
     validateRecordStructure(record, index, cycle.effectiveDate);
   }
@@ -502,11 +524,13 @@ function validateRecordStructure(
       throw new Error(`FAA NASR NAV_BASE record ${index + 1} has invalid ${field}`);
     }
   }
+
   if (record['EFF_DATE'] !== effectiveDate) {
     throw new Error(
       `FAA NASR NAV_BASE record ${index + 1} effective date does not match its cycle`
     );
   }
+
   const facilityType = String(record['NAV_TYPE']).trim().toUpperCase();
   if (
     String(record['NAV_ID']).trim() === '' ||

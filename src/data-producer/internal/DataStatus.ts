@@ -45,6 +45,7 @@ async function readDataStatus(databasePath: string): Promise<DataStatusResult> {
     if (isMissingPathError(error)) {
       return success(uninitializedStatus(displayPath, []));
     }
+
     return failure(
       'DATA_DATABASE_UNAVAILABLE',
       'The configured database is unavailable.',
@@ -52,6 +53,7 @@ async function readDataStatus(databasePath: string): Promise<DataStatusResult> {
       'Check RADIAL_DATABASE_PATH and retry.'
     );
   }
+
   if (!databaseExists) {
     return failure(
       'DATA_DATABASE_UNAVAILABLE',
@@ -73,6 +75,7 @@ async function readDataStatus(databasePath: string): Promise<DataStatusResult> {
         'Route the operation through the owning process or obtain exclusive maintenance access.'
       );
     }
+
     return failure(
       'DATA_DATABASE_UNAVAILABLE',
       'The configured database is unavailable.',
@@ -104,6 +107,7 @@ async function readDataStatusFromInstance(
         'Route the operation through the owning process or obtain exclusive maintenance access.'
       );
     }
+
     return failure(
       'DATA_DATABASE_UNAVAILABLE',
       'The configured database is unavailable.',
@@ -124,6 +128,7 @@ async function readDataStatusFromInstance(
           'Inspect the configured database and retry with a valid Radial database.'
         );
       }
+
       if (isDuckDBBusyError(error)) {
         return failure(
           'DATA_DATABASE_BUSY',
@@ -132,6 +137,7 @@ async function readDataStatusFromInstance(
           'Route the operation through the owning process or obtain exclusive maintenance access.'
         );
       }
+
       return failure(
         'DATA_DATABASE_UNAVAILABLE',
         'The configured database is unavailable.',
@@ -157,8 +163,10 @@ async function inspectStatus(
         'The Producer Schema is absent while a planner view name is already in use.'
       );
     }
+
     return uninitializedStatus(databasePath, legacyObjects);
   }
+
   if (schema.kind === 'invalid') {
     throw new InvalidDataStatusError('The Producer Schema is incomplete or invalid.');
   }
@@ -208,10 +216,12 @@ async function readProducerState(
       'The Producer Schema state must contain exactly one singleton row.'
     );
   }
+
   const activeSnapshotId = rows[0]?.['active_snapshot_id'];
   if (activeSnapshotId !== null && typeof activeSnapshotId !== 'string') {
     throw new InvalidDataStatusError('The active Navaid Snapshot marker is invalid.');
   }
+
   return {activeSnapshotId};
 }
 
@@ -259,6 +269,7 @@ async function readSnapshot(
       'The active Navaid Snapshot marker does not identify exactly one snapshot.'
     );
   }
+
   const row = rows[0]!;
   const rawNavaidCount = nonNegativeInteger(row['raw_navaid_count'], 'raw Navaid count');
   const plannerNavaidCount = nonNegativeInteger(
@@ -379,6 +390,7 @@ async function readSnapshotCounts(
   if (row === undefined) {
     throw new InvalidDataStatusError('Committed Navaid Snapshot counts are unavailable.');
   }
+
   return {
     rawNavaidCount: nonNegativeInteger(row['raw_count'], 'raw Navaid count'),
     plannerNavaidCount: nonNegativeInteger(row['planner_count'], 'planner Navaid count'),
@@ -432,11 +444,13 @@ async function readFacilityVariationCounts(
     } catch {
       throw new InvalidDataStatusError('A Facility Variation audit record is invalid.');
     }
+
     if (!isJsonObject(parsedAudit) || parsedAudit['outcome'] !== outcome) {
       throw new InvalidDataStatusError(
         'A Facility Variation audit record does not match its committed outcome.'
       );
     }
+
     if (
       outcome === 'matched' &&
       (parsedAudit['facilityVariationEpochYear'] === null ||
@@ -445,6 +459,7 @@ async function readFacilityVariationCounts(
       epochYearMissingCount += 1;
     }
   }
+
   return {
     auditCount: rows.length,
     presentCount,
@@ -491,6 +506,7 @@ async function readCachedAirports(
     if (longitude < -180 || longitude > 180 || latitude < -90 || latitude > 90) {
       throw new InvalidDataStatusError('A Cached Airport has invalid coordinates.');
     }
+
     return {
       icao: requiredString(row, 'icao'),
       sourceId: requiredString(row, 'database_id'),
@@ -541,6 +557,7 @@ function requiredString(row: Record<string, unknown>, field: string): string {
   if (typeof value !== 'string' || value.trim() === '') {
     throw new InvalidDataStatusError(`Committed ${field} is unavailable.`);
   }
+
   return value;
 }
 
@@ -548,6 +565,7 @@ function finiteNumber(value: unknown, field: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw new InvalidDataStatusError(`Committed ${field} is invalid.`);
   }
+
   return value;
 }
 
@@ -556,6 +574,7 @@ function nonNegativeInteger(value: unknown, field: string): number {
   if (!Number.isSafeInteger(number) || number < 0) {
     throw new InvalidDataStatusError(`Committed ${field} is invalid.`);
   }
+
   return number;
 }
 
@@ -565,6 +584,7 @@ function canonicalTimestamp(row: Record<string, unknown>, field: string): string
   if (Number.isNaN(timestamp.getTime())) {
     throw new InvalidDataStatusError(`Committed ${field} is invalid.`);
   }
+
   return timestamp.toISOString();
 }
 

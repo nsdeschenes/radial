@@ -56,6 +56,7 @@ async function verifyFixtureProvenance(
     if (fixtureIds.has(record.fixtureId)) {
       throw new Error(`Fixture provenance duplicates ${record.fixtureId}.`);
     }
+
     fixtureIds.add(record.fixtureId);
 
     const files = await Promise.all(
@@ -63,6 +64,7 @@ async function verifyFixtureProvenance(
         if (fixturePaths.has(file.path)) {
           throw new Error(`Fixture provenance lists ${file.path} more than once.`);
         }
+
         fixturePaths.add(file.path);
         const path = safeFixturePath(repositoryRoot, file.path);
         const contents = await readFile(path);
@@ -72,6 +74,7 @@ async function verifyFixtureProvenance(
             `Fixture ${file.path} checksum mismatch: expected ${file.sha256}, received ${actualChecksum}.`
           );
         }
+
         return file;
       })
     );
@@ -91,12 +94,14 @@ function safeFixturePath(repositoryRoot: string, fixturePath: string): string {
   if (isAbsolute(fixturePath)) {
     throw new Error(`Fixture path ${fixturePath} must be relative.`);
   }
+
   const root = resolve(repositoryRoot);
   const path = resolve(root, fixturePath);
   const pathFromRoot = relative(root, path);
   if (pathFromRoot === '..' || pathFromRoot.startsWith('../')) {
     throw new Error(`Fixture path ${fixturePath} escapes the repository root.`);
   }
+
   return path;
 }
 

@@ -21,6 +21,7 @@ if (apiKey === undefined || apiKey.trim() === '') {
     if (response.status !== 200) {
       throw new Error(`OpenAIP Navaid probe returned HTTP ${response.status}.`);
     }
+
     const navaidPage = parseJsonWithUniqueKeys(response.body) as {items?: unknown};
     if (!Array.isArray(navaidPage.items)) {
       throw new Error('OpenAIP Navaid probe returned an incompatible page.');

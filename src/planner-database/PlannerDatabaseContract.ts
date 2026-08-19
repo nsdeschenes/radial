@@ -362,9 +362,11 @@ async function validate(connection: DuckDBConnection): Promise<ContractValidatio
   if (airportFlags['invalid_identity'] === true) {
     violations.push('planner_airports contains invalid planner-ready identity data');
   }
+
   if (airportFlags['duplicate_identity'] === true) {
     violations.push('planner_airports contains duplicate planner-ready identity data');
   }
+
   if (airportFlags['invalid_geometry'] === true) {
     violations.push(
       'planner_airports contains invalid longitude/latitude point geometry'
@@ -434,21 +436,26 @@ async function validate(connection: DuckDBConnection): Promise<ContractValidatio
   if (navaidFlags['invalid_identity'] === true) {
     violations.push('planner_navaids contains invalid planner-ready identity data');
   }
+
   if (navaidFlags['duplicate_identity'] === true) {
     violations.push('planner_navaids contains duplicate planner-ready identity data');
   }
+
   if (navaidFlags['invalid_geometry'] === true) {
     violations.push('planner_navaids contains invalid longitude/latitude point geometry');
   }
+
   if (navaidFlags['invalid_navigation_data'] === true) {
     violations.push('planner_navaids contains invalid planner-ready navigation data');
   }
+
   if (
     airportFlags['invalid_magnetic_angle'] === true ||
     navaidFlags['invalid_magnetic_angle'] === true
   ) {
     violations.push('planner data contains an invalid Local Magnetic Declination');
   }
+
   if (navaidFlags['invalid_facility_variation'] === true) {
     violations.push('planner_navaids contains invalid Facility Variation of Record data');
   }
@@ -485,6 +492,7 @@ async function validate(connection: DuckDBConnection): Promise<ContractValidatio
   ) {
     violations.push('local magnetic declination requires complete planner_metadata');
   }
+
   if (metadata !== null) {
     const referenceYear = dateToDecimalYear(metadata.referenceDate);
     if (referenceYear < metadata.epochYear || referenceYear >= metadata.epochYear + 5) {
@@ -502,6 +510,7 @@ function decodeAirport(row: DatabaseRow): PlannerAirport {
   if (!/^[A-Z]{4}$/.test(icao)) {
     throw invalidField('icao');
   }
+
   return {
     databaseId: requiredNonBlankString(row, 'database_id'),
     icao,
@@ -532,6 +541,7 @@ function decodeNavaid(row: DatabaseRow): PlannerNavaid {
     ) {
       throw invalidField('frequency_value');
     }
+
     if (
       row['facility_variation_deg_east'] !== null ||
       row['facility_variation_source'] !== null ||
@@ -539,12 +549,14 @@ function decodeNavaid(row: DatabaseRow): PlannerNavaid {
     ) {
       throw invalidField('facility_variation_deg_east');
     }
+
     return {kind: 'ndb', ...base, frequency: {unit: 'kHz', value: frequencyValue}};
   }
 
   if (!isVorFamily(family) || requiredString(row, 'frequency_unit') !== 'MHz') {
     throw invalidField('family');
   }
+
   const facilityVariationDegEast = nullableAngle(row, 'facility_variation_deg_east');
   const facilityVariationSource = nullableString(row, 'facility_variation_source');
   const facilityVariationEffectiveDate = nullableDateString(
@@ -559,6 +571,7 @@ function decodeNavaid(row: DatabaseRow): PlannerNavaid {
   ) {
     throw invalidField('facility_variation_deg_east');
   }
+
   return {
     kind: 'vor-family',
     ...base,
@@ -587,9 +600,11 @@ function decodeMetadata(row: DatabaseRow): PlannerMetadata | null {
   if (values.every(value => value === null)) {
     return null;
   }
+
   if (values.some(value => value === null)) {
     throw new PlannerDatabaseContractError('invalid-row', 'planner_metadata');
   }
+
   return {
     model: requiredNonBlankString(row, 'magnetic_model'),
     version: requiredNonBlankString(row, 'magnetic_model_version'),
@@ -607,6 +622,7 @@ async function readFlags(
   if (row === undefined) {
     throw new PlannerDatabaseContractError('invalid-row', 'validation flags');
   }
+
   return row;
 }
 
@@ -614,6 +630,7 @@ function requiredDatabaseString(value: unknown): string {
   if (typeof value !== 'string') {
     throw new PlannerDatabaseContractError('invalid-field', 'catalog value');
   }
+
   return value;
 }
 
@@ -622,6 +639,7 @@ function requiredString(row: DatabaseRow, field: string): string {
   if (typeof value !== 'string') {
     throw invalidField(field);
   }
+
   return value;
 }
 
@@ -630,6 +648,7 @@ function requiredNonBlankString(row: DatabaseRow, field: string): string {
   if (value.trim() === '') {
     throw invalidField(field);
   }
+
   return value;
 }
 
@@ -642,6 +661,7 @@ function finiteNumber(row: DatabaseRow, field: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw invalidField(field);
   }
+
   return value;
 }
 
@@ -650,6 +670,7 @@ function positiveFiniteNumber(row: DatabaseRow, field: string): number {
   if (value <= 0) {
     throw invalidField(field);
   }
+
   return value;
 }
 
@@ -663,6 +684,7 @@ function coordinate(
   if (value < minimum || value > maximum) {
     throw invalidField(field);
   }
+
   return value;
 }
 
@@ -670,10 +692,12 @@ function nullableAngle(row: DatabaseRow, field: string): number | null {
   if (row[field] === null) {
     return null;
   }
+
   const value = finiteNumber(row, field);
   if (value < -180 || value >= 180) {
     throw invalidField(field);
   }
+
   return value;
 }
 
@@ -682,6 +706,7 @@ function requiredDateString(row: DatabaseRow, field: string): string {
   if (!isCanonicalDate(value)) {
     throw invalidField(field);
   }
+
   return value;
 }
 
@@ -693,6 +718,7 @@ function isCanonicalDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return false;
   }
+
   const date = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
