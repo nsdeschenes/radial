@@ -42,6 +42,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@e18e/eslint-plugin": "^0.8.0",
     "@j178/prek": "^0.4.13",
     "@stylistic/eslint-plugin": "^5.10.0",
     "@types/node": "^26.1.1",

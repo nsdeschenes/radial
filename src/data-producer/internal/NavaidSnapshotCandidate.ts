@@ -5,6 +5,7 @@ import faaNasrFacilityVariation from '#radial/data-producer/internal/FAANasrFaci
 import Wmm2025 from '#radial/data-producer/internal/Wmm2025.js';
 
 const {localMagneticDeclinationFromWmm2025, wmm2025Provenance} = Wmm2025;
+const FREQUENCY_VALUE_PATTERN = /^\d{3}\.\d{3}$/;
 
 type FAANasrCycleArtifact = Parameters<
   typeof faaNasrFacilityVariation.selectApplicableCycle
@@ -388,7 +389,7 @@ function frequencyFrom(
   }
 
   const expectedUnit = family === 'NDB' ? 1 : 2;
-  if (value['unit'] !== expectedUnit || !/^\d{3}\.\d{3}$/.test(value['value'])) {
+  if (value['unit'] !== expectedUnit || !FREQUENCY_VALUE_PATTERN.test(value['value'])) {
     return undefined;
   }
 

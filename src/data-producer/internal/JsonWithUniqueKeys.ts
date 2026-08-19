@@ -1,3 +1,6 @@
+const JSON_NUMBER_PATTERN = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/;
+const WHITESPACE_PATTERN = /\s/;
+
 function parseJsonWithUniqueKeys(source: string): unknown {
   const inspector = new JsonSyntaxInspector(source);
   inspector.inspect();
@@ -120,9 +123,7 @@ class JsonSyntaxInspector {
   }
 
   #readNumber(): void {
-    const match = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(
-      this.#source.slice(this.#position)
-    );
+    const match = JSON_NUMBER_PATTERN.exec(this.#source.slice(this.#position));
     if (match === null) {
       throw new SyntaxError('Invalid JSON value.');
     }
@@ -131,7 +132,7 @@ class JsonSyntaxInspector {
   }
 
   #skipWhitespace(): void {
-    while (/\s/.test(this.#source[this.#position] ?? '')) {
+    while (WHITESPACE_PATTERN.test(this.#source[this.#position] ?? '')) {
       this.#position += 1;
     }
   }

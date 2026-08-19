@@ -2,6 +2,9 @@ import {expect, test} from 'vitest';
 
 import discovery from '#radial/route-planner/internal/progressiveDiscovery.js';
 
+const DUPLICATE_MEASUREMENT_ERROR_PATTERN =
+  /endpoint distances were measured more than once/;
+
 test('widens through the scheduled endpoint ellipses and stops at the configured or VOR-family ceiling', () => {
   expect(discovery.scheduledLimitsNm(100, 2)).toEqual([100 * 1.1, 100 * 1.25, 100 * 1.5]);
   expect(discovery.scheduledLimitsNm(100, 1.2)).toEqual([100 * 1.1, 100 * 1.2]);
@@ -51,7 +54,7 @@ test('measures each candidate once and retains its canonical distances until adm
 
   expect(discoverySession.admitMeasuredCandidates([], finalLimitNm)).toEqual([pending]);
   expect(() => discoverySession.admitMeasuredCandidates([pending], finalLimitNm)).toThrow(
-    /endpoint distances were measured more than once/
+    DUPLICATE_MEASUREMENT_ERROR_PATTERN
   );
 });
 

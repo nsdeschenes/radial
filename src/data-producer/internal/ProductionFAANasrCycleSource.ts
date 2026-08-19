@@ -27,6 +27,8 @@ const MAX_CSV_BYTES = 64 * 1024 * 1024;
 const MAX_ATTEMPTS = 5;
 const MAX_ELAPSED_MS = 5 * 60 * 1000;
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+const RETRY_AFTER_SECONDS_PATTERN = /^\d+$/;
+const TRAILING_CARRIAGE_RETURN_PATTERN = /\r$/;
 
 async function acquireProductionFAANasrCycle(
   retrievalStartedAt: string,
@@ -240,7 +242,7 @@ function parseRetryAfter(value: string | null | undefined): number | undefined {
     return undefined;
   }
 
-  const seconds = /^\d+$/.test(value) ? Number(value) : undefined;
+  const seconds = RETRY_AFTER_SECONDS_PATTERN.test(value) ? Number(value) : undefined;
   const milliseconds =
     seconds === undefined ? Date.parse(value) - Date.now() : seconds * 1000;
   return Number.isFinite(milliseconds) && milliseconds >= 0 && milliseconds <= 120_000
@@ -336,7 +338,7 @@ function parseCsv(csvText: string): string[][] {
       row.push(field);
       field = '';
     } else if (character === '\n') {
-      row.push(field.replace(/\r$/, ''));
+      row.push(field.replace(TRAILING_CARRIAGE_RETURN_PATTERN, ''));
       rows.push(row);
       row = [];
       field = '';
@@ -350,7 +352,7 @@ function parseCsv(csvText: string): string[][] {
   }
 
   if (field !== '' || row.length > 0) {
-    row.push(field.replace(/\r$/, ''));
+    row.push(field.replace(TRAILING_CARRIAGE_RETURN_PATTERN, ''));
     rows.push(row);
   }
 

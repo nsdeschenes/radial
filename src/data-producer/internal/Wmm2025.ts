@@ -8,6 +8,8 @@ const WGS84_SEMI_MAJOR_AXIS_KM = 6_378.137;
 const WGS84_SEMI_MINOR_AXIS_KM = 6_356.752_314_2;
 const WMM_REFERENCE_RADIUS_KM = 6_371.2;
 const DEGREES_PER_RADIAN = 180 / Math.PI;
+const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const WHITESPACE_PATTERN = /\s+/;
 const WMM2025_COEFFICIENT_CHECKSUM =
   'sha256:dfa8597825af4e0b87ff4198a5b4fb661b3c49f4cd090cd0164e0259b075582f';
 
@@ -142,7 +144,7 @@ function localMagneticDeclinationFromWmm2025(request: DeclinationRequest): numbe
 }
 
 function noaaDecimalYearFromUtcDate(referenceDate: string): number {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(referenceDate);
+  const match = ISO_DATE_PATTERN.exec(referenceDate);
   if (match === null) {
     throw new Error('WMM2025 reference date must be an ISO UTC date.');
   }
@@ -190,9 +192,9 @@ function calculateField(decimalYear: number, latitude: number, longitude: number
   const sinGeocentricLatitude = Math.sin(geocentricLatitude);
   const cosGeocentricLatitude = Math.cos(geocentricLatitude);
   const {polynomials, derivatives} = associatedLegendreFunctions(sinGeocentricLatitude);
-  const radiusPowers = Array.from({length: WMM2025_MAX_DEGREE + 1}, () => 0);
-  const cosineOrders = Array.from({length: WMM2025_MAX_DEGREE + 1}, () => 0);
-  const sineOrders = Array.from({length: WMM2025_MAX_DEGREE + 1}, () => 0);
+  const radiusPowers = Array.from<number>({length: WMM2025_MAX_DEGREE + 1}).fill(0);
+  const cosineOrders = Array.from<number>({length: WMM2025_MAX_DEGREE + 1}).fill(0);
+  const sineOrders = Array.from<number>({length: WMM2025_MAX_DEGREE + 1}).fill(0);
   const radiusRatio = WMM_REFERENCE_RADIUS_KM / sphericalRadius;
   radiusPowers[0] = radiusRatio * radiusRatio;
   cosineOrders[0] = 1;
@@ -265,9 +267,9 @@ function calculateField(decimalYear: number, latitude: number, longitude: number
 
 function associatedLegendreFunctions(sinLatitude: number) {
   const termCount = ((WMM2025_MAX_DEGREE + 1) * (WMM2025_MAX_DEGREE + 2)) / 2;
-  const polynomials = Array.from({length: termCount}, () => 0);
-  const derivatives = Array.from({length: termCount}, () => 0);
-  const schmidtNormalization = Array.from({length: termCount}, () => 0);
+  const polynomials = Array.from<number>({length: termCount}).fill(0);
+  const derivatives = Array.from<number>({length: termCount}).fill(0);
+  const schmidtNormalization = Array.from<number>({length: termCount}).fill(0);
   const cosLatitude = Math.sqrt((1 - sinLatitude) * (1 + sinLatitude));
   polynomials[0] = 1;
   schmidtNormalization[0] = 1;
@@ -393,7 +395,7 @@ function parseCoefficients(): readonly Coefficient[] {
       break;
     }
 
-    const values = line.trim().split(/\s+/).map(Number);
+    const values = line.trim().split(WHITESPACE_PATTERN).map(Number);
     if (values.length !== 6 || values.some(value => !Number.isFinite(value))) {
       throw new Error('WMM2025 coefficient set is invalid.');
     }

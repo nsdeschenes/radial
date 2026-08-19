@@ -10,6 +10,7 @@ const MAX_CAPTURE_ATTEMPTS = 3;
 const MAX_REQUEST_ATTEMPTS = 5;
 const MAX_ELAPSED_MS = 5 * 60 * 1000;
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+const RETRY_AFTER_SECONDS_PATTERN = /^\d+$/;
 const ENVELOPE_KEYS = new Set([
   'page',
   'limit',
@@ -319,7 +320,7 @@ function parseRetryAfter(value: string | undefined, now: Date): number | undefin
     return undefined;
   }
 
-  const seconds = /^\d+$/.test(value) ? Number(value) : undefined;
+  const seconds = RETRY_AFTER_SECONDS_PATTERN.test(value) ? Number(value) : undefined;
   const milliseconds =
     seconds === undefined ? Date.parse(value) - now.getTime() : seconds * 1000;
   if (!Number.isFinite(milliseconds) || milliseconds < 0 || milliseconds > 120_000) {

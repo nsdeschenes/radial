@@ -4,6 +4,8 @@ import routeSearch from '#radial/route-planner/internal/routeSearch.js';
 import type RouteSearchTypes from '#radial/route-planner/internal/RouteSearchTypes.js';
 import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
 
+const INCOMPLETE_CANDIDATE_PAIR_ERROR_PATTERN = /did not receive candidate pair/;
+
 type CandidateFamily = RouteSearchTypes['CandidateFamily'];
 type MeasuredCandidate = RouteSearchTypes['MeasuredCandidate'];
 type NavaidPairDistance = RouteSearchTypes['NavaidPairDistance'];
@@ -133,7 +135,7 @@ test('rejects an incomplete candidate-pair batch', async () => {
   const dataSource = new InMemoryRouteSearchDataSource([first, second], [], []);
 
   await expect(routeSearch.findRoute(dataSource, 1.5)).rejects.toThrow(
-    /did not receive candidate pair/
+    INCOMPLETE_CANDIDATE_PAIR_ERROR_PATTERN
   );
 });
 
