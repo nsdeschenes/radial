@@ -1,5 +1,37 @@
 import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 
+import plannerDatabaseContract from '#radial/planner-database/PlannerDatabaseContract.js';
+
+const PRODUCER_VIEW_SOURCES = {
+  plannerAirports: {
+    createFrom: `radial_producer.planner_airports AS airports
+JOIN radial_producer.producer_state AS state
+  ON state.singleton AND airports.snapshot_id = state.active_navaid_snapshot_id`,
+    normalizedFrom:
+      'radial_producer.planner_airports AS airports INNER JOIN radial_producer.producer_state AS state ON ((state.singleton AND (airports.snapshot_id = state.active_navaid_snapshot_id)))',
+  },
+  plannerNavaids: {
+    createFrom: `radial_producer.planner_navaids AS navaids
+JOIN radial_producer.producer_state AS state
+  ON state.singleton AND navaids.snapshot_id = state.active_navaid_snapshot_id`,
+    normalizedFrom:
+      'radial_producer.planner_navaids AS navaids INNER JOIN radial_producer.producer_state AS state ON ((state.singleton AND (navaids.snapshot_id = state.active_navaid_snapshot_id)))',
+  },
+  plannerMetadata: {
+    createFrom: `radial_producer.navaid_snapshots AS snapshots
+JOIN radial_producer.producer_state AS state
+  ON state.singleton AND snapshots.snapshot_id = state.active_navaid_snapshot_id`,
+    normalizedFrom:
+      'radial_producer.navaid_snapshots AS snapshots INNER JOIN radial_producer.producer_state AS state ON ((state.singleton AND (snapshots.snapshot_id = state.active_navaid_snapshot_id)))',
+  },
+} as const;
+
+const CANONICAL_VIEWS =
+  plannerDatabaseContract.createCanonicalViews(PRODUCER_VIEW_SOURCES);
+const PUBLIC_RELATION_NAMES_SQL = Object.values(plannerDatabaseContract.relationNames)
+  .map(name => `'${name}'`)
+  .join(', ');
+
 const INITIAL_SCHEMA_SQL = `
   CREATE SCHEMA radial_producer;
 
@@ -130,60 +162,13 @@ const INITIAL_SCHEMA_SQL = `
 
   INSERT INTO radial_producer.producer_state VALUES (true, 1, 1, 1, NULL);
 
-  CREATE VIEW main.planner_airports AS
-  SELECT
-    airports.snapshot_id,
-    airports.database_id,
-    airports.icao,
-    airports.name,
-    airports.longitude,
-    airports.latitude,
-    ST_Point(airports.longitude, airports.latitude) AS point,
-    airports.magnetic_declination_deg_east
-  FROM radial_producer.planner_airports AS airports
-  JOIN radial_producer.producer_state AS state
-    ON state.singleton AND airports.snapshot_id = state.active_navaid_snapshot_id;
-
-  CREATE VIEW main.planner_navaids AS
-  SELECT
-    navaids.snapshot_id,
-    navaids.source_record_id,
-    navaids.database_id,
-    navaids.identifier,
-    navaids.name,
-    navaids.family,
-    navaids.longitude,
-    navaids.latitude,
-    ST_Point(navaids.longitude, navaids.latitude) AS point,
-    navaids.frequency_value,
-    navaids.frequency_unit,
-    navaids.published_range_nm,
-    navaids.magnetic_declination_deg_east,
-    navaids.facility_variation_deg_east,
-    navaids.facility_variation_source,
-    navaids.facility_variation_effective_date
-  FROM radial_producer.planner_navaids AS navaids
-  JOIN radial_producer.producer_state AS state
-    ON state.singleton AND navaids.snapshot_id = state.active_navaid_snapshot_id;
-
-  CREATE VIEW main.planner_metadata AS
-  SELECT
-    snapshots.snapshot_id,
-    snapshots.snapshot_checksum,
-    snapshots.magnetic_model,
-    snapshots.magnetic_model_version,
-    snapshots.magnetic_model_epoch_year,
-    snapshots.magnetic_reference_date,
-    snapshots.magnetic_model_source
-  FROM radial_producer.navaid_snapshots AS snapshots
-  JOIN radial_producer.producer_state AS state
-    ON state.singleton AND snapshots.snapshot_id = state.active_navaid_snapshot_id;
+  ${CANONICAL_VIEWS.createSql}
 `;
 
 const CURRENT_OBJECTS = [
-  'main.planner_airports:VIEW',
-  'main.planner_metadata:VIEW',
-  'main.planner_navaids:VIEW',
+  ...Object.values(plannerDatabaseContract.relationNames).map(
+    name => `main.${name}:VIEW`
+  ),
   'radial_producer.cached_airports:BASE TABLE',
   'radial_producer.facility_variation_audits:BASE TABLE',
   'radial_producer.navaid_exclusions:BASE TABLE',
@@ -205,11 +190,7 @@ const CURRENT_PRIVATE_TABLE_DEFINITIONS = [
   'raw_navaids:CREATE TABLE radial_producer.raw_navaids(snapshot_id UUID, source_record_id VARCHAR, canonical_record JSON NOT NULL, record_checksum VARCHAR NOT NULL, PRIMARY KEY(snapshot_id, source_record_id));',
 ];
 
-const CURRENT_PUBLIC_VIEW_DEFINITIONS = [
-  'planner_airports:CREATE VIEW planner_airports AS SELECT airports.snapshot_id, airports.database_id, airports.icao, airports."name", airports.longitude, airports.latitude, st_point(airports.longitude, airports.latitude) AS point, airports.magnetic_declination_deg_east FROM radial_producer.planner_airports AS airports INNER JOIN radial_producer.producer_state AS state ON ((state.singleton AND (airports.snapshot_id = state.active_navaid_snapshot_id)));',
-  'planner_metadata:CREATE VIEW planner_metadata AS SELECT snapshots.snapshot_id, snapshots.snapshot_checksum, snapshots.magnetic_model, snapshots.magnetic_model_version, snapshots.magnetic_model_epoch_year, snapshots.magnetic_reference_date, snapshots.magnetic_model_source FROM radial_producer.navaid_snapshots AS snapshots INNER JOIN radial_producer.producer_state AS state ON ((state.singleton AND (snapshots.snapshot_id = state.active_navaid_snapshot_id)));',
-  'planner_navaids:CREATE VIEW planner_navaids AS SELECT navaids.snapshot_id, navaids.source_record_id, navaids.database_id, navaids.identifier, navaids."name", navaids."family", navaids.longitude, navaids.latitude, st_point(navaids.longitude, navaids.latitude) AS point, navaids.frequency_value, navaids.frequency_unit, navaids.published_range_nm, navaids.magnetic_declination_deg_east, navaids.facility_variation_deg_east, navaids.facility_variation_source, navaids.facility_variation_effective_date FROM radial_producer.planner_navaids AS navaids INNER JOIN radial_producer.producer_state AS state ON ((state.singleton AND (navaids.snapshot_id = state.active_navaid_snapshot_id)));',
-];
+const CURRENT_PUBLIC_VIEW_DEFINITIONS = CANONICAL_VIEWS.normalizedDefinitions;
 
 type ProducerSchemaVersion = readonly [number, number, number];
 
@@ -229,7 +210,7 @@ type ProducerSchemaInspection =
     }>
   | Readonly<{kind: 'invalid'}>;
 
-const CURRENT_VERSION: ProducerSchemaVersion = [1, 1, 1];
+const CURRENT_VERSION: ProducerSchemaVersion = [1, plannerDatabaseContract.version, 1];
 const RECOGNIZED_MIGRATIONS: readonly ProducerSchemaMigration[] = [];
 
 function readProducerSchemaVersion(row: Record<string, unknown>): ProducerSchemaVersion {
@@ -306,7 +287,7 @@ async function hasCurrentObjects(
     WHERE table_schema = 'radial_producer'
        OR (
          table_schema = 'main'
-         AND table_name IN ('planner_airports', 'planner_metadata', 'planner_navaids')
+         AND table_name IN (${PUBLIC_RELATION_NAMES_SQL})
        )
     ORDER BY table_schema, table_name
   `);
@@ -344,7 +325,7 @@ async function hasCurrentObjects(
     SELECT view_name, sql
     FROM duckdb_views()
     WHERE schema_name = 'main'
-      AND view_name IN ('planner_airports', 'planner_metadata', 'planner_navaids')
+      AND view_name IN (${PUBLIC_RELATION_NAMES_SQL})
     ORDER BY view_name
   `);
   return (
@@ -356,16 +337,6 @@ async function hasCurrentObjects(
       )
       .join('\n') === CURRENT_PUBLIC_VIEW_DEFINITIONS.join('\n')
   );
-}
-
-async function hasPublicPlannerObjects(connection: DuckDBConnection): Promise<boolean> {
-  const objects = await connection.runAndReadAll(`
-    SELECT table_name
-    FROM information_schema.tables
-    WHERE table_schema = 'main'
-      AND table_name IN ('planner_airports', 'planner_metadata', 'planner_navaids')
-  `);
-  return objects.getRowObjectsJS().length > 0;
 }
 
 async function inspectProducerSchema(
@@ -474,7 +445,7 @@ async function initializeProducerSchema(instance: DuckDBInstance): Promise<void>
       await migrateProducerSchema(connection, version);
       return;
     }
-    if (await hasPublicPlannerObjects(connection)) {
+    if (await plannerDatabaseContract.hasAnyReservedRelation(connection)) {
       throw new Error('Producer Schema public view names collide with existing objects.');
     }
 

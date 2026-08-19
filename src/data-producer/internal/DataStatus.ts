@@ -7,6 +7,7 @@ import type {DuckDBConnection} from '@duckdb/node-api';
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import isDuckDBBusyError from '#radial/db/duckdb/isDuckDBBusyError.js';
+import plannerDatabaseContract from '#radial/planner-database/PlannerDatabaseContract.js';
 
 type DataStatusResult = RadialApplicationTypes['DataStatusResult'];
 type DataStatusSuccess = RadialApplicationTypes['DataStatusSuccess'];
@@ -151,7 +152,7 @@ async function inspectStatus(
   const legacyObjects = await readLegacyObjects(connection);
 
   if (schema.kind === 'absent') {
-    if (await hasPublicPlannerObjects(connection)) {
+    if (await plannerDatabaseContract.hasAnyReservedRelation(connection)) {
       throw new InvalidDataStatusError(
         'The Producer Schema is absent while a planner view name is already in use.'
       );
@@ -519,16 +520,6 @@ async function readLegacyObjects(
     const name = requiredString(row, 'table_name');
     return `${schema}.${name}`;
   });
-}
-
-async function hasPublicPlannerObjects(connection: DuckDBConnection): Promise<boolean> {
-  const result = await connection.runAndReadAll(`
-    SELECT table_name
-    FROM information_schema.tables
-    WHERE table_schema = 'main'
-      AND table_name IN ('planner_airports', 'planner_metadata', 'planner_navaids')
-  `);
-  return result.getRowObjectsJS().length > 0;
 }
 
 function uninitializedStatus(

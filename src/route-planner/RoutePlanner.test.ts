@@ -778,22 +778,8 @@ test('does not interpret ambiguous OpenAIP magnetic fields as accepted reference
   ]);
 });
 
-test.each([
-  {
-    name: 'missing departure',
-    airports: [syntheticAirport('arrival', 'BBBB', 2)],
-    failure: {code: 'airport-not-found', role: 'departure', normalizedIcao: 'AAAA'},
-  },
-  {
-    name: 'ambiguous normalized departure',
-    airports: [
-      syntheticAirport('departure-1', 'AAAA', 0),
-      syntheticAirport('departure-2', ' aaaa ', 0),
-      syntheticAirport('arrival', 'BBBB', 2),
-    ],
-    failure: {code: 'airport-ambiguous', role: 'departure', normalizedIcao: 'AAAA'},
-  },
-])('returns a structured failure for $name', async ({airports, failure}) => {
+test('returns a structured failure for a missing departure', async () => {
+  const airports = [syntheticAirport('arrival', 'BBBB', 2)];
   await using database = await syntheticPlannerDatabase.create({airports});
   const opened = await openRoutePlanner({databasePath: database.databasePath});
   if (!opened.ok) {
@@ -802,11 +788,14 @@ test.each([
 
   await expect(
     opened.value.planRoute({departureIcao: ' aaaa ', arrivalIcao: 'bbbb'})
-  ).resolves.toEqual({ok: false, failure});
+  ).resolves.toEqual({
+    ok: false,
+    failure: {code: 'airport-not-found', role: 'departure', normalizedIcao: 'AAAA'},
+  });
   await opened.value[Symbol.asyncDispose]();
 });
 
-test('exhausts the mixed graph after excluding ineligible facilities', async () => {
+test('rejects non-planner-ready data instead of filtering it from the graph', async () => {
   const oneDegreeNm = 111_194.926_644_558_74 / 1_852;
   await using database = await syntheticPlannerDatabase.create({
     airports: [
@@ -814,74 +803,18 @@ test('exhausts the mixed graph after excluding ineligible facilities', async () 
       syntheticAirport('arrival', 'BBBB', 2),
     ],
     navaids: [
-      syntheticNavaid('dme', 'DME', 'DME', 1, oneDegreeNm),
-      syntheticNavaid('tacan', 'TCN', 'TACAN', 1, oneDegreeNm),
-      {...syntheticNavaid('blank-id', 'BAD', 'VOR', 1, oneDegreeNm), databaseId: ''},
-      {...syntheticNavaid('blank-identifier', '', 'VOR', 1, oneDegreeNm)},
       {
         ...syntheticNavaid('wrong-frequency', 'WRG', 'VOR', 1, oneDegreeNm),
         frequencyUnit: 'kHz',
       },
-      {
-        ...syntheticNavaid('nan-frequency', 'NAN', 'VOR', 1, oneDegreeNm),
-        frequencyValue: Number.NaN,
-      },
-      {
-        ...syntheticNavaid('infinite-frequency', 'INF', 'VOR', 1, oneDegreeNm),
-        frequencyValue: Number.POSITIVE_INFINITY,
-      },
-      {
-        ...syntheticNavaid('zero-frequency', 'ZRO', 'VOR', 1, oneDegreeNm),
-        frequencyValue: 0,
-      },
-      {
-        ...syntheticNavaid('negative-frequency', 'NEG', 'VOR', 1, oneDegreeNm),
-        frequencyValue: -1,
-      },
-      {
-        ...syntheticNavaid('zero-range', 'ZER', 'VOR', 1, oneDegreeNm),
-        publishedRangeNm: 0,
-      },
-      syntheticNdb('eligible-but-unreachable', 'NDB', 1, 1),
-      {...syntheticNdb('blank-ndb-id', 'NDB', 1, oneDegreeNm), databaseId: ''},
-      syntheticNdb('blank-ndb-identifier', '', 1, oneDegreeNm),
-      {
-        ...syntheticNdb('fractional-ndb-frequency', 'FRA', 1, oneDegreeNm),
-        frequencyValue: 365.5,
-      },
-      {
-        ...syntheticNdb('wrong-ndb-frequency-unit', 'WRG', 1, oneDegreeNm),
-        frequencyUnit: 'MHz',
-      },
-      {
-        ...syntheticNdb('nonfinite-ndb-frequency', 'INF', 1, oneDegreeNm),
-        frequencyValue: Number.POSITIVE_INFINITY,
-      },
-      {
-        ...syntheticNdb('zero-ndb-range', 'ZER', 1, oneDegreeNm),
-        publishedRangeNm: 0,
-      },
     ],
   });
-  const opened = await openRoutePlanner({databasePath: database.databasePath});
-  if (!opened.ok) {
-    throw new Error(`Expected the synthetic database to open: ${opened.failure.code}`);
-  }
 
-  const result = await opened.value.planRoute({
-    departureIcao: 'AAAA',
-    arrivalIcao: 'BBBB',
-  });
-  await opened.value[Symbol.asyncDispose]();
-
-  expect(result).toEqual({
+  await expect(openRoutePlanner({databasePath: database.databasePath})).resolves.toEqual({
     ok: false,
     failure: {
-      code: 'no-route',
-      departureIcao: 'AAAA',
-      arrivalIcao: 'BBBB',
-      maxRouteFactor: 1.5,
-      completedSearchLimits: [1.1, 1.25, 1.5],
+      code: 'database-contract-invalid',
+      violations: ['planner_navaids contains invalid planner-ready navigation data'],
     },
   });
 });

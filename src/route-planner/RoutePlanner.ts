@@ -2,7 +2,7 @@ import {stat} from 'node:fs/promises';
 
 import {DuckDBInstance} from '@duckdb/node-api';
 
-import validateContract from '#radial/route-planner/internal/duckdb/contract.js';
+import plannerDatabaseContract from '#radial/planner-database/PlannerDatabaseContract.js';
 import PlannerRepository from '#radial/route-planner/internal/duckdb/repository.js';
 import navigation from '#radial/route-planner/internal/navigation.js';
 import routeSearch from '#radial/route-planner/internal/routeSearch.js';
@@ -66,7 +66,7 @@ class DuckDbRoutePlanner implements RoutePlanner {
     }
 
     return this.#repository.withReadTransaction(async connection => {
-      const contract = await validateContract(connection);
+      const contract = await plannerDatabaseContract.validate(connection);
       if (!contract.ok) {
         return databaseQueryFailed('validate-contract');
       }
@@ -146,7 +146,7 @@ class DuckDbRoutePlanner implements RoutePlanner {
             searchMode,
             routePoints,
             routeLegs,
-            magneticReference: contract.magneticReference,
+            magneticReference: contract.metadata,
           },
           warnings: deriveWarnings(routeLegs, searchMode),
         },
@@ -224,7 +224,7 @@ async function openRoutePlanner(
       throw new Error('DuckDB Spatial validation failed.');
     }
 
-    const contract = await validateContract(connection);
+    const contract = await plannerDatabaseContract.validate(connection);
     if (!contract.ok) {
       return {
         ok: false,
