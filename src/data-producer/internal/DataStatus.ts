@@ -3,6 +3,7 @@ import {resolve} from 'node:path';
 
 import {DuckDBInstance} from '@duckdb/node-api';
 import type {DuckDBConnection} from '@duckdb/node-api';
+import * as Sentry from '@sentry/node';
 
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
@@ -23,7 +24,15 @@ const LEGACY_TABLE_NAMES = [
   'reporting_points',
 ] as const;
 
-async function readDataStatus(databasePath: string): Promise<DataStatusResult> {
+function readDataStatus(databasePath: string): Promise<DataStatusResult> {
+  return Sentry.startSpan({name: 'Read data status', op: 'task'}, () =>
+    readDataStatusWithinSpan(databasePath)
+  );
+}
+
+async function readDataStatusWithinSpan(
+  databasePath: string
+): Promise<DataStatusResult> {
   if (databasePath.trim() === '') {
     return failure(
       'DATA_DATABASE_PATH_MISSING',
