@@ -398,6 +398,7 @@ async function validate(connection: DuckDBConnection): Promise<ContractValidatio
         WHERE family IS NULL OR family NOT IN (${SUPPORTED_FAMILIES.map(family => `'${family}'`).join(', ')})
           OR frequency_value IS NULL OR NOT isfinite(frequency_value)
           OR frequency_value <= 0
+          OR frequency_unit IS NULL
           OR published_range_nm IS NULL OR NOT isfinite(published_range_nm)
           OR published_range_nm <= 0
           OR (family = 'NDB' AND (frequency_unit <> 'kHz' OR frequency_value <> trunc(frequency_value)))

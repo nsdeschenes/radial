@@ -1,5 +1,6 @@
 import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 
+import plannerDatabaseContract from '#radial/planner-database/PlannerDatabaseContract.js';
 import type RouteSearchTypes from '#radial/route-planner/internal/RouteSearchTypes.js';
 import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
 
@@ -38,7 +39,6 @@ type BoundingBox = Readonly<{
   maximumLatitude: number;
 }>;
 
-const VOR_FAMILIES = ['VOR', 'VOR-DME', 'VORTAC', 'DVOR', 'DVOR-DME', 'DVORTAC'] as const;
 const EARTH_RADIUS_NM = 6_371_000 / 1_852;
 const PREFILTER_PADDING_DEGREES = 1e-12;
 
@@ -97,15 +97,13 @@ class PlannerRepository {
     const reader = await connection.runAndReadAll(
       `SELECT
         database_id,
-        upper(trim(icao)) AS icao,
+        icao,
         name,
         longitude,
         latitude,
         magnetic_declination_deg_east
-      FROM planner_airports
-      WHERE upper(trim(icao)) IN (?, ?)
-        AND database_id IS NOT NULL AND trim(database_id) <> ''
-        AND name IS NOT NULL AND trim(name) <> ''`,
+      FROM main.planner_airports
+      WHERE icao IN (?, ?)`,
       [departureIcao, arrivalIcao]
     );
     const airports = reader.getRowObjectsJS().map(toAirportRoutePoint);
@@ -233,7 +231,7 @@ class PlannerRepository {
       candidate_coordinates AS (
         SELECT admitted_ids.*, planner_navaids.latitude, planner_navaids.longitude
         FROM admitted_ids
-        JOIN planner_navaids USING (database_id)
+        JOIN main.planner_navaids AS planner_navaids USING (database_id)
       )
       SELECT
         newly_admitted.database_id AS first_database_id,
@@ -303,7 +301,7 @@ function navaidCandidateQuery(
   return {
     sql: `WITH spatial_candidates AS (
       SELECT *
-      FROM planner_navaids
+      FROM main.planner_navaids
       WHERE ${candidateFilter}
         AND ${spatialBoundsFilter(departureBounds)}
         AND ${spatialBoundsFilter(arrivalBounds)}
@@ -318,6 +316,7 @@ function navaidCandidateQuery(
         longitude,
         latitude,
         frequency_value,
+        frequency_unit,
         published_range_nm,
         magnetic_declination_deg_east,
         facility_variation_deg_east,
@@ -432,102 +431,33 @@ function radiansToDegrees(value: number): number {
 
 function vorFamilyCandidateFilter(alias?: string): string {
   const prefix = alias === undefined ? '' : `${alias}.`;
-  return `${prefix}family IN ('VOR', 'VOR-DME', 'VORTAC', 'DVOR', 'DVOR-DME', 'DVORTAC')
-    AND ${prefix}database_id IS NOT NULL AND trim(${prefix}database_id) <> ''
-    AND ${prefix}identifier IS NOT NULL AND trim(${prefix}identifier) <> ''
-    AND ${prefix}name IS NOT NULL AND trim(${prefix}name) <> ''
-    AND ${prefix}frequency_unit = 'MHz'
-    AND ${prefix}frequency_value IS NOT NULL AND isfinite(${prefix}frequency_value)
-    AND ${prefix}frequency_value > 0
-    AND ${prefix}published_range_nm IS NOT NULL
-    AND isfinite(${prefix}published_range_nm)
-    AND ${prefix}published_range_nm > 0`;
+  return `${prefix}family IN ('VOR', 'VOR-DME', 'VORTAC', 'DVOR', 'DVOR-DME', 'DVORTAC')`;
 }
 
 function ndbCandidateFilter(): string {
-  return `family = 'NDB'
-    AND database_id IS NOT NULL AND trim(database_id) <> ''
-    AND identifier IS NOT NULL AND trim(identifier) <> ''
-    AND name IS NOT NULL AND trim(name) <> ''
-    AND longitude IS NOT NULL AND isfinite(longitude)
-    AND latitude IS NOT NULL AND isfinite(latitude)
-    AND frequency_unit = 'kHz'
-    AND frequency_value IS NOT NULL AND isfinite(frequency_value)
-    AND frequency_value > 0 AND frequency_value = trunc(frequency_value)
-    AND published_range_nm IS NOT NULL
-    AND isfinite(published_range_nm)
-    AND published_range_nm > 0`;
+  return `family = 'NDB'`;
 }
 
 function toAirportRoutePoint(row: Readonly<Record<string, unknown>>): AirportRoutePoint {
-  return {
-    kind: 'airport',
-    databaseId: String(row['database_id']),
-    icao: String(row['icao']),
-    name: String(row['name']),
-    longitude: Number(row['longitude']),
-    latitude: Number(row['latitude']),
-    magneticDeclinationDegEast: nullableNumber(row['magnetic_declination_deg_east']),
-  };
+  return {kind: 'airport', ...plannerDatabaseContract.decodeAirport(row)};
 }
 
 function toVorFamilyRoutePoint(
   row: Readonly<Record<string, unknown>>
 ): VorFamilyRoutePoint {
-  const family = String(row['family']);
-  if (!isVorFamily(family)) {
-    throw new Error(`Unexpected VOR-family value: ${family}`);
+  const navaid = plannerDatabaseContract.decodeNavaid(row);
+  if (navaid.kind !== 'vor-family') {
+    throw new Error(`Expected a VOR-family row; received ${navaid.kind}.`);
   }
-
-  const facilityVariationDegEast = nullableNumber(row['facility_variation_deg_east']);
-  return {
-    kind: 'vor-family',
-    databaseId: String(row['database_id']),
-    identifier: String(row['identifier']),
-    name: String(row['name']),
-    family,
-    longitude: Number(row['longitude']),
-    latitude: Number(row['latitude']),
-    frequency: {unit: 'MHz', value: Number(row['frequency_value'])},
-    publishedRangeNm: Number(row['published_range_nm']),
-    magneticDeclinationDegEast: nullableNumber(row['magnetic_declination_deg_east']),
-    facilityVariation:
-      facilityVariationDegEast === null
-        ? null
-        : {
-            degreesEast: facilityVariationDegEast,
-            source: String(row['facility_variation_source']),
-            effectiveDate: nullableString(row['facility_variation_effective_date']),
-          },
-  };
+  return navaid;
 }
 
 function toNdbRoutePoint(row: Readonly<Record<string, unknown>>): NdbRoutePoint {
-  return {
-    kind: 'ndb',
-    databaseId: String(row['database_id']),
-    identifier: String(row['identifier']),
-    name: String(row['name']),
-    longitude: Number(row['longitude']),
-    latitude: Number(row['latitude']),
-    frequency: {unit: 'kHz', value: Number(row['frequency_value'])},
-    publishedRangeNm: Number(row['published_range_nm']),
-    magneticDeclinationDegEast: nullableNumber(row['magnetic_declination_deg_east']),
-  };
-}
-
-function nullableNumber(value: unknown): number | null {
-  return value === null ? null : Number(value);
-}
-
-function nullableString(value: unknown): string | null {
-  if (value === null) {
-    return null;
+  const navaid = plannerDatabaseContract.decodeNavaid(row);
+  if (navaid.kind !== 'ndb') {
+    throw new Error(`Expected an NDB row; received ${navaid.kind}.`);
   }
-  if (typeof value !== 'string') {
-    throw new Error('Expected a nullable database string value.');
-  }
-  return value;
+  return navaid;
 }
 
 function requiredString(value: unknown): string {
@@ -535,10 +465,6 @@ function requiredString(value: unknown): string {
     throw new Error('Expected a database string value.');
   }
   return value;
-}
-
-function isVorFamily(value: string): value is VorFamilyRoutePoint['family'] {
-  return (VOR_FAMILIES as readonly string[]).includes(value);
 }
 
 export default PlannerRepository;

@@ -5,6 +5,8 @@ import {join} from 'node:path';
 import {DuckDBInstance} from '@duckdb/node-api';
 import type {DuckDBConnection} from '@duckdb/node-api';
 
+import plannerDatabaseContract from '#radial/planner-database/PlannerDatabaseContract.js';
+
 type SyntheticAirport = Readonly<{
   databaseId: string;
   icao: string;
@@ -56,6 +58,25 @@ const NULL_METADATA: SyntheticPlannerMetadata = {
   magneticReferenceDate: null,
   magneticModelSource: null,
 };
+
+const SYNTHETIC_SNAPSHOT_ID = '00000000-0000-4000-8000-000000000001';
+const SYNTHETIC_VIEW_SOURCES = {
+  plannerAirports: {
+    createFrom: `(SELECT CAST('${SYNTHETIC_SNAPSHOT_ID}' AS UUID) AS snapshot_id, *
+      FROM synthetic_airports) AS airports`,
+    normalizedFrom: 'synthetic_airports AS airports',
+  },
+  plannerNavaids: {
+    createFrom: `(SELECT CAST('${SYNTHETIC_SNAPSHOT_ID}' AS UUID) AS snapshot_id,
+        database_id AS source_record_id, * FROM synthetic_navaids) AS navaids`,
+    normalizedFrom: 'synthetic_navaids AS navaids',
+  },
+  plannerMetadata: {
+    createFrom: `(SELECT CAST('${SYNTHETIC_SNAPSHOT_ID}' AS UUID) AS snapshot_id,
+        'synthetic-snapshot' AS snapshot_checksum, * FROM synthetic_metadata) AS snapshots`,
+    normalizedFrom: 'synthetic_metadata AS snapshots',
+  },
+} as const;
 
 async function createSyntheticPlannerDatabase(
   definition: SyntheticPlannerDatabaseDefinition = {}
@@ -146,38 +167,9 @@ async function createSyntheticPlannerDatabase(
       );
     }
 
-    await connection.run(`
-      CREATE VIEW planner_airports AS
-      SELECT
-        database_id,
-        icao,
-        name,
-        longitude,
-        latitude,
-        ST_Point(longitude, latitude) AS point,
-        magnetic_declination_deg_east
-      FROM synthetic_airports;
-
-      CREATE VIEW planner_navaids AS
-      SELECT
-        database_id,
-        identifier,
-        name,
-        family,
-        longitude,
-        latitude,
-        ST_Point(longitude, latitude) AS point,
-        frequency_value,
-        frequency_unit,
-        published_range_nm,
-        magnetic_declination_deg_east,
-        facility_variation_deg_east,
-        facility_variation_source,
-        facility_variation_effective_date
-      FROM synthetic_navaids;
-
-      CREATE VIEW planner_metadata AS SELECT * FROM synthetic_metadata;
-    `);
+    await connection.run(
+      plannerDatabaseContract.createCanonicalViews(SYNTHETIC_VIEW_SOURCES).createSql
+    );
   } catch (error) {
     await rm(temporaryDirectory, {recursive: true});
     throw error;
