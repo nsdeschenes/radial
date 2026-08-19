@@ -1,4 +1,5 @@
 import type {DuckDBInstance} from '@duckdb/node-api';
+import * as Sentry from '@sentry/node';
 
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import reloadNavaids from '#radial/data-producer/internal/NavaidDataProducer.js';
@@ -41,10 +42,17 @@ async function ensureFirstNavaidSnapshot(
   }
 
   if (readiness === 'ready') {
+    Sentry.logger.debug('Existing Navaid Snapshot is ready', {
+      'radial.navaid.bootstrap_required': false,
+    });
     return {ok: true};
   }
 
   if (readiness === 'credentials-missing') {
+    Sentry.logger.warn('Navaid Snapshot bootstrap requires OpenAIP credentials', {
+      'radial.failure.code': 'DATA_CREDENTIALS_MISSING',
+      'radial.navaid.bootstrap_required': true,
+    });
     return {
       ok: false,
       failure: {
@@ -57,12 +65,21 @@ async function ensureFirstNavaidSnapshot(
     };
   }
 
+  Sentry.logger.info('Navaid Snapshot bootstrap started', {
+    'radial.navaid.bootstrap_required': true,
+  });
   const reloaded = await reloadNavaids(
     instance,
     {openAipApiKey},
     publicationGate,
     dependencies
   );
+  if (reloaded.ok) {
+    Sentry.logger.info('Navaid Snapshot bootstrap completed', {
+      'radial.navaid.snapshot_id': reloaded.value.snapshotId,
+    });
+  }
+
   return reloaded.ok ? {ok: true} : reloaded;
 }
 

@@ -1,4 +1,5 @@
 import type {DuckDBInstance} from '@duckdb/node-api';
+import * as Sentry from '@sentry/node';
 
 import abortableOperation from '#radial/application/internal/AbortableOperation.js';
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
@@ -50,7 +51,19 @@ async function reloadNavaids(
 
   request.onProgress?.({stage: 'database', message: 'Preparing Producer Schema.'});
   try {
-    await publicationGate.run(() => initializeProducerSchema(instance), request.signal);
+    await Sentry.startSpan(
+      {
+        name: 'Prepare Producer Schema',
+        op: 'db.query',
+        attributes: {
+          'db.operation.name': 'initialize',
+          'db.query.summary': 'producer schema',
+          'db.system.name': 'duckdb',
+        },
+      },
+      () =>
+        publicationGate.run(() => initializeProducerSchema(instance), request.signal)
+    );
     abortableOperation.throwIfAborted(request.signal);
   } catch (error) {
     rethrowIfInterrupted(error, request.signal);
@@ -67,22 +80,44 @@ async function reloadNavaids(
   abortableOperation.throwIfAborted(request.signal);
   let captured: Awaited<ReturnType<typeof captureOpenAIPNavaids>>;
   request.onProgress?.({stage: 'openaip', message: 'Acquiring OpenAIP Navaids.'});
+  Sentry.logger.info('OpenAIP Navaid acquisition started', {
+    'radial.data.source': 'openaip',
+  });
   try {
-    captured = await captureOpenAIPNavaids({
-      transport: (
-        dependencies.createOpenAIPTransport ?? createProductionOpenAIPNavaidTransport
-      )(request.openAipApiKey),
-      now,
-      onProgress(progress) {
-        request.onProgress?.({
-          stage: 'openaip',
-          message:
-            `fetching Navaids page ${progress.page}/${progress.totalPages} ` +
-            `(${progress.cumulativeRecordCount} records)`,
-        });
-      },
-      ...(request.signal === undefined ? {} : {signal: request.signal}),
+    captured = await Sentry.startSpan(
+      {name: 'Acquire OpenAIP Navaids', op: 'task'},
+      () =>
+        captureOpenAIPNavaids({
+          transport: (
+            dependencies.createOpenAIPTransport ?? createProductionOpenAIPNavaidTransport
+          )(request.openAipApiKey),
+          now,
+          onProgress(progress) {
+            Sentry.logger.debug('OpenAIP Navaid page acquired', {
+              'radial.data.source': 'openaip',
+              'radial.navaid.cumulative_record_count': progress.cumulativeRecordCount,
+              'radial.navaid.page': progress.page,
+              'radial.navaid.total_pages': progress.totalPages,
+            });
+            request.onProgress?.({
+              stage: 'openaip',
+              message:
+                `fetching Navaids page ${progress.page}/${progress.totalPages} ` +
+                `(${progress.cumulativeRecordCount} records)`,
+            });
+          },
+          ...(request.signal === undefined ? {} : {signal: request.signal}),
+        })
+    );
+    Sentry.logger.info('OpenAIP Navaid acquisition completed', {
+      'radial.data.source': 'openaip',
+      'radial.navaid.raw_count': captured.rawNavaids.length,
     });
+    Sentry.metrics.distribution(
+      'radial.integration.records_acquired',
+      captured.rawNavaids.length,
+      {attributes: {record_type: 'navaid', source: 'openaip'}}
+    );
   } catch (error) {
     rethrowIfInterrupted(error, request.signal);
     const code: RadialApplicationTypes['DataFailure']['code'] =
@@ -97,6 +132,10 @@ async function reloadNavaids(
             } as const
           )[error.code]
         : 'DATA_OPENAIP_UNAVAILABLE';
+    Sentry.logger.error('OpenAIP Navaid acquisition failed', {
+      'radial.data.source': 'openaip',
+      'radial.failure.code': code,
+    });
     return failure(
       code,
       'OpenAIP Navaid acquisition failed.',
@@ -109,16 +148,30 @@ async function reloadNavaids(
   let faaNasrCycles: FAANasrCycles;
   abortableOperation.throwIfAborted(request.signal);
   request.onProgress?.({stage: 'nasr', message: 'Acquiring FAA NASR data.'});
+  Sentry.logger.info('FAA NASR acquisition started', {
+    'radial.data.source': 'faa-nasr',
+  });
   try {
-    faaNasrCycles = await (
-      dependencies.acquireFAANasrCycles ?? acquireProductionFAANasrCycle
-    )(captured.retrievedAt, request.signal);
+    faaNasrCycles = await Sentry.startSpan(
+      {name: 'Acquire FAA NASR cycle', op: 'task'},
+      () =>
+        (dependencies.acquireFAANasrCycles ?? acquireProductionFAANasrCycle)(
+          captured.retrievedAt,
+          request.signal
+        )
+    );
   } catch (error) {
     rethrowIfInterrupted(error, request.signal);
-    return failure(
+    const code =
       error instanceof FAANasrCycleSourceError && error.code === 'invalid-response'
         ? 'DATA_NASR_INVALID_RESPONSE'
-        : 'DATA_NASR_UNAVAILABLE',
+        : 'DATA_NASR_UNAVAILABLE';
+    Sentry.logger.error('FAA NASR acquisition failed', {
+      'radial.data.source': 'faa-nasr',
+      'radial.failure.code': code,
+    });
+    return failure(
+      code,
       'FAA NASR acquisition failed.',
       error instanceof FAANasrCycleSourceError && error.code === 'invalid-response'
         ? 'The applicable FAA NASR archive response is invalid.'
@@ -130,9 +183,27 @@ async function reloadNavaids(
 
   try {
     abortableOperation.throwIfAborted(request.signal);
-    faaNasrFacilityVariation.selectApplicableCycle(faaNasrCycles, captured.retrievedAt);
+    const selectedCycle = faaNasrFacilityVariation.selectApplicableCycle(
+      faaNasrCycles,
+      captured.retrievedAt
+    );
+    Sentry.logger.info('FAA NASR acquisition completed', {
+      'radial.data.source': 'faa-nasr',
+      'radial.nasr.cycle_id': selectedCycle.cycleId,
+      'radial.nasr.effective_date': selectedCycle.effectiveDate,
+      'radial.nasr.record_count': selectedCycle.records.length,
+    });
+    Sentry.metrics.distribution(
+      'radial.integration.records_acquired',
+      selectedCycle.records.length,
+      {attributes: {record_type: 'navaid', source: 'faa-nasr'}}
+    );
   } catch (error) {
     rethrowIfInterrupted(error, request.signal);
+    Sentry.logger.error('FAA NASR source validation failed', {
+      'radial.data.source': 'faa-nasr',
+      'radial.failure.code': 'DATA_NASR_INVALID_RESPONSE',
+    });
     return failure(
       'DATA_NASR_INVALID_RESPONSE',
       'FAA NASR source validation failed.',
@@ -147,21 +218,33 @@ async function reloadNavaids(
   request.onProgress?.({stage: 'derive', message: 'calculating magnetic data'});
   let candidate: ReturnType<typeof buildNavaidSnapshotCandidate>;
   try {
-    candidate = buildNavaidSnapshotCandidate({
-      faaNasrCycles,
-      rawNavaids: captured.rawNavaids,
-      provenance: {
-        sourceIdentity:
-          'openaip-core-api:/navaids:contract-1.1:limit-1000:sort-_id-ascending',
-        derivationPolicyIdentity: 'radial:navaid-derivation:v1',
-        matchingPolicyIdentity: 'radial:faa-nasr-match:v1',
-      },
-      retrievedAt: captured.retrievedAt,
-      retrievalCompletedAt: now().toISOString(),
+    candidate = Sentry.startSpan(
+      {name: 'Derive Navaid Snapshot candidate', op: 'function'},
+      () =>
+        buildNavaidSnapshotCandidate({
+          faaNasrCycles,
+          rawNavaids: captured.rawNavaids,
+          provenance: {
+            sourceIdentity:
+              'openaip-core-api:/navaids:contract-1.1:limit-1000:sort-_id-ascending',
+            derivationPolicyIdentity: 'radial:navaid-derivation:v1',
+            matchingPolicyIdentity: 'radial:faa-nasr-match:v1',
+          },
+          retrievedAt: captured.retrievedAt,
+          retrievalCompletedAt: now().toISOString(),
+        })
+    );
+    Sentry.logger.info('Navaid Snapshot candidate derived', {
+      'radial.navaid.exclusion_count': candidate.exclusions.length,
+      'radial.navaid.planner_count': candidate.plannerNavaids.length,
+      'radial.navaid.raw_count': candidate.rawNavaids.length,
     });
   } catch (error) {
     rethrowIfInterrupted(error, request.signal);
     if (error instanceof Error && error.message.startsWith('WMM2025 ')) {
+      Sentry.logger.error('Navaid Snapshot magnetic derivation failed', {
+        'radial.failure.code': 'DATA_MAGNETIC_MODEL_INVALID',
+      });
       return failure(
         'DATA_MAGNETIC_MODEL_INVALID',
         'Local Magnetic Declination calculation failed.',
@@ -171,6 +254,9 @@ async function reloadNavaids(
       );
     }
 
+    Sentry.logger.error('Navaid Snapshot derivation failed', {
+      'radial.failure.code': 'DATA_DERIVATION_FAILED',
+    });
     return failure(
       'DATA_DERIVATION_FAILED',
       'Navaid Snapshot derivation failed.',
@@ -183,13 +269,39 @@ async function reloadNavaids(
   abortableOperation.throwIfAborted(request.signal);
   request.onProgress?.({stage: 'publish', message: 'publishing Navaid Snapshot'});
   try {
-    const published = await publishNavaidSnapshot(instance, candidate, publicationGate, {
-      ...(dependencies.beforeNavaidCommit === undefined
-        ? {}
-        : {beforeCommit: dependencies.beforeNavaidCommit}),
-      ...(request.signal === undefined ? {} : {signal: request.signal}),
-    });
+    const published = await Sentry.startSpan(
+      {
+        name: 'Publish Navaid Snapshot',
+        op: 'db.query',
+        attributes: {
+          'db.operation.name': 'publish',
+          'db.query.summary': 'Navaid Snapshot',
+          'db.system.name': 'duckdb',
+        },
+      },
+      () =>
+        publishNavaidSnapshot(instance, candidate, publicationGate, {
+          ...(dependencies.beforeNavaidCommit === undefined
+            ? {}
+            : {beforeCommit: dependencies.beforeNavaidCommit}),
+          ...(request.signal === undefined ? {} : {signal: request.signal}),
+        })
+    );
     request.onProgress?.({stage: 'complete', message: 'Navaid Snapshot committed.'});
+    Sentry.logger.info('Navaid Snapshot published', {
+      'radial.navaid.exclusion_count': candidate.exclusions.length,
+      'radial.navaid.planner_count': candidate.plannerNavaids.length,
+      'radial.navaid.snapshot_id': published.snapshotId,
+    });
+    for (const [kind, count] of [
+      ['excluded', candidate.exclusions.length],
+      ['planner', candidate.plannerNavaids.length],
+      ['raw', candidate.rawNavaids.length],
+    ] as const) {
+      Sentry.metrics.gauge('radial.product.navaid_records', count, {
+        attributes: {kind},
+      });
+    }
     return {
       ok: true,
       value: {
@@ -208,6 +320,9 @@ async function reloadNavaids(
     }
 
     if (error instanceof NavaidSnapshotValidationError) {
+      Sentry.logger.error('Navaid Snapshot publication validation failed', {
+        'radial.failure.code': 'DATA_VALIDATION_FAILED',
+      });
       return failure(
         'DATA_VALIDATION_FAILED',
         'Navaid Snapshot validation failed.',
@@ -217,6 +332,13 @@ async function reloadNavaids(
       );
     }
 
+    Sentry.logger.error('Navaid Snapshot publication failed', {
+      'radial.data.active_preserved':
+        error instanceof NavaidSnapshotPublicationError
+          ? error.activeDataPreserved
+          : false,
+      'radial.failure.code': 'DATA_PUBLICATION_FAILED',
+    });
     return failure(
       'DATA_PUBLICATION_FAILED',
       'Navaid Snapshot publication failed.',

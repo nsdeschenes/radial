@@ -1,3 +1,5 @@
+import * as Sentry from '@sentry/node';
+
 import abortableOperation from '#radial/application/internal/AbortableOperation.js';
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
 import parseJsonWithUniqueKeys from '#radial/data-producer/internal/JsonWithUniqueKeys.js';
@@ -247,7 +249,14 @@ async function requestPageWithRetry(
         );
       }
 
-      await waitBeforeRetry(attempt, undefined, requestStartedAtMs, dependencies);
+      await waitBeforeRetry(
+        page,
+        attempt,
+        undefined,
+        undefined,
+        requestStartedAtMs,
+        dependencies
+      );
       continue;
     }
 
@@ -286,8 +295,10 @@ async function requestPageWithRetry(
     }
 
     await waitBeforeRetry(
+      page,
       attempt,
       headerValue(response.headers, 'retry-after'),
+      response.status,
       requestStartedAtMs,
       dependencies
     );
@@ -297,8 +308,10 @@ async function requestPageWithRetry(
 }
 
 async function waitBeforeRetry(
+  page: number,
   failedAttempt: number,
   retryAfter: string | undefined,
+  statusCode: number | undefined,
   requestStartedAtMs: number,
   dependencies: CaptureDependencies
 ): Promise<void> {
@@ -309,6 +322,19 @@ async function waitBeforeRetry(
     throw new Error('OpenAIP Navaid request exceeded its 5-minute elapsed ceiling.');
   }
 
+  Sentry.logger.warn('OpenAIP Navaid request scheduled for retry', {
+    'http.request.resend_count': failedAttempt,
+    ...(statusCode === undefined ? {} : {'http.response.status_code': statusCode}),
+    'radial.data.source': 'openaip',
+    'radial.navaid.page': page,
+    'radial.retry.delay_ms': delayMs,
+  });
+  Sentry.metrics.count('radial.integration.retry', 1, {
+    attributes: {
+      cause: statusCode === undefined ? 'transport' : 'http-response',
+      source: 'openaip',
+    },
+  });
   await abortableOperation.awaitWithAbort(
     dependencies.sleep(delayMs),
     dependencies.signal
