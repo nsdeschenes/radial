@@ -1,245 +1,235 @@
-import coverage from '#radial/route-planner/internal/coverage.js';
+import progressiveDiscovery from '#radial/route-planner/internal/progressiveDiscovery.js';
+import routeGraph from '#radial/route-planner/internal/routeGraph.js';
 import type RouteSearchTypes from '#radial/route-planner/internal/RouteSearchTypes.js';
-import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
 
-type NavaidRoutePoint =
-  | RoutePlannerTypes['VorFamilyRoutePoint']
-  | RoutePlannerTypes['NdbRoutePoint'];
-
-type RouteCandidate = Readonly<{
-  routePoint: NavaidRoutePoint;
-  departureDistanceNm: number;
-  arrivalDistanceNm: number;
-}>;
-
+type CandidateFamily = RouteSearchTypes['CandidateFamily'];
+type MeasuredCandidate = RouteSearchTypes['MeasuredCandidate'];
 type NavaidPairDistance = RouteSearchTypes['NavaidPairDistance'];
+type RouteSearchDataSource = RouteSearchTypes['RouteSearchDataSource'];
+type RouteSearchResult = RouteSearchTypes['RouteSearchResult'];
+type SelectedRoute = RouteSearchTypes['SelectedRoute'];
+type IncrementalRouteGraph = ReturnType<typeof routeGraph.createGraph>;
 
-type SelectedRoute = Readonly<{
-  navaids: readonly NavaidRoutePoint[];
-  legDistancesNm: readonly number[];
-  totalDistanceNm: number;
-}>;
+type ProgressiveSearchResult =
+  | Readonly<{status: 'completed'; route: SelectedRoute | undefined}>
+  | Readonly<{status: 'failed'}>;
 
-type SearchRoute = SelectedRoute & Readonly<{currentDatabaseId: string}>;
-
-type Adjacency = Readonly<{databaseId: string; distanceNm: number}>;
-
-function selectOptimalRoute(
-  candidates: readonly RouteCandidate[],
-  navaidPairDistances: readonly NavaidPairDistance[],
-  maximumDistanceNm: number
-): SelectedRoute | undefined {
-  const graph = createGraph();
-  graph.admit(candidates, navaidPairDistances);
-  return graph.selectOptimalRoute(maximumDistanceNm);
-}
-
-class IncrementalRouteGraph {
-  readonly #adjacencyByDatabaseId = new Map<string, Adjacency[]>();
-  readonly #candidateByDatabaseId = new Map<string, RouteCandidate>();
-  readonly #comparedPairKeys = new Set<string>();
-
-  admit(
-    candidates: readonly RouteCandidate[],
-    navaidPairDistances: readonly NavaidPairDistance[]
-  ): void {
-    for (const candidate of candidates) {
-      const databaseId = candidate.routePoint.databaseId;
-      if (this.#candidateByDatabaseId.has(databaseId)) {
-        throw new Error(
-          `Route graph candidate was admitted more than once: ${databaseId}`
-        );
-      }
-      this.#candidateByDatabaseId.set(databaseId, candidate);
-      this.#adjacencyByDatabaseId.set(databaseId, []);
-    }
-
-    for (const leg of navaidPairDistances) {
-      const pairKey = [leg.firstDatabaseId, leg.secondDatabaseId].toSorted().join('\0');
-      if (this.#comparedPairKeys.has(pairKey)) {
-        throw new Error(
-          `Route graph candidate pair was compared more than once: ${pairKey}`
-        );
-      }
-      this.#comparedPairKeys.add(pairKey);
-      const first = this.#candidateByDatabaseId.get(leg.firstDatabaseId);
-      const second = this.#candidateByDatabaseId.get(leg.secondDatabaseId);
-      if (
-        first === undefined ||
-        second === undefined ||
-        leg.firstDatabaseId === leg.secondDatabaseId ||
-        !coverage.isNavaidToNavaidNavigable(
-          leg.distanceNm,
-          first.routePoint.publishedRangeNm,
-          second.routePoint.publishedRangeNm
-        )
-      ) {
-        continue;
-      }
-
-      this.#adjacencyByDatabaseId
-        .get(leg.firstDatabaseId)
-        ?.push({databaseId: leg.secondDatabaseId, distanceNm: leg.distanceNm});
-      this.#adjacencyByDatabaseId
-        .get(leg.secondDatabaseId)
-        ?.push({databaseId: leg.firstDatabaseId, distanceNm: leg.distanceNm});
-    }
+async function findRoute(
+  dataSource: RouteSearchDataSource,
+  maxRouteFactor: number
+): Promise<RouteSearchResult> {
+  let directDistanceNm: number;
+  try {
+    directDistanceNm = await dataSource.directDistanceNm();
+  } catch {
+    return {status: 'failed', phase: 'vor-family'};
+  }
+  if (!Number.isFinite(directDistanceNm) || directDistanceNm < 0) {
+    throw new Error(`Route Search received invalid direct distance: ${directDistanceNm}`);
   }
 
-  selectOptimalRoute(maximumDistanceNm: number): SelectedRoute | undefined {
-    const routesByDatabaseId = new Map<string, SearchRoute[]>();
-    const pendingRoutes: SearchRoute[] = [];
-    let bestCompleteRoute: SelectedRoute | undefined;
-
-    for (const candidate of this.#candidateByDatabaseId.values()) {
-      if (
-        coverage.isAirportToNavaidNavigable(
-          candidate.departureDistanceNm,
-          candidate.routePoint.publishedRangeNm
-        ) &&
-        candidate.departureDistanceNm <= maximumDistanceNm
-      ) {
-        addRouteIfNondominated(
-          {
-            currentDatabaseId: candidate.routePoint.databaseId,
-            navaids: [candidate.routePoint],
-            legDistancesNm: [candidate.departureDistanceNm],
-            totalDistanceNm: candidate.departureDistanceNm,
-          },
-          routesByDatabaseId,
-          pendingRoutes
-        );
-      }
-    }
-
-    while (pendingRoutes.length > 0) {
-      pendingRoutes.sort(compareSelectedRoutes);
-      const route = pendingRoutes.shift();
-      if (
-        route === undefined ||
-        !routesByDatabaseId.get(route.currentDatabaseId)?.includes(route)
-      ) {
-        continue;
-      }
-
-      const currentCandidate = this.#candidateByDatabaseId.get(route.currentDatabaseId);
-      if (currentCandidate === undefined) {
-        continue;
-      }
-
-      if (
-        coverage.isAirportToNavaidNavigable(
-          currentCandidate.arrivalDistanceNm,
-          currentCandidate.routePoint.publishedRangeNm
-        )
-      ) {
-        const completeRoute = appendArrival(route, currentCandidate.arrivalDistanceNm);
-        if (
-          completeRoute.totalDistanceNm <= maximumDistanceNm &&
-          (bestCompleteRoute === undefined ||
-            compareSelectedRoutes(completeRoute, bestCompleteRoute) < 0)
-        ) {
-          bestCompleteRoute = completeRoute;
-        }
-      }
-
-      for (const adjacent of this.#adjacencyByDatabaseId.get(route.currentDatabaseId) ??
-        []) {
-        const adjacentCandidate = this.#candidateByDatabaseId.get(adjacent.databaseId);
-        if (adjacentCandidate === undefined) {
-          continue;
-        }
-        const extendedRoute: SearchRoute = {
-          currentDatabaseId: adjacent.databaseId,
-          navaids: [...route.navaids, adjacentCandidate.routePoint],
-          legDistancesNm: [...route.legDistancesNm, adjacent.distanceNm],
-          totalDistanceNm: route.totalDistanceNm + adjacent.distanceNm,
-        };
-        if (extendedRoute.totalDistanceNm <= maximumDistanceNm) {
-          addRouteIfNondominated(extendedRoute, routesByDatabaseId, pendingRoutes);
-        }
-      }
-    }
-
-    return bestCompleteRoute;
-  }
-}
-
-function createGraph(): IncrementalRouteGraph {
-  return new IncrementalRouteGraph();
-}
-
-function addRouteIfNondominated(
-  route: SearchRoute,
-  routesByDatabaseId: Map<string, SearchRoute[]>,
-  pendingRoutes: SearchRoute[]
-): void {
-  const routes = routesByDatabaseId.get(route.currentDatabaseId) ?? [];
-  if (routes.some(existingRoute => dominates(existingRoute, route))) {
-    return;
-  }
-  routesByDatabaseId.set(
-    route.currentDatabaseId,
-    routes.filter(existingRoute => !dominates(route, existingRoute)).concat(route)
+  const graph = routeGraph.createGraph();
+  const admittedDatabaseIds: string[] = [];
+  const maximumRouteDistanceNm = directDistanceNm * maxRouteFactor;
+  const vorFamilySearch = await searchProgressively(
+    dataSource,
+    'vor-family',
+    directDistanceNm,
+    maxRouteFactor,
+    maximumRouteDistanceNm,
+    graph,
+    admittedDatabaseIds
   );
-  pendingRoutes.push(route);
-}
+  if (vorFamilySearch.status === 'failed') {
+    return {status: 'failed', phase: 'vor-family'};
+  }
+  if (vorFamilySearch.route !== undefined) {
+    return {
+      status: 'found',
+      route: vorFamilySearch.route,
+      searchMode: 'vor-family',
+    };
+  }
 
-function appendArrival(route: SearchRoute, arrivalDistanceNm: number): SelectedRoute {
+  const ndbSearch = await searchProgressively(
+    dataSource,
+    'ndb',
+    directDistanceNm,
+    maxRouteFactor,
+    maximumRouteDistanceNm,
+    graph,
+    admittedDatabaseIds
+  );
+  if (ndbSearch.status === 'failed') {
+    return {status: 'failed', phase: 'ndb-fallback'};
+  }
+  if (ndbSearch.route !== undefined) {
+    return {
+      status: 'found',
+      route: ndbSearch.route,
+      searchMode: 'ndb-fallback',
+    };
+  }
+
   return {
-    navaids: route.navaids,
-    legDistancesNm: [...route.legDistancesNm, arrivalDistanceNm],
-    totalDistanceNm: route.totalDistanceNm + arrivalDistanceNm,
+    status: 'exhausted',
+    completedSearchFactors: progressiveDiscovery.scheduledFactors(maxRouteFactor),
   };
 }
 
-function dominates(first: SearchRoute, second: SearchRoute): boolean {
-  if (
-    first.totalDistanceNm > second.totalDistanceNm ||
-    first.legDistancesNm.length > second.legDistancesNm.length
-  ) {
-    return false;
-  }
-  return (
-    first.legDistancesNm.length < second.legDistancesNm.length ||
-    compareNavaidSequences(first.navaids, second.navaids) <= 0
+async function searchProgressively(
+  dataSource: RouteSearchDataSource,
+  family: CandidateFamily,
+  directDistanceNm: number,
+  maxRouteFactor: number,
+  maximumRouteDistanceNm: number,
+  graph: IncrementalRouteGraph,
+  admittedDatabaseIds: string[]
+): Promise<ProgressiveSearchResult> {
+  const discoverySession = progressiveDiscovery.createSession<MeasuredCandidate>(
+    directDistanceNm,
+    maxRouteFactor
   );
-}
+  let selectedRoute: SelectedRoute | undefined;
 
-function compareSelectedRoutes(first: SelectedRoute, second: SelectedRoute): number {
-  return (
-    compareNumber(first.totalDistanceNm, second.totalDistanceNm) ||
-    compareNumber(first.legDistancesNm.length, second.legDistancesNm.length) ||
-    compareNavaidSequences(first.navaids, second.navaids)
-  );
-}
-
-function compareNavaidSequences(
-  first: readonly NavaidRoutePoint[],
-  second: readonly NavaidRoutePoint[]
-): number {
-  for (let index = 0; index < Math.min(first.length, second.length); index += 1) {
-    const firstNavaid = first[index];
-    const secondNavaid = second[index];
-    if (firstNavaid === undefined || secondNavaid === undefined) {
-      continue;
+  for (;;) {
+    const nextLimitNm = discoverySession.nextLimitNm(selectedRoute?.totalDistanceNm);
+    if (nextLimitNm === undefined) {
+      return {status: 'completed', route: selectedRoute};
     }
-    const identityComparison =
-      compareString(firstNavaid.identifier, secondNavaid.identifier) ||
-      compareString(firstNavaid.databaseId, secondNavaid.databaseId);
-    if (identityComparison !== 0) {
-      return identityComparison;
+
+    let measuredCandidates: readonly MeasuredCandidate[];
+    try {
+      measuredCandidates = await dataSource.findNewCandidates(
+        family,
+        nextLimitNm,
+        discoverySession.measuredDatabaseIds
+      );
+    } catch {
+      return {status: 'failed'};
+    }
+    validateMeasuredCandidates(family, measuredCandidates);
+    const newlyAdmittedCandidates = discoverySession.admitMeasuredCandidates(
+      measuredCandidates,
+      nextLimitNm
+    );
+    if (newlyAdmittedCandidates.length > 0) {
+      let newPairDistances: readonly NavaidPairDistance[];
+      try {
+        newPairDistances = await dataSource.findNewPairs(
+          newlyAdmittedCandidates,
+          admittedDatabaseIds
+        );
+      } catch {
+        return {status: 'failed'};
+      }
+      validateNewPairDistances(
+        newlyAdmittedCandidates,
+        admittedDatabaseIds,
+        newPairDistances
+      );
+      graph.admit(newlyAdmittedCandidates, newPairDistances);
+      admittedDatabaseIds.push(
+        ...newlyAdmittedCandidates.map(candidate => candidate.routePoint.databaseId)
+      );
+      selectedRoute = graph.selectOptimalRoute(maximumRouteDistanceNm);
     }
   }
-  return compareNumber(first.length, second.length);
 }
 
-function compareNumber(first: number, second: number): number {
-  return first < second ? -1 : first > second ? 1 : 0;
+function validateMeasuredCandidates(
+  family: CandidateFamily,
+  candidates: readonly MeasuredCandidate[]
+): void {
+  for (const candidate of candidates) {
+    const {databaseId, kind} = candidate.routePoint;
+    if (databaseId.trim() === '') {
+      throw new Error('Route Search received a candidate with a blank database ID.');
+    }
+    if (kind !== family) {
+      throw new Error(
+        `Route Search received a ${kind} candidate during ${family} discovery: ${databaseId}`
+      );
+    }
+    if (
+      !Number.isFinite(candidate.departureDistanceNm) ||
+      candidate.departureDistanceNm < 0 ||
+      !Number.isFinite(candidate.arrivalDistanceNm) ||
+      candidate.arrivalDistanceNm < 0
+    ) {
+      throw new Error(
+        `Route Search received invalid endpoint distances for candidate: ${databaseId}`
+      );
+    }
+  }
 }
 
-function compareString(first: string, second: string): number {
-  return first < second ? -1 : first > second ? 1 : 0;
+function validateNewPairDistances(
+  newlyAdmittedCandidates: readonly MeasuredCandidate[],
+  admittedDatabaseIds: readonly string[],
+  pairDistances: readonly NavaidPairDistance[]
+): void {
+  const newlyAdmittedIds = newlyAdmittedCandidates.map(
+    candidate => candidate.routePoint.databaseId
+  );
+  const newlyAdmittedIdSet = new Set(newlyAdmittedIds);
+  const allAdmittedIds = [...admittedDatabaseIds, ...newlyAdmittedIds];
+  const allAdmittedIdSet = new Set(allAdmittedIds);
+  const expectedPairKeys = new Set<string>();
+  for (let firstIndex = 0; firstIndex < allAdmittedIds.length; firstIndex += 1) {
+    for (
+      let secondIndex = firstIndex + 1;
+      secondIndex < allAdmittedIds.length;
+      secondIndex += 1
+    ) {
+      const firstDatabaseId = allAdmittedIds[firstIndex];
+      const secondDatabaseId = allAdmittedIds[secondIndex];
+      if (
+        firstDatabaseId !== undefined &&
+        secondDatabaseId !== undefined &&
+        (newlyAdmittedIdSet.has(firstDatabaseId) ||
+          newlyAdmittedIdSet.has(secondDatabaseId))
+      ) {
+        expectedPairKeys.add(pairKey(firstDatabaseId, secondDatabaseId));
+      }
+    }
+  }
+
+  const measuredPairKeys = new Set<string>();
+  for (const pairDistance of pairDistances) {
+    const {firstDatabaseId, secondDatabaseId, distanceNm} = pairDistance;
+    if (
+      firstDatabaseId === secondDatabaseId ||
+      !allAdmittedIdSet.has(firstDatabaseId) ||
+      !allAdmittedIdSet.has(secondDatabaseId) ||
+      (!newlyAdmittedIdSet.has(firstDatabaseId) &&
+        !newlyAdmittedIdSet.has(secondDatabaseId))
+    ) {
+      throw new Error(
+        `Route Search received an unexpected candidate pair: ${firstDatabaseId}, ${secondDatabaseId}`
+      );
+    }
+    if (!Number.isFinite(distanceNm) || distanceNm < 0) {
+      throw new Error(
+        `Route Search received an invalid candidate-pair distance: ${firstDatabaseId}, ${secondDatabaseId}`
+      );
+    }
+    const key = pairKey(firstDatabaseId, secondDatabaseId);
+    if (measuredPairKeys.has(key)) {
+      throw new Error(`Route Search received a duplicate candidate pair: ${key}`);
+    }
+    measuredPairKeys.add(key);
+  }
+
+  for (const expectedPairKey of expectedPairKeys) {
+    if (!measuredPairKeys.has(expectedPairKey)) {
+      throw new Error(`Route Search did not receive candidate pair: ${expectedPairKey}`);
+    }
+  }
 }
 
-export default {createGraph, selectOptimalRoute};
+function pairKey(firstDatabaseId: string, secondDatabaseId: string): string {
+  return [firstDatabaseId, secondDatabaseId].toSorted().join('\0');
+}
+
+export default {findRoute};

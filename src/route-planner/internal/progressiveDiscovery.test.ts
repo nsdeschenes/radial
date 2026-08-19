@@ -1,6 +1,6 @@
 import {expect, test} from 'vitest';
 
-import discovery from '#radial/route-planner/internal/progressiveVorFamilyDiscovery.js';
+import discovery from '#radial/route-planner/internal/progressiveDiscovery.js';
 
 test('widens through the scheduled endpoint ellipses and stops at the configured or VOR-family ceiling', () => {
   expect(discovery.scheduledLimitsNm(100, 2)).toEqual([100 * 1.1, 100 * 1.25, 100 * 1.5]);
@@ -57,16 +57,6 @@ test('admits only candidates newly inside the inclusive endpoint ellipse', () =>
   expect(discovery.isNewlyAdmitted(0, undefined, 0)).toBe(true);
   expect(discovery.isNewlyAdmitted(100, 100, 110)).toBe(false);
   expect(discovery.isNewlyAdmitted(110 + Number.EPSILON * 64, 100, 110)).toBe(false);
-});
-
-test('splits conservative endpoint bounds at the antimeridian and spans all longitude near a pole', () => {
-  expect(discovery.conservativeBounds({longitude: 179, latitude: 0}, 120)).toEqual([
-    expect.objectContaining({maximumLongitude: 180}),
-    expect.objectContaining({minimumLongitude: -180}),
-  ]);
-  expect(discovery.conservativeBounds({longitude: 20, latitude: 89}, 120)).toEqual([
-    expect.objectContaining({minimumLongitude: -180, maximumLongitude: 180}),
-  ]);
 });
 
 function candidate(
