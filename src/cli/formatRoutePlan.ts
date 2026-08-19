@@ -102,7 +102,7 @@ const navaidColumns: readonly TableColumn<
     render: navaid =>
       navaid.frequency.unit === 'MHz'
         ? `${navaid.frequency.value.toFixed(2)} MHz`
-        : `${navaid.frequency.value.toFixed(0)} kHz`,
+        : `${String(navaid.frequency.value)} kHz`,
   },
   {
     header: 'Published Range',

@@ -338,12 +338,12 @@ test('returns a successful NDB-fallback Route Plan only after VOR-family exhaust
     expect.objectContaining({
       kind: 'ndb',
       identifier: 'NDB-A',
-      frequency: {unit: 'kHz', value: 365},
+      frequency: {unit: 'kHz', value: 365.5},
     }),
     expect.objectContaining({
       kind: 'ndb',
       identifier: 'NDB-B',
-      frequency: {unit: 'kHz', value: 365},
+      frequency: {unit: 'kHz', value: 365.5},
     }),
   ]);
   expect(result.value.warnings).toContainEqual({code: 'ndb-fallback-used'});
@@ -966,7 +966,7 @@ function syntheticNdb(
       publishedRangeNm,
       latitude
     ),
-    frequencyValue: 365,
+    frequencyValue: 365.5,
     frequencyUnit: 'kHz',
   } as const;
 }

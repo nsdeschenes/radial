@@ -705,7 +705,7 @@ test('writes a degraded NDB Route Plan to stdout, ordered warnings to stderr, an
         family: 'NDB',
         longitude: 1,
         latitude: 0,
-        frequencyValue: 365,
+        frequencyValue: 365.5,
         frequencyUnit: 'kHz',
         publishedRangeNm: 61,
       },
@@ -735,7 +735,7 @@ test('writes a degraded NDB Route Plan to stdout, ordered warnings to stderr, an
       '\n' +
       'Navaids\n' +
       'Identifier  Type  Frequency  Published Range\n' +
-      'NDX         NDB     365 kHz          61.0 NM\n',
+      'NDX         NDB   365.5 kHz          61.0 NM\n',
     stderr:
       'Warning: NDB fallback was used after the VOR-family search was exhausted.\n' +
       'Warning: Route Leg 1 departure magnetic course is unavailable at AAAA because Local Magnetic Declination is unavailable.\n' +
