@@ -1,3 +1,5 @@
+import * as Sentry from '@sentry/node';
+
 import progressiveDiscovery from '#radial/route-planner/internal/progressiveDiscovery.js';
 import routeGraph from '#radial/route-planner/internal/routeGraph.js';
 import type RouteSearchTypes from '#radial/route-planner/internal/RouteSearchTypes.js';
@@ -32,14 +34,22 @@ async function findRoute(
   const graph = routeGraph.createGraph();
   const admittedDatabaseIds: string[] = [];
   const maximumRouteDistanceNm = directDistanceNm * maxRouteFactor;
-  const vorFamilySearch = await searchProgressively(
-    dataSource,
-    'vor-family',
-    directDistanceNm,
-    maxRouteFactor,
-    maximumRouteDistanceNm,
-    graph,
-    admittedDatabaseIds
+  const vorFamilySearch = await Sentry.startSpan(
+    {
+      name: 'Search VOR-family routes',
+      op: 'function',
+      attributes: {'radial.route.search_family': 'vor-family'},
+    },
+    () =>
+      searchProgressively(
+        dataSource,
+        'vor-family',
+        directDistanceNm,
+        maxRouteFactor,
+        maximumRouteDistanceNm,
+        graph,
+        admittedDatabaseIds
+      )
   );
   if (vorFamilySearch.status === 'failed') {
     return {status: 'failed', phase: 'vor-family'};
@@ -53,14 +63,22 @@ async function findRoute(
     };
   }
 
-  const ndbSearch = await searchProgressively(
-    dataSource,
-    'ndb',
-    directDistanceNm,
-    maxRouteFactor,
-    maximumRouteDistanceNm,
-    graph,
-    admittedDatabaseIds
+  const ndbSearch = await Sentry.startSpan(
+    {
+      name: 'Search NDB fallback routes',
+      op: 'function',
+      attributes: {'radial.route.search_family': 'ndb'},
+    },
+    () =>
+      searchProgressively(
+        dataSource,
+        'ndb',
+        directDistanceNm,
+        maxRouteFactor,
+        maximumRouteDistanceNm,
+        graph,
+        admittedDatabaseIds
+      )
   );
   if (ndbSearch.status === 'failed') {
     return {status: 'failed', phase: 'ndb-fallback'};

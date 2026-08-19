@@ -1,6 +1,7 @@
 import {stat} from 'node:fs/promises';
 
 import {DuckDBInstance} from '@duckdb/node-api';
+import * as Sentry from '@sentry/node';
 
 import plannerDatabaseContract from '#radial/planner-database/PlannerDatabaseContract.js';
 import PlannerRepository from '#radial/route-planner/internal/duckdb/repository.js';
@@ -45,6 +46,9 @@ class DuckDbRoutePlanner implements RoutePlanner {
 
   planRoute(request: RoutePlanningRequest): Promise<RoutePlanningResult> {
     if (this.#lifecycleState !== 'open') {
+      Sentry.logger.error('Route planning rejected by planner lifecycle', {
+        'radial.planner.lifecycle_state': this.#lifecycleState,
+      });
       return Promise.reject(
         new Error('Cannot plan a route while the Route Planner is closing or disposed.')
       );
@@ -62,11 +66,23 @@ class DuckDbRoutePlanner implements RoutePlanner {
   async #planRoute(request: RoutePlanningRequest): Promise<RoutePlanningResult> {
     const validatedRequest = validation.validateRoutePlanningRequest(request);
     if (!validatedRequest.ok) {
+      logRoutePlanningResult(request, validatedRequest);
       return validatedRequest;
     }
 
-    return this.#repository.withReadTransaction(async connection => {
-      const contract = await plannerDatabaseContract.validate(connection);
+    const result = await this.#repository.withReadTransaction(async connection => {
+      const contract = await Sentry.startSpan(
+        {
+          name: 'Validate planner database contract',
+          op: 'db.query',
+          attributes: {
+            'db.operation.name': 'validate',
+            'db.query.summary': 'planner contract',
+            'db.system.name': 'duckdb',
+          },
+        },
+        () => plannerDatabaseContract.validate(connection)
+      );
       if (!contract.ok) {
         return databaseQueryFailed('validate-contract');
       }
@@ -155,6 +171,8 @@ class DuckDbRoutePlanner implements RoutePlanner {
         },
       };
     });
+    logRoutePlanningResult(validatedRequest.value, result);
+    return result;
   }
 
   [Symbol.asyncDispose](): Promise<void> {
@@ -173,6 +191,65 @@ class DuckDbRoutePlanner implements RoutePlanner {
       this.#lifecycleState = 'disposed';
     }
   }
+}
+
+function logRoutePlanningResult(
+  request: RoutePlanningRequest,
+  result: RoutePlanningResult
+): void {
+  const routeAttributes: Record<string, string | number | boolean> = {
+    'radial.route.arrival_icao': request.arrivalIcao,
+    'radial.route.departure_icao': request.departureIcao,
+  };
+
+  if (result.ok) {
+    Sentry.metrics.count('radial.product.route_plan', 1, {
+      attributes: {
+        has_warnings: result.value.warnings.length > 0,
+        outcome: 'success',
+        search_mode: result.value.plan.searchMode,
+      },
+    });
+    if (result.value.warnings.length > 0) {
+      return;
+    }
+
+    Sentry.logger.info(
+      Sentry.logger
+        .fmt`Route plan ${request.departureIcao} to ${request.arrivalIcao} completed`,
+      {
+        ...routeAttributes,
+        'radial.route.distance_nm': result.value.plan.totalDistanceNm,
+        'radial.route.leg_count': result.value.plan.routeLegs.length,
+        'radial.route.search_mode': result.value.plan.searchMode,
+        'radial.route.warning_count': result.value.warnings.length,
+      }
+    );
+    return;
+  }
+
+  const attributes = {
+    ...routeAttributes,
+    'radial.failure.code': result.failure.code,
+  };
+  Sentry.metrics.count('radial.product.route_plan', 1, {
+    attributes: {
+      failure_code: result.failure.code,
+      outcome: 'failure',
+    },
+  });
+  const message = Sentry.logger
+    .fmt`Route plan ${request.departureIcao} to ${request.arrivalIcao} failed`;
+  if (
+    result.failure.code === 'database-query-failed' ||
+    result.failure.code === 'airport-resolution-failed' ||
+    result.failure.code === 'airport-cache-corrupt'
+  ) {
+    Sentry.logger.error(message, attributes);
+    return;
+  }
+
+  Sentry.logger.warn(message, attributes);
 }
 
 async function openRoutePlanner(
