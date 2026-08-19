@@ -168,10 +168,10 @@ function addRouteIfNondominated(
     return;
   }
 
-  routesByDatabaseId.set(
-    route.currentDatabaseId,
-    routes.filter(existingRoute => !dominates(route, existingRoute)).concat(route)
-  );
+  routesByDatabaseId.set(route.currentDatabaseId, [
+    ...routes.filter(existingRoute => !dominates(route, existingRoute)),
+    route,
+  ]);
   pendingRoutes.push(route);
 }
 

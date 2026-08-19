@@ -117,7 +117,7 @@ class AirportResolutionCoordinator {
   }
 
   async whenIdle(): Promise<void> {
-    await Promise.all([...this.#queues.values()].map(queue => queue.whenIdle()));
+    await Promise.all(Array.from(this.#queues.values(), queue => queue.whenIdle()));
   }
 
   #enqueue<Value>(

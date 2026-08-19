@@ -85,6 +85,8 @@ const RELATION_NAMES = {
 
 const VOR_FAMILIES = ['VOR', 'VOR-DME', 'VORTAC', 'DVOR', 'DVOR-DME', 'DVORTAC'] as const;
 const SUPPORTED_FAMILIES = ['NDB', ...VOR_FAMILIES] as const;
+const ICAO_PATTERN = /^[A-Z]{4}$/;
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const RELATIONS: readonly RelationDefinition[] = [
   {
@@ -261,14 +263,12 @@ SELECT
 FROM ${source.createFrom};`;
   }).join('\n\n');
 
-  const normalizedDefinitions = [...RELATIONS]
-    .sort((left, right) =>
-      RELATION_NAMES[left.name].localeCompare(RELATION_NAMES[right.name])
-    )
-    .map(relation => {
-      const relationName = RELATION_NAMES[relation.name];
-      return `${relationName}:CREATE VIEW ${relationName} AS SELECT ${relation.normalizedSelect.join(', ')} FROM ${sources[relation.name].normalizedFrom};`;
-    });
+  const normalizedDefinitions = RELATIONS.toSorted((left, right) =>
+    RELATION_NAMES[left.name].localeCompare(RELATION_NAMES[right.name])
+  ).map(relation => {
+    const relationName = RELATION_NAMES[relation.name];
+    return `${relationName}:CREATE VIEW ${relationName} AS SELECT ${relation.normalizedSelect.join(', ')} FROM ${sources[relation.name].normalizedFrom};`;
+  });
 
   return {createSql, normalizedDefinitions};
 }
@@ -507,7 +507,7 @@ async function validate(connection: DuckDBConnection): Promise<ContractValidatio
 
 function decodeAirport(row: DatabaseRow): PlannerAirport {
   const icao = requiredString(row, 'icao');
-  if (!/^[A-Z]{4}$/.test(icao)) {
+  if (!ICAO_PATTERN.test(icao)) {
     throw invalidField('icao');
   }
 
@@ -715,7 +715,7 @@ function nullableDateString(row: DatabaseRow, field: string): string | null {
 }
 
 function isCanonicalDate(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+  if (!ISO_DATE_PATTERN.test(value)) {
     return false;
   }
 
