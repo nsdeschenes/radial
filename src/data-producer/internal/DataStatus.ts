@@ -30,9 +30,7 @@ function readDataStatus(databasePath: string): Promise<DataStatusResult> {
   );
 }
 
-async function readDataStatusWithinSpan(
-  databasePath: string
-): Promise<DataStatusResult> {
+async function readDataStatusWithinSpan(databasePath: string): Promise<DataStatusResult> {
   if (databasePath.trim() === '') {
     return failure(
       'DATA_DATABASE_PATH_MISSING',

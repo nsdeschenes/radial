@@ -124,8 +124,7 @@ async function reloadAirport(
           'db.system.name': 'duckdb',
         },
       },
-      () =>
-        publicationGate.run(() => initializeProducerSchema(instance), request.signal)
+      () => publicationGate.run(() => initializeProducerSchema(instance), request.signal)
     );
     abortableOperation.throwIfAborted(request.signal);
   } catch {
@@ -778,14 +777,11 @@ async function publishAirport(
         signal
       )
   );
-  Sentry.logger.info(
-    Sentry.logger.fmt`Airport ${airport.icao} cached`,
-    {
-      'cache.operation': 'write',
-      'cache.write': true,
-      'radial.airport.icao': airport.icao,
-    }
-  );
+  Sentry.logger.info(Sentry.logger.fmt`Airport ${airport.icao} cached`, {
+    'cache.operation': 'write',
+    'cache.write': true,
+    'radial.airport.icao': airport.icao,
+  });
   Sentry.metrics.count('radial.product.airport_cache_write');
 }
 
@@ -805,14 +801,11 @@ function logAirportCacheRead(normalizedIcao: string, cached: AirportCacheRead): 
     return;
   }
 
-  Sentry.logger.error(
-    Sentry.logger.fmt`Airport ${normalizedIcao} cache read failed`,
-    {
-      ...attributes,
-      'radial.failure.reason':
-        cached.kind === 'corrupt' ? 'cache-corrupt' : 'database-query',
-    }
-  );
+  Sentry.logger.error(Sentry.logger.fmt`Airport ${normalizedIcao} cache read failed`, {
+    ...attributes,
+    'radial.failure.reason':
+      cached.kind === 'corrupt' ? 'cache-corrupt' : 'database-query',
+  });
 }
 
 async function publishAirportWithinGate(

@@ -61,8 +61,7 @@ async function reloadNavaids(
           'db.system.name': 'duckdb',
         },
       },
-      () =>
-        publicationGate.run(() => initializeProducerSchema(instance), request.signal)
+      () => publicationGate.run(() => initializeProducerSchema(instance), request.signal)
     );
     abortableOperation.throwIfAborted(request.signal);
   } catch (error) {
@@ -84,30 +83,28 @@ async function reloadNavaids(
     'radial.data.source': 'openaip',
   });
   try {
-    captured = await Sentry.startSpan(
-      {name: 'Acquire OpenAIP Navaids', op: 'task'},
-      () =>
-        captureOpenAIPNavaids({
-          transport: (
-            dependencies.createOpenAIPTransport ?? createProductionOpenAIPNavaidTransport
-          )(request.openAipApiKey),
-          now,
-          onProgress(progress) {
-            Sentry.logger.debug('OpenAIP Navaid page acquired', {
-              'radial.data.source': 'openaip',
-              'radial.navaid.cumulative_record_count': progress.cumulativeRecordCount,
-              'radial.navaid.page': progress.page,
-              'radial.navaid.total_pages': progress.totalPages,
-            });
-            request.onProgress?.({
-              stage: 'openaip',
-              message:
-                `fetching Navaids page ${progress.page}/${progress.totalPages} ` +
-                `(${progress.cumulativeRecordCount} records)`,
-            });
-          },
-          ...(request.signal === undefined ? {} : {signal: request.signal}),
-        })
+    captured = await Sentry.startSpan({name: 'Acquire OpenAIP Navaids', op: 'task'}, () =>
+      captureOpenAIPNavaids({
+        transport: (
+          dependencies.createOpenAIPTransport ?? createProductionOpenAIPNavaidTransport
+        )(request.openAipApiKey),
+        now,
+        onProgress(progress) {
+          Sentry.logger.debug('OpenAIP Navaid page acquired', {
+            'radial.data.source': 'openaip',
+            'radial.navaid.cumulative_record_count': progress.cumulativeRecordCount,
+            'radial.navaid.page': progress.page,
+            'radial.navaid.total_pages': progress.totalPages,
+          });
+          request.onProgress?.({
+            stage: 'openaip',
+            message:
+              `fetching Navaids page ${progress.page}/${progress.totalPages} ` +
+              `(${progress.cumulativeRecordCount} records)`,
+          });
+        },
+        ...(request.signal === undefined ? {} : {signal: request.signal}),
+      })
     );
     Sentry.logger.info('OpenAIP Navaid acquisition completed', {
       'radial.data.source': 'openaip',

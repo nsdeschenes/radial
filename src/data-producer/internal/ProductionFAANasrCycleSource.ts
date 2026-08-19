@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 
-import {unzipSync} from 'fflate';
 import * as Sentry from '@sentry/node';
+import {unzipSync} from 'fflate';
 
 import abortableOperation from '#radial/application/internal/AbortableOperation.js';
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';

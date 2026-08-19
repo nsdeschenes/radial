@@ -163,13 +163,10 @@ function logAirportReloadResult(
     return;
   }
 
-  Sentry.logger.info(
-    Sentry.logger.fmt`Airport ${result.value.icao} reload completed`,
-    {
-      'radial.airport.icao': result.value.icao,
-      'radial.airport.reload_status': result.value.status,
-    }
-  );
+  Sentry.logger.info(Sentry.logger.fmt`Airport ${result.value.icao} reload completed`, {
+    'radial.airport.icao': result.value.icao,
+    'radial.airport.reload_status': result.value.status,
+  });
 }
 
 function logPlannerOpenResult(
