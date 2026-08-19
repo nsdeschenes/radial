@@ -299,6 +299,7 @@ async function reloadNavaids(
         attributes: {kind},
       });
     }
+
     return {
       ok: true,
       value: {

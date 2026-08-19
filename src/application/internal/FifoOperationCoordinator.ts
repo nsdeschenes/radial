@@ -35,6 +35,7 @@ class FifoOperationCoordinator {
     if (isWaiting) {
       onQueued?.();
     }
+
     const endQueueWait = createQueueWaitEnd(
       isWaiting,
       this.#queue.length + (this.#isRunning ? 1 : 0)

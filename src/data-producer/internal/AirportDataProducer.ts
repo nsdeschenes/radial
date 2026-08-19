@@ -431,6 +431,7 @@ async function readCachedAirport(
           cached.kind === 'corrupt' ? 'cache-corrupt' : 'database-query'
         );
       }
+
       return cached;
     }
   );
