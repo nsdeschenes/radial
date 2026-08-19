@@ -1,7 +1,9 @@
 import {DuckDBInstance} from '@duckdb/node-api';
 
+import FifoOperationCoordinator from '#radial/application/internal/FifoOperationCoordinator.js';
 import publishNavaidSnapshot from '#radial/data-producer/internal/NavaidSnapshotPublication.js';
 import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 import createSyntheticNavaidSnapshotCandidate from '#radial/test/data-producer/createSyntheticNavaidSnapshotCandidate.js';
 import insertSyntheticCachedAirport from '#radial/test/data-producer/insertSyntheticCachedAirport.js';
 
@@ -17,6 +19,7 @@ if (mode === undefined || databasePath === undefined) {
 }
 
 const instance = await DuckDBInstance.create(databasePath);
+const publicationGate = new PublicationGate(new FifoOperationCoordinator());
 try {
   await initializeProducerSchema(instance);
   if (mode === 'seed') {
@@ -24,6 +27,7 @@ try {
     await publishNavaidSnapshot(
       instance,
       createSyntheticNavaidSnapshotCandidate('2026-08-17T12:00:00.000Z'),
+      publicationGate,
       {
         snapshotId: OLD_SNAPSHOT_ID,
         publishedAt: () => '2026-08-17T12:00:02.000Z',
@@ -37,6 +41,7 @@ try {
     await publishNavaidSnapshot(
       instance,
       createSyntheticNavaidSnapshotCandidate('2026-08-18T12:00:00.000Z'),
+      publicationGate,
       {
         snapshotId: NEW_SNAPSHOT_ID,
         publishedAt: () => '2026-08-18T12:00:02.000Z',
@@ -56,6 +61,7 @@ try {
     throw new Error(`Unknown worker mode ${JSON.stringify(mode)}.`);
   }
 } finally {
+  publicationGate.close();
   if (phase !== 'after-commit') {
     instance.closeSync();
   }
