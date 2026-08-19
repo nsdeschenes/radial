@@ -8,7 +8,6 @@ import OpenAIP from '#radial/clients/OpenAIP/OpenAIP.js';
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
 import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import type PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
-import publicationGateRegistry from '#radial/data-producer/internal/PublicationGateRegistry.js';
 import Wmm2025 from '#radial/data-producer/internal/Wmm2025.js';
 
 type AirportPageRequest = Readonly<{
@@ -30,7 +29,6 @@ type AirportDataProducerDependencies = Readonly<{
   ) => Promise<AirportPage> | AirportPage;
   now?: () => Date;
   beforeAirportCommit?: () => void | Promise<void>;
-  publicationGate?: PublicationGate;
 }>;
 
 type AirportResolutionFailure = Readonly<{
@@ -90,10 +88,9 @@ const ICAO_PATTERN = /^[A-Z]{4}$/;
 async function reloadAirport(
   instance: DuckDBInstance,
   request: AirportReloadRequest,
+  publicationGate: PublicationGate,
   dependencies: AirportDataProducerDependencies = {}
 ): Promise<AirportReloadResult> {
-  const publicationGate =
-    dependencies.publicationGate ?? publicationGateRegistry.forInstance(instance);
   const normalizedIcao = normalizeIcao(request.icao);
   if (!ICAO_PATTERN.test(normalizedIcao)) {
     return failure(
@@ -193,10 +190,9 @@ async function ensureCachedAirport(
   instance: DuckDBInstance,
   normalizedIcao: string,
   openAipApiKey: string,
+  publicationGate: PublicationGate,
   dependencies: AirportDataProducerDependencies = {}
 ): Promise<AirportResolutionResult> {
-  const publicationGate =
-    dependencies.publicationGate ?? publicationGateRegistry.forInstance(instance);
   const cached = await readCachedAirport(instance, normalizedIcao);
   if (cached.kind === 'present' || cached.kind === 'missing') {
     if (cached.kind === 'present') {
@@ -606,7 +602,7 @@ async function publishAirport(
   airport: AirportRecord,
   retrievedAt: string,
   publishedAt: string,
-  publicationGate: PublicationGate = publicationGateRegistry.forInstance(instance),
+  publicationGate: PublicationGate,
   beforeCommit?: () => void | Promise<void>,
   signal?: AbortSignal
 ): Promise<void> {

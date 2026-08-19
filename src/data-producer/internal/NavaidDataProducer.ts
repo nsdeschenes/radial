@@ -15,7 +15,6 @@ import initializeProducerSchema from '#radial/data-producer/internal/ProducerSch
 import acquireProductionFAANasrCycle from '#radial/data-producer/internal/ProductionFAANasrCycleSource.js';
 import createProductionOpenAIPNavaidTransport from '#radial/data-producer/internal/ProductionOpenAIPNavaidTransport.js';
 import type PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
-import publicationGateRegistry from '#radial/data-producer/internal/PublicationGateRegistry.js';
 
 type FAANasrCycles = Parameters<typeof buildNavaidSnapshotCandidate>[0]['faaNasrCycles'];
 type ReloadResult = RadialApplicationTypes['NavaidReloadResult'];
@@ -29,16 +28,14 @@ type NavaidDataProducerDependencies = Readonly<{
   createOpenAIPTransport?: (apiKey: string) => OpenAIPNavaidTransport;
   now?: () => Date;
   beforeNavaidCommit?: () => void | Promise<void>;
-  publicationGate?: PublicationGate;
 }>;
 
 async function reloadNavaids(
   instance: DuckDBInstance,
   request: ReloadRequest,
+  publicationGate: PublicationGate,
   dependencies: NavaidDataProducerDependencies = {}
 ): Promise<ReloadResult> {
-  const publicationGate =
-    dependencies.publicationGate ?? publicationGateRegistry.forInstance(instance);
   if (request.openAipApiKey.trim() === '') {
     return failure(
       'DATA_CREDENTIALS_MISSING',
@@ -183,11 +180,10 @@ async function reloadNavaids(
   abortableOperation.throwIfAborted(request.signal);
   request.onProgress?.({stage: 'publish', message: 'publishing Navaid Snapshot'});
   try {
-    const published = await publishNavaidSnapshot(instance, candidate, {
+    const published = await publishNavaidSnapshot(instance, candidate, publicationGate, {
       ...(dependencies.beforeNavaidCommit === undefined
         ? {}
         : {beforeCommit: dependencies.beforeNavaidCommit}),
-      publicationGate,
       ...(request.signal === undefined ? {} : {signal: request.signal}),
     });
     request.onProgress?.({stage: 'complete', message: 'Navaid Snapshot committed.'});

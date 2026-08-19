@@ -5,10 +5,12 @@ import {join} from 'node:path';
 import {DuckDBInstance} from '@duckdb/node-api';
 import {expect, test} from 'vitest';
 
+import FifoOperationCoordinator from '#radial/application/internal/FifoOperationCoordinator.js';
 import readDataStatus from '#radial/data-producer/internal/DataStatus.js';
 import buildNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidate.js';
 import publishNavaidSnapshot from '#radial/data-producer/internal/NavaidSnapshotPublication.js';
 import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 import createSyntheticFAANasrCycle from '#radial/test/createSyntheticFAANasrCycle.js';
 
 test('reports a missing database as uninitialized without creating a file or artifacts', async () => {
@@ -188,10 +190,15 @@ test('reports the active snapshot provenance, counts, and Facility Variation rea
       retrievedAt: '2026-07-10T00:00:00.000Z',
       retrievalCompletedAt: '2026-07-10T00:00:02.000Z',
     });
-    await publishNavaidSnapshot(instance, candidate, {
-      snapshotId: '11111111-1111-4111-8111-111111111111',
-      publishedAt: () => '2026-07-10T00:00:03.000Z',
-    });
+    await publishNavaidSnapshot(
+      instance,
+      candidate,
+      new PublicationGate(new FifoOperationCoordinator()),
+      {
+        snapshotId: '11111111-1111-4111-8111-111111111111',
+        publishedAt: () => '2026-07-10T00:00:03.000Z',
+      }
+    );
   } finally {
     instance.closeSync();
   }

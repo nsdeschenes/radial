@@ -20,6 +20,7 @@ test('atomically replaces the active snapshot and regenerates Cached Airport pro
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-publication-'));
   const databasePath = join(temporaryDirectory, 'radial.duckdb');
   const instance = await DuckDBInstance.create(databasePath);
+  const publicationGate = createPublicationGate();
 
   try {
     await initializeProducerSchema(instance);
@@ -27,7 +28,7 @@ test('atomically replaces the active snapshot and regenerates Cached Airport pro
     const firstCandidate = createSyntheticNavaidSnapshotCandidate(
       '2026-08-17T12:00:00.000Z'
     );
-    const first = await publishNavaidSnapshot(instance, firstCandidate, {
+    const first = await publishNavaidSnapshot(instance, firstCandidate, publicationGate, {
       snapshotId: FIRST_SNAPSHOT_ID,
       publishedAt: () => '2026-08-17T12:00:02.000Z',
     });
@@ -99,7 +100,7 @@ test('atomically replaces the active snapshot and regenerates Cached Airport pro
       '2026-08-17T13:00:00.000Z'
     );
     expect(equivalentCandidate.snapshotChecksum).toBe(firstCandidate.snapshotChecksum);
-    await publishNavaidSnapshot(instance, equivalentCandidate, {
+    await publishNavaidSnapshot(instance, equivalentCandidate, publicationGate, {
       snapshotId: SECOND_SNAPSHOT_ID,
       publishedAt: () => '2026-08-18T12:00:02.000Z',
     });
@@ -120,11 +121,12 @@ test('independently rejects a corrupt candidate and rolls back a publication fai
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-publication-'));
   const databasePath = join(temporaryDirectory, 'radial.duckdb');
   const instance = await DuckDBInstance.create(databasePath);
+  const publicationGate = createPublicationGate();
 
   try {
     await initializeProducerSchema(instance);
     const candidate = createSyntheticNavaidSnapshotCandidate('2026-08-17T12:00:00.000Z');
-    await publishNavaidSnapshot(instance, candidate, {
+    await publishNavaidSnapshot(instance, candidate, publicationGate, {
       snapshotId: FIRST_SNAPSHOT_ID,
       publishedAt: () => '2026-08-17T12:00:02.000Z',
     });
@@ -138,7 +140,7 @@ test('independently rejects a corrupt candidate and rolls back a publication fai
     };
 
     await expect(
-      publishNavaidSnapshot(instance, corruptCandidate, {
+      publishNavaidSnapshot(instance, corruptCandidate, publicationGate, {
         snapshotId: SECOND_SNAPSHOT_ID,
         publishedAt: () => '2026-08-18T12:00:02.000Z',
       })
@@ -147,6 +149,7 @@ test('independently rejects a corrupt candidate and rolls back a publication fai
       publishNavaidSnapshot(
         instance,
         createSyntheticNavaidSnapshotCandidate('2026-08-19T12:00:00.000Z'),
+        publicationGate,
         {
           snapshotId: FAILED_SNAPSHOT_ID,
           publishedAt: () => '2026-08-19T12:00:02.000Z',
@@ -185,6 +188,7 @@ test.each(INJECTED_FAILURE_BOUNDARIES)(
     const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-publication-'));
     const databasePath = join(temporaryDirectory, 'radial.duckdb');
     const instance = await DuckDBInstance.create(databasePath);
+    const publicationGate = createPublicationGate();
 
     try {
       await initializeProducerSchema(instance);
@@ -192,7 +196,7 @@ test.each(INJECTED_FAILURE_BOUNDARIES)(
       const firstCandidate = createSyntheticNavaidSnapshotCandidate(
         '2026-08-17T12:00:00.000Z'
       );
-      await publishNavaidSnapshot(instance, firstCandidate, {
+      await publishNavaidSnapshot(instance, firstCandidate, publicationGate, {
         snapshotId: FIRST_SNAPSHOT_ID,
         publishedAt: () => '2026-08-17T12:00:02.000Z',
       });
@@ -201,6 +205,7 @@ test.each(INJECTED_FAILURE_BOUNDARIES)(
         publishNavaidSnapshot(
           instance,
           createSyntheticNavaidSnapshotCandidate('2026-08-18T12:00:00.000Z'),
+          publicationGate,
           {
             snapshotId: SECOND_SNAPSHOT_ID,
             publishedAt: () => '2026-08-18T12:00:02.000Z',
@@ -233,27 +238,29 @@ test('does not mutate when publication gate acquisition fails', async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-publication-'));
   const databasePath = join(temporaryDirectory, 'radial.duckdb');
   const instance = await DuckDBInstance.create(databasePath);
+  const publicationGate = createPublicationGate();
 
   try {
     await initializeProducerSchema(instance);
     await publishNavaidSnapshot(
       instance,
       createSyntheticNavaidSnapshotCandidate('2026-08-17T12:00:00.000Z'),
+      publicationGate,
       {
         snapshotId: FIRST_SNAPSHOT_ID,
         publishedAt: () => '2026-08-17T12:00:02.000Z',
       }
     );
-    const publicationGate = new PublicationGate(new FifoOperationCoordinator());
-    publicationGate.close();
+    const closedPublicationGate = createPublicationGate();
+    closedPublicationGate.close();
 
     await expect(
       publishNavaidSnapshot(
         instance,
         createSyntheticNavaidSnapshotCandidate('2026-08-18T12:00:00.000Z'),
+        closedPublicationGate,
         {
           snapshotId: SECOND_SNAPSHOT_ID,
-          publicationGate,
         }
       )
     ).rejects.toThrow('The operation coordinator has been closed.');
@@ -269,6 +276,10 @@ test('does not mutate when publication gate acquisition fails', async () => {
     await rm(temporaryDirectory, {recursive: true});
   }
 });
+
+function createPublicationGate(): PublicationGate {
+  return new PublicationGate(new FifoOperationCoordinator());
+}
 
 async function activeState(instance: DuckDBInstance) {
   const connection = await instance.connect();

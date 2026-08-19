@@ -6,7 +6,7 @@ import ensureCachedAirport from '#radial/data-producer/internal/AirportDataProdu
 import type PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 
 type AirportDataProducerDependencies = NonNullable<
-  Parameters<typeof ensureCachedAirport>[3]
+  Parameters<typeof ensureCachedAirport>[4]
 >;
 type AirportResolutionResult = Awaited<ReturnType<typeof ensureCachedAirport>>;
 type AirportReloadRequest = Parameters<typeof ensureCachedAirport.reloadAirport>[1];
@@ -15,7 +15,10 @@ type AirportReloadResult = Awaited<ReturnType<typeof ensureCachedAirport.reloadA
 class AirportResolutionCoordinator {
   readonly #publicationGate: PublicationGate;
   readonly #queues = new Map<string, FifoOperationCoordinator>();
-  readonly #ordinaryWork = new Map<string, Promise<AirportResolutionResult>>();
+  readonly #ordinaryWork = new Map<
+    symbol,
+    Map<string, Promise<AirportResolutionResult>>
+  >();
   #isClosed = false;
 
   constructor(publicationGate: PublicationGate) {
@@ -23,6 +26,7 @@ class AirportResolutionCoordinator {
   }
 
   ensure(
+    leaseToken: symbol,
     instance: DuckDBInstance,
     normalizedIcao: string,
     openAipApiKey: string,
@@ -36,18 +40,26 @@ class AirportResolutionCoordinator {
       return Promise.reject(abortableOperation.abortError(signal));
     }
 
-    let work = this.#ordinaryWork.get(normalizedIcao);
+    let leaseWork = this.#ordinaryWork.get(leaseToken);
+    if (leaseWork === undefined) {
+      leaseWork = new Map();
+      this.#ordinaryWork.set(leaseToken, leaseWork);
+    }
+    let work = leaseWork.get(normalizedIcao);
     if (work === undefined) {
       const createdWork = this.#enqueue(normalizedIcao, () =>
-        ensureCachedAirport(instance, normalizedIcao, openAipApiKey, {
-          ...dependencies,
-          publicationGate: this.#publicationGate,
-        })
+        ensureCachedAirport(
+          instance,
+          normalizedIcao,
+          openAipApiKey,
+          this.#publicationGate,
+          dependencies
+        )
       );
-      this.#ordinaryWork.set(normalizedIcao, createdWork);
+      leaseWork.set(normalizedIcao, createdWork);
       void createdWork.then(
-        () => this.#deleteOrdinaryWork(normalizedIcao, createdWork),
-        () => this.#deleteOrdinaryWork(normalizedIcao, createdWork)
+        () => this.#deleteOrdinaryWork(leaseToken, normalizedIcao, createdWork),
+        () => this.#deleteOrdinaryWork(leaseToken, normalizedIcao, createdWork)
       );
       work = createdWork;
     }
@@ -69,10 +81,12 @@ class AirportResolutionCoordinator {
     const work = this.#enqueue(
       request.icao,
       () =>
-        ensureCachedAirport.reloadAirport(instance, request, {
-          ...dependencies,
-          publicationGate: this.#publicationGate,
-        }),
+        ensureCachedAirport.reloadAirport(
+          instance,
+          request,
+          this.#publicationGate,
+          dependencies
+        ),
       signal,
       () =>
         request.onProgress?.({
@@ -119,11 +133,16 @@ class AirportResolutionCoordinator {
   }
 
   #deleteOrdinaryWork(
+    leaseToken: symbol,
     normalizedIcao: string,
     work: Promise<AirportResolutionResult>
   ): void {
-    if (this.#ordinaryWork.get(normalizedIcao) === work) {
-      this.#ordinaryWork.delete(normalizedIcao);
+    const leaseWork = this.#ordinaryWork.get(leaseToken);
+    if (leaseWork?.get(normalizedIcao) === work) {
+      leaseWork.delete(normalizedIcao);
+      if (leaseWork.size === 0) {
+        this.#ordinaryWork.delete(leaseToken);
+      }
     }
   }
 
