@@ -2,6 +2,10 @@ import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
 
 type InvalidRequestFailure = RoutePlannerTypes['InvalidRequestFailure'];
 type PlannerOpenFailure = RoutePlannerTypes['PlannerOpenFailure'];
+type InvalidPlannerConfigFailure = Extract<
+  PlannerOpenFailure,
+  {code: 'invalid-configuration'}
+>;
 type RoutePlannerConfig = RoutePlannerTypes['RoutePlannerConfig'];
 type RoutePlanningRequest = RoutePlannerTypes['RoutePlanningRequest'];
 
@@ -29,7 +33,7 @@ const ICAO_PATTERN = /^[A-Z]{4}$/;
 
 function validatePlannerConfig(
   config: RoutePlannerConfig
-): Result<ValidatedPlannerConfig, PlannerOpenFailure> {
+): Result<ValidatedPlannerConfig, InvalidPlannerConfigFailure> {
   if (config.databasePath.trim() === '') {
     return {
       ok: false,
