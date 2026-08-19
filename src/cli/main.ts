@@ -8,6 +8,7 @@ import diagnostics from '#radial/cli/formatDiagnostics.js';
 import navaidReloadOutput from '#radial/cli/formatNavaidReload.js';
 import formatRoutePlan from '#radial/cli/formatRoutePlan.js';
 import formatRoutePlanningWarnings from '#radial/cli/formatRoutePlanningWarnings.js';
+import formatRoutePlanningWarningSummary from '#radial/cli/formatRoutePlanningWarningSummary.js';
 import readDataStatus from '#radial/data-producer/internal/DataStatus.js';
 import validation from '#radial/route-planner/internal/validation.js';
 
@@ -95,12 +96,18 @@ async function runCliWithSignal({
     return 2;
   }
 
-  if (args.length !== 2) {
-    io.writeStderr(diagnostics.formatArgumentCountDiagnostic(args.length));
+  const warningDetailsRequested = args.at(-1) === '--warnings';
+  const routeArguments = warningDetailsRequested ? args.slice(0, -1) : args;
+
+  if (routeArguments.length !== 2) {
+    io.writeStderr(diagnostics.formatArgumentCountDiagnostic(routeArguments.length));
     return 2;
   }
 
-  const request = {departureIcao: args[0] ?? '', arrivalIcao: args[1] ?? ''};
+  const request = {
+    departureIcao: routeArguments[0] ?? '',
+    arrivalIcao: routeArguments[1] ?? '',
+  };
   const validatedRequest = validation.validateRoutePlanningRequest(request);
   if (!validatedRequest.ok) {
     io.writeStderr(diagnostics.formatInvalidRequestDiagnostic(validatedRequest.failure));
@@ -150,7 +157,11 @@ async function runCliWithSignal({
 
       logRoutePlanningWarnings(result.value, validatedRequest.value);
       io.writeStdout(formatRoutePlan(result.value.plan));
-      io.writeStderr(formatRoutePlanningWarnings(result.value));
+      io.writeStderr(
+        warningDetailsRequested
+          ? formatRoutePlanningWarnings(result.value)
+          : formatRoutePlanningWarningSummary(result.value)
+      );
       return 0;
     } finally {
       await openedPlanner.value[Symbol.asyncDispose]();

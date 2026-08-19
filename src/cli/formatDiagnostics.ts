@@ -7,7 +7,8 @@ type PlannerOpenFailure = RadialApplicationTypes['PlanningOpenFailure'];
 type RoutePlanningFailure = RoutePlannerTypes['RoutePlanningFailure'];
 
 const USAGE =
-  'Usage: radial <departure-icao> <arrival-icao>\n' + 'Example: radial CYYZ CYOW\n';
+  'Usage: radial <departure-icao> <arrival-icao> [--warnings]\n' +
+  'Example: radial CYYZ CYOW\n';
 
 function formatArgumentCountDiagnostic(argumentCount: number): string {
   return `Expected exactly two ICAO airport codes; received ${argumentCount}.\n${USAGE}`;
