@@ -142,7 +142,7 @@ class DuckDbRoutePlanner implements RoutePlanner {
             maxRouteFactor: this.#maxRouteFactor,
             completedSearchLimits: searchResult.completedSearchFactors,
           },
-        };
+        } satisfies RoutePlanningResult;
       }
 
       const {route: selectedRoute, searchMode} = searchResult;
@@ -169,7 +169,7 @@ class DuckDbRoutePlanner implements RoutePlanner {
           },
           warnings: deriveWarnings(routeLegs, searchMode),
         },
-      };
+      } satisfies RoutePlanningResult;
     });
     logRoutePlanningResult(validatedRequest.value, result);
     return result;
