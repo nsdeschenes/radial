@@ -1,13 +1,14 @@
 import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 
-import progressiveVorFamilyDiscovery from '#radial/route-planner/internal/progressiveVorFamilyDiscovery.js';
 import type RouteSearchTypes from '#radial/route-planner/internal/RouteSearchTypes.js';
 import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
 
 type AirportRoutePoint = RoutePlannerTypes['AirportRoutePoint'];
 type NdbRoutePoint = RoutePlannerTypes['NdbRoutePoint'];
 type VorFamilyRoutePoint = RoutePlannerTypes['VorFamilyRoutePoint'];
+type CandidateFamily = RouteSearchTypes['CandidateFamily'];
 type NavaidPairDistance = RouteSearchTypes['NavaidPairDistance'];
+type RouteSearchDataSource = RouteSearchTypes['RouteSearchDataSource'];
 
 type AirportResolution = Readonly<{
   departure: readonly AirportRoutePoint[];
@@ -26,15 +27,47 @@ type NdbCandidate = Readonly<{
   arrivalDistanceNm: number;
 }>;
 
-type NavaidCandidate = VorFamilyCandidate | NdbCandidate;
+type NavaidCandidate = RouteSearchTypes['MeasuredCandidate'];
+
+type Coordinates = Readonly<{longitude: number; latitude: number}>;
+
+type BoundingBox = Readonly<{
+  minimumLongitude: number;
+  maximumLongitude: number;
+  minimumLatitude: number;
+  maximumLatitude: number;
+}>;
 
 const VOR_FAMILIES = ['VOR', 'VOR-DME', 'VORTAC', 'DVOR', 'DVOR-DME', 'DVORTAC'] as const;
+const EARTH_RADIUS_NM = 6_371_000 / 1_852;
+const PREFILTER_PADDING_DEGREES = 1e-12;
 
 class PlannerRepository {
   readonly #instance: DuckDBInstance;
 
   constructor(instance: DuckDBInstance) {
     this.#instance = instance;
+  }
+
+  createRouteSearchDataSource(
+    connection: DuckDBConnection,
+    departure: AirportRoutePoint,
+    arrival: AirportRoutePoint
+  ): RouteSearchDataSource {
+    return {
+      directDistanceNm: () => this.directDistanceNm(connection, departure, arrival),
+      findNewCandidates: (family, nextLimitNm, measuredDatabaseIds) =>
+        this.findNewCandidates(
+          connection,
+          departure,
+          arrival,
+          family,
+          nextLimitNm,
+          measuredDatabaseIds
+        ),
+      findNewPairs: (newlyAdmittedCandidates, admittedDatabaseIds) =>
+        this.findNewNavaidPairs(connection, newlyAdmittedCandidates, admittedDatabaseIds),
+    };
   }
 
   async withReadTransaction<Value>(
@@ -97,6 +130,31 @@ class PlannerRepository {
     );
 
     return Number(reader.getRowObjectsJS()[0]?.['distance_nm']);
+  }
+
+  async findNewCandidates(
+    connection: DuckDBConnection,
+    departure: AirportRoutePoint,
+    arrival: AirportRoutePoint,
+    family: CandidateFamily,
+    nextLimitNm: number,
+    previouslyMeasuredDatabaseIds: readonly string[]
+  ): Promise<readonly NavaidCandidate[]> {
+    return family === 'vor-family'
+      ? this.findNewVorFamilyCandidates(
+          connection,
+          departure,
+          arrival,
+          nextLimitNm,
+          previouslyMeasuredDatabaseIds
+        )
+      : this.findNewNdbCandidates(
+          connection,
+          departure,
+          arrival,
+          nextLimitNm,
+          previouslyMeasuredDatabaseIds
+        );
   }
 
   async findNewVorFamilyCandidates(
@@ -240,14 +298,8 @@ function navaidCandidateQuery(
   excludedDatabaseIds: readonly string[],
   candidateFilter: string
 ): {sql: string; parameters: (string | number)[]} {
-  const departureBounds = progressiveVorFamilyDiscovery.conservativeBounds(
-    departure,
-    nextLimitNm
-  );
-  const arrivalBounds = progressiveVorFamilyDiscovery.conservativeBounds(
-    arrival,
-    nextLimitNm
-  );
+  const departureBounds = conservativeBounds(departure, nextLimitNm);
+  const arrivalBounds = conservativeBounds(arrival, nextLimitNm);
   return {
     sql: `WITH spatial_candidates AS (
       SELECT *
@@ -296,15 +348,86 @@ function navaidCandidateQuery(
   };
 }
 
-function spatialBoundsFilter(
-  bounds: ReturnType<typeof progressiveVorFamilyDiscovery.conservativeBounds>
-): string {
+function spatialBoundsFilter(bounds: readonly BoundingBox[]): string {
   return `(${bounds
     .map(
       bound =>
         `ST_Intersects(point, ST_MakeEnvelope(${bound.minimumLongitude}, ${bound.minimumLatitude}, ${bound.maximumLongitude}, ${bound.maximumLatitude}))`
     )
     .join(' OR ')})`;
+}
+
+function conservativeBounds(
+  endpoint: Coordinates,
+  maximumDistanceNm: number
+): readonly BoundingBox[] {
+  const angularRadius = Math.min(Math.PI, maximumDistanceNm / EARTH_RADIUS_NM);
+  const latitudeRadians = degreesToRadians(endpoint.latitude);
+  const minimumLatitude = Math.max(
+    -90,
+    endpoint.latitude - radiansToDegrees(angularRadius) - PREFILTER_PADDING_DEGREES
+  );
+  const maximumLatitude = Math.min(
+    90,
+    endpoint.latitude + radiansToDegrees(angularRadius) + PREFILTER_PADDING_DEGREES
+  );
+
+  if (
+    latitudeRadians + angularRadius >= Math.PI / 2 ||
+    latitudeRadians - angularRadius <= -Math.PI / 2
+  ) {
+    return [
+      {minimumLongitude: -180, maximumLongitude: 180, minimumLatitude, maximumLatitude},
+    ];
+  }
+
+  const longitudeRadius =
+    radiansToDegrees(Math.asin(Math.sin(angularRadius) / Math.cos(latitudeRadians))) +
+    PREFILTER_PADDING_DEGREES;
+  const minimumLongitude = endpoint.longitude - longitudeRadius;
+  const maximumLongitude = endpoint.longitude + longitudeRadius;
+  if (minimumLongitude < -180) {
+    return [
+      {
+        minimumLongitude: minimumLongitude + 360,
+        maximumLongitude: 180,
+        minimumLatitude,
+        maximumLatitude,
+      },
+      {
+        minimumLongitude: -180,
+        maximumLongitude,
+        minimumLatitude,
+        maximumLatitude,
+      },
+    ];
+  }
+  if (maximumLongitude > 180) {
+    return [
+      {
+        minimumLongitude,
+        maximumLongitude: 180,
+        minimumLatitude,
+        maximumLatitude,
+      },
+      {
+        minimumLongitude: -180,
+        maximumLongitude: maximumLongitude - 360,
+        minimumLatitude,
+        maximumLatitude,
+      },
+    ];
+  }
+
+  return [{minimumLongitude, maximumLongitude, minimumLatitude, maximumLatitude}];
+}
+
+function degreesToRadians(value: number): number {
+  return (value * Math.PI) / 180;
+}
+
+function radiansToDegrees(value: number): number {
+  return (value * 180) / Math.PI;
 }
 
 function vorFamilyCandidateFilter(alias?: string): string {
