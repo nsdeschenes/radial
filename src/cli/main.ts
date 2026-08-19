@@ -1,3 +1,5 @@
+import * as Sentry from '@sentry/node';
+
 import openRadialApplication from '#radial/application/RadialApplication.js';
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import airportReloadOutput from '#radial/cli/formatAirportReload.js';
@@ -134,6 +136,19 @@ async function runCliWithSignal({
         return result.failure.code === 'invalid-request' ? 2 : 1;
       }
 
+      Sentry.metrics.distribution('total_route_legs', result.value.plan.routeLegs.length);
+      Sentry.metrics.distribution(
+        'total_route_distance',
+        result.value.plan.totalDistanceNm,
+        {
+          attributes: {
+            arrival_icao: request.arrivalIcao,
+            departure_icao: request.departureIcao,
+          },
+        }
+      );
+
+      logRoutePlanningWarnings(result.value, validatedRequest.value);
       io.writeStdout(formatRoutePlan(result.value.plan));
       io.writeStderr(formatRoutePlanningWarnings(result.value));
       return 0;
@@ -143,6 +158,33 @@ async function runCliWithSignal({
   } finally {
     await openedApplication.value[Symbol.asyncDispose]();
   }
+}
+
+function logRoutePlanningWarnings(
+  success: ApplicationTypes['RoutePlanningSuccess'],
+  request: ApplicationTypes['RoutePlanningRequest']
+): void {
+  if (success.warnings.length === 0) {
+    return;
+  }
+
+  const attributes: Record<string, string | number> = {
+    'radial.route.arrival_icao': request.arrivalIcao,
+    'radial.route.departure_icao': request.departureIcao,
+    'radial.route.warning_count': success.warnings.length,
+  };
+
+  for (const warning of success.warnings) {
+    const countAttribute = `radial.route.warning.${warning.code}.count`;
+    const currentCount = attributes[countAttribute];
+    attributes[countAttribute] = typeof currentCount === 'number' ? currentCount + 1 : 1;
+  }
+
+  Sentry.logger.warn(
+    Sentry.logger
+      .fmt`Route plan ${request.departureIcao} to ${request.arrivalIcao} completed with warnings`,
+    attributes
+  );
 }
 
 function isNavaidReload(args: readonly string[]): boolean {
@@ -219,10 +261,19 @@ async function runDataStatus({
 }: Omit<CliInput, 'args' | 'openApplication'>): Promise<number> {
   const result = await readDataStatus(env['RADIAL_DATABASE_PATH'] ?? '');
   if (!result.ok) {
+    Sentry.logger.error('Data status read failed', {
+      'radial.data.active_preserved': result.failure.activeDataPreserved,
+      'radial.failure.code': result.failure.code,
+    });
     io.writeStderr(dataStatusOutput.formatFailure(result.failure));
     return 1;
   }
 
+  Sentry.logger.info('Data status read completed', {
+    'radial.airport.cached_count': result.value.cachedAirports.length,
+    'radial.data.snapshot_present': result.value.snapshot !== null,
+    'radial.data.status': result.value.status,
+  });
   io.writeStdout(dataStatusOutput.formatSuccess(result.value));
   return 0;
 }

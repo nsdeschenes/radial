@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto';
 
+import * as Sentry from '@sentry/node';
 import {unzipSync} from 'fflate';
 
 import abortableOperation from '#radial/application/internal/AbortableOperation.js';
@@ -143,7 +144,7 @@ async function fetchArchive(
         );
       }
 
-      await waitBeforeRetry(attempt, undefined, startedAt, signal);
+      await waitBeforeRetry(attempt, undefined, undefined, startedAt, signal);
       continue;
     }
 
@@ -158,7 +159,13 @@ async function fetchArchive(
       );
     }
 
-    await waitBeforeRetry(attempt, response.retryAfter, startedAt, signal);
+    await waitBeforeRetry(
+      attempt,
+      response.retryAfter,
+      response.status,
+      startedAt,
+      signal
+    );
   }
 
   throw new FAANasrCycleSourceError('unavailable', 'FAA NASR archive is unavailable.');
@@ -223,6 +230,7 @@ async function requestArchive(
 async function waitBeforeRetry(
   failedAttempt: number,
   retryAfter: string | null | undefined,
+  statusCode: number | undefined,
   startedAt: number,
   signal?: AbortSignal
 ): Promise<void> {
@@ -234,6 +242,18 @@ async function waitBeforeRetry(
     throw new Error('FAA NASR acquisition exceeded its elapsed-time ceiling.');
   }
 
+  Sentry.logger.warn('FAA NASR request scheduled for retry', {
+    'http.request.resend_count': failedAttempt,
+    ...(statusCode === undefined ? {} : {'http.response.status_code': statusCode}),
+    'radial.data.source': 'faa-nasr',
+    'radial.retry.delay_ms': delayMs,
+  });
+  Sentry.metrics.count('radial.integration.retry', 1, {
+    attributes: {
+      cause: statusCode === undefined ? 'transport' : 'http-response',
+      source: 'faa-nasr',
+    },
+  });
   await abortableOperation.sleep(delayMs, signal);
 }
 

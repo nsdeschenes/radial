@@ -1,3 +1,5 @@
+import * as Sentry from '@sentry/node';
+
 import abortableOperation from '#radial/application/internal/AbortableOperation.js';
 
 type QueueEntry = {
@@ -6,6 +8,7 @@ type QueueEntry = {
   reject: (reason: unknown) => void;
   signal?: AbortSignal;
   started: boolean;
+  endQueueWait: () => void;
   onAbort: () => void;
 };
 
@@ -33,6 +36,11 @@ class FifoOperationCoordinator {
       onQueued?.();
     }
 
+    const endQueueWait = createQueueWaitEnd(
+      isWaiting,
+      this.#queue.length + (this.#isRunning ? 1 : 0)
+    );
+
     return new Promise<Value>((resolve, reject) => {
       const entry = {
         operation: async () => operation(),
@@ -40,6 +48,7 @@ class FifoOperationCoordinator {
         reject,
         ...(signal === undefined ? {} : {signal}),
         started: false,
+        endQueueWait,
         onAbort: () => {
           if (entry.started) {
             return;
@@ -51,6 +60,7 @@ class FifoOperationCoordinator {
           }
 
           this.#queue.splice(index, 1);
+          entry.endQueueWait();
           if (signal !== undefined) {
             entry.reject(abortableOperation.abortError(signal));
           }
@@ -75,6 +85,7 @@ class FifoOperationCoordinator {
     const queued = this.#queue.splice(0);
     for (const entry of queued) {
       entry.signal?.removeEventListener('abort', entry.onAbort);
+      entry.endQueueWait();
       entry.reject(new Error('The operation coordinator has been closed.'));
     }
 
@@ -101,6 +112,7 @@ class FifoOperationCoordinator {
     }
 
     entry.started = true;
+    entry.endQueueWait();
     entry.signal?.removeEventListener('abort', entry.onAbort);
     this.#isRunning = true;
     try {
@@ -123,6 +135,25 @@ class FifoOperationCoordinator {
       resolve();
     }
   }
+}
+
+function createQueueWaitEnd(isWaiting: boolean, queueDepth: number): () => void {
+  if (!isWaiting) {
+    return () => undefined;
+  }
+
+  const span = Sentry.startInactiveSpan({
+    name: 'Wait for queued operation',
+    op: 'queue.process',
+    attributes: {'radial.queue.depth': queueDepth},
+  });
+  let ended = false;
+  return () => {
+    if (!ended) {
+      ended = true;
+      span.end();
+    }
+  };
 }
 
 export default FifoOperationCoordinator;

@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 
 import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
+import * as Sentry from '@sentry/node';
 
 import abortableOperation from '#radial/application/internal/AbortableOperation.js';
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
@@ -113,7 +114,18 @@ async function reloadAirport(
 
   request.onProgress?.({stage: 'database', message: 'Preparing Producer Schema.'});
   try {
-    await publicationGate.run(() => initializeProducerSchema(instance), request.signal);
+    await Sentry.startSpan(
+      {
+        name: 'Prepare Producer Schema',
+        op: 'db.query',
+        attributes: {
+          'db.operation.name': 'initialize',
+          'db.query.summary': 'producer schema',
+          'db.system.name': 'duckdb',
+        },
+      },
+      () => publicationGate.run(() => initializeProducerSchema(instance), request.signal)
+    );
     abortableOperation.throwIfAborted(request.signal);
   } catch {
     if (request.signal?.aborted) {
@@ -129,6 +141,7 @@ async function reloadAirport(
   }
 
   const cached = await readCachedAirport(instance, normalizedIcao);
+  logAirportCacheRead(normalizedIcao, cached);
   abortableOperation.throwIfAborted(request.signal);
   if (cached.kind === 'database-error') {
     return failure(
@@ -197,7 +210,32 @@ async function ensureCachedAirport(
   publicationGate: PublicationGate,
   dependencies: AirportDataProducerDependencies = {}
 ): Promise<AirportResolutionResult> {
+  return Sentry.startSpan(
+    {
+      name: 'Ensure Airport data',
+      op: 'task',
+      attributes: {'radial.airport.icao': normalizedIcao},
+    },
+    () =>
+      ensureCachedAirportWithinSpan(
+        instance,
+        normalizedIcao,
+        openAipApiKey,
+        publicationGate,
+        dependencies
+      )
+  );
+}
+
+async function ensureCachedAirportWithinSpan(
+  instance: DuckDBInstance,
+  normalizedIcao: string,
+  openAipApiKey: string,
+  publicationGate: PublicationGate,
+  dependencies: AirportDataProducerDependencies = {}
+): Promise<AirportResolutionResult> {
   const cached = await readCachedAirport(instance, normalizedIcao);
+  logAirportCacheRead(normalizedIcao, cached);
   if (cached.kind === 'present' || cached.kind === 'missing') {
     if (cached.kind === 'present') {
       return {ok: true};
@@ -244,6 +282,30 @@ async function acquireAirportRecord(
   reportProgress?: (progress: AirportAcquisitionProgress) => void,
   signal?: AbortSignal
 ): Promise<AirportAcquisitionResult> {
+  return Sentry.startSpan(
+    {
+      name: 'Acquire OpenAIP Airport',
+      op: 'task',
+      attributes: {'radial.airport.icao': normalizedIcao},
+    },
+    () =>
+      acquireAirportRecordWithinSpan(
+        apiKey,
+        normalizedIcao,
+        dependencies,
+        reportProgress,
+        signal
+      )
+  );
+}
+
+async function acquireAirportRecordWithinSpan(
+  apiKey: string,
+  normalizedIcao: string,
+  dependencies: AirportDataProducerDependencies,
+  reportProgress?: (progress: AirportAcquisitionProgress) => void,
+  signal?: AbortSignal
+): Promise<AirportAcquisitionResult> {
   abortableOperation.throwIfAborted(signal);
   reportProgress?.({
     stage: 'openaip',
@@ -258,6 +320,13 @@ async function acquireAirportRecord(
   }
 
   let records: readonly unknown[];
+  Sentry.logger.info(
+    Sentry.logger.fmt`OpenAIP Airport ${normalizedIcao} acquisition started`,
+    {
+      'radial.airport.icao': normalizedIcao,
+      'radial.data.source': 'openaip',
+    }
+  );
   try {
     records = await fetchAirportRecords(
       apiKey,
@@ -274,21 +343,48 @@ async function acquireAirportRecord(
       throw error;
     }
 
+    const reason =
+      error instanceof AirportSourceInvalidError
+        ? 'source-invalid'
+        : 'source-unavailable';
+    Sentry.logger.error(
+      Sentry.logger.fmt`OpenAIP Airport ${normalizedIcao} acquisition failed`,
+      {
+        'radial.airport.icao': normalizedIcao,
+        'radial.data.source': 'openaip',
+        'radial.failure.reason': reason,
+      }
+    );
     return {
       ok: false,
-      failure: {
-        reason:
-          error instanceof AirportSourceInvalidError
-            ? 'source-invalid'
-            : 'source-unavailable',
-      },
+      failure: {reason},
     };
   }
+
+  Sentry.logger.info(
+    Sentry.logger.fmt`OpenAIP Airport ${normalizedIcao} acquisition completed`,
+    {
+      'radial.airport.icao': normalizedIcao,
+      'radial.airport.source_record_count': records.length,
+      'radial.data.source': 'openaip',
+    }
+  );
+  Sentry.metrics.distribution('radial.integration.records_acquired', records.length, {
+    attributes: {record_type: 'airport', source: 'openaip'},
+  });
 
   reportProgress?.({stage: 'derive', message: 'Validating exact Airport match.'});
   abortableOperation.throwIfAborted(signal);
   const selected = selectAirport(records, normalizedIcao);
   if (!selected.ok) {
+    Sentry.logger.warn(
+      Sentry.logger.fmt`OpenAIP Airport ${normalizedIcao} records were unusable`,
+      {
+        'radial.airport.icao': normalizedIcao,
+        'radial.data.source': 'openaip',
+        'radial.failure.reason': selected.failure.reason,
+      }
+    );
     return selected;
   }
 
@@ -313,6 +409,35 @@ async function acquireAirportRecord(
 }
 
 async function readCachedAirport(
+  instance: DuckDBInstance,
+  normalizedIcao: string
+): Promise<AirportCacheRead> {
+  return Sentry.startSpan(
+    {
+      name: 'Read Airport cache',
+      op: 'cache.get',
+      attributes: {
+        'cache.operation': 'read',
+        'radial.airport.icao': normalizedIcao,
+      },
+    },
+    async span => {
+      const cached = await readCachedAirportWithinSpan(instance, normalizedIcao);
+      if (cached.kind === 'present' || cached.kind === 'missing') {
+        span.setAttribute('cache.hit', cached.kind === 'present');
+      } else {
+        span.setAttribute(
+          'radial.failure.reason',
+          cached.kind === 'corrupt' ? 'cache-corrupt' : 'database-query'
+        );
+      }
+
+      return cached;
+    }
+  );
+}
+
+async function readCachedAirportWithinSpan(
   instance: DuckDBInstance,
   normalizedIcao: string
 ): Promise<AirportCacheRead> {
@@ -630,18 +755,58 @@ async function publishAirport(
   beforeCommit?: () => void | Promise<void>,
   signal?: AbortSignal
 ): Promise<void> {
-  await publicationGate.run(
+  await Sentry.startSpan(
+    {
+      name: 'Publish Airport cache',
+      op: 'cache.put',
+      attributes: {
+        'cache.operation': 'write',
+        'radial.airport.icao': airport.icao,
+      },
+    },
     () =>
-      publishAirportWithinGate(
-        instance,
-        airport,
-        retrievedAt,
-        publishedAt,
-        beforeCommit,
+      publicationGate.run(
+        () =>
+          publishAirportWithinGate(
+            instance,
+            airport,
+            retrievedAt,
+            publishedAt,
+            beforeCommit,
+            signal
+          ),
         signal
-      ),
-    signal
+      )
   );
+  Sentry.logger.info(Sentry.logger.fmt`Airport ${airport.icao} cached`, {
+    'cache.operation': 'write',
+    'cache.write': true,
+    'radial.airport.icao': airport.icao,
+  });
+  Sentry.metrics.count('radial.product.airport_cache_write');
+}
+
+function logAirportCacheRead(normalizedIcao: string, cached: AirportCacheRead): void {
+  Sentry.metrics.count('radial.product.airport_cache_read', 1, {
+    attributes: {result: cached.kind},
+  });
+  const attributes = {
+    'cache.operation': 'read',
+    'radial.airport.icao': normalizedIcao,
+  };
+  if (cached.kind === 'present' || cached.kind === 'missing') {
+    Sentry.logger.debug(
+      Sentry.logger.fmt`Airport ${normalizedIcao} cache read completed`,
+      {...attributes, 'cache.hit': cached.kind === 'present'}
+    );
+    return;
+  }
+
+  Sentry.logger.error(Sentry.logger.fmt`Airport ${normalizedIcao} cache read failed`, {
+    ...attributes,
+    'radial.failure.reason':
+      cached.kind === 'corrupt' ? 'cache-corrupt' : 'database-query',
+  });
 }
 
 async function publishAirportWithinGate(

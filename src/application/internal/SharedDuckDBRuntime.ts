@@ -2,6 +2,7 @@ import {realpath} from 'node:fs/promises';
 import {basename, dirname, join, resolve} from 'node:path';
 
 import {DuckDBInstance} from '@duckdb/node-api';
+import * as Sentry from '@sentry/node';
 
 import abortableOperation from '#radial/application/internal/AbortableOperation.js';
 import AirportResolutionCoordinator from '#radial/application/internal/AirportResolutionCoordinator.js';
@@ -110,9 +111,20 @@ class ApplicationPlanner implements RoutePlanner {
     }
 
     const validatedRequest = validation.validateRoutePlanningRequest(request);
-    return validatedRequest.ok
-      ? this.#plan(validatedRequest.value)
-      : Promise.resolve(validatedRequest);
+    return Sentry.startSpan(
+      {
+        name: 'Plan route',
+        op: 'task',
+        attributes: {
+          'radial.route.arrival_icao': request.arrivalIcao,
+          'radial.route.departure_icao': request.departureIcao,
+        },
+      },
+      () =>
+        validatedRequest.ok
+          ? this.#plan(validatedRequest.value)
+          : Promise.resolve(validatedRequest)
+    );
   }
 
   stop(): void {
@@ -487,6 +499,14 @@ class DuckDBRuntimeLease {
           signal
         );
         if (!resolved.ok) {
+          Sentry.logger.error(
+            Sentry.logger.fmt`Airport ${endpoint.icao} resolution failed`,
+            {
+              'radial.airport.icao': endpoint.icao,
+              'radial.airport.role': endpoint.role,
+              'radial.failure.reason': resolved.failure.reason,
+            }
+          );
           return {
             ok: false,
             failure: mapAirportResolutionFailure(
