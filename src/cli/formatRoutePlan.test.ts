@@ -33,7 +33,7 @@ test('renders each used Navaid once with its exact type and conventional frequen
     longitude: -78,
     latitude: 44,
     magneticDeclinationDegEast: null,
-    frequency: {unit: 'kHz' as const, value: 365},
+    frequency: {unit: 'kHz' as const, value: 365.5},
     publishedRangeNm: 75.04,
   };
 
@@ -47,7 +47,7 @@ test('renders each used Navaid once with its exact type and conventional frequen
   ).toContain(
     'Navaids\n' +
       'Identifier       Type  Frequency  Published Range\n' +
-      'ÅÄÖ-LONG-NAVAID  NDB     365 kHz          75.0 NM\n'
+      'ÅÄÖ-LONG-NAVAID  NDB   365.5 kHz          75.0 NM\n'
   );
 });
 
