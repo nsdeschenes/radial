@@ -78,6 +78,7 @@ test('returns the same continuous multi-Navaid Route Plan for ten database row p
     if (!opened.ok) {
       throw new Error(`Expected the synthetic database to open: ${opened.failure.code}`);
     }
+
     const result = await opened.value.planRoute({
       departureIcao: 'AAAA',
       arrivalIcao: 'BBBB',
@@ -94,6 +95,7 @@ test('returns the same continuous multi-Navaid Route Plan for ten database row p
   if (expected === undefined || !expected.ok) {
     throw new Error('Expected a deterministic multi-Navaid Route Plan.');
   }
+
   const {plan} = expected.value;
   expect(plan.routePoints.map(routePoint => routePoint.databaseId)).toEqual([
     'departure',
@@ -120,12 +122,15 @@ test('returns the same continuous multi-Navaid Route Plan for ten database row p
       if (navaid === undefined) {
         throw new Error('Expected every Route Leg to include a Navaid.');
       }
+
       expect(routeLeg.distanceNm).toBeLessThanOrEqual(navaid.publishedRangeNm);
     }
   }
+
   for (let index = 0; index < plan.routeLegs.length - 1; index += 1) {
     expect(plan.routeLegs[index]?.arrival).toEqual(plan.routeLegs[index + 1]?.departure);
   }
+
   expect(plan.totalDistanceNm).toBe(
     plan.routeLegs.reduce((total, routeLeg) => total + routeLeg.distanceNm, 0)
   );
@@ -141,6 +146,7 @@ test('returns the same continuous multi-Navaid Route Plan for ten database row p
   if (!openedWithoutIrrelevantCandidate.ok) {
     throw new Error('Expected the comparison synthetic database to open.');
   }
+
   const resultWithoutIrrelevantCandidate =
     await openedWithoutIrrelevantCandidate.value.planRoute({
       departureIcao: 'AAAA',
@@ -178,6 +184,7 @@ test('replaces an early provisional Route Plan after completing its improving el
       `Expected the provisional Route Plan to improve: ${result.failure.code}`
     );
   }
+
   expect(result.value.plan.routePoints.map(routePoint => routePoint.databaseId)).toEqual([
     'departure',
     'early-first',
@@ -257,6 +264,7 @@ test('discovers a VOR-family candidate across the antimeridian', async () => {
   if (!result.ok) {
     throw new Error(`Expected an antimeridian Route Plan: ${result.failure.code}`);
   }
+
   expect(result.value.plan.routePoints.map(routePoint => routePoint.databaseId)).toEqual([
     'departure',
     'dateline',
@@ -289,9 +297,11 @@ test('keeps the completed VOR-family Route Plan when an NDB Route Plan would be 
   if (!resultWithNdb.ok) {
     throw new Error(`Expected the VOR-family Route Plan: ${resultWithNdb.failure.code}`);
   }
+
   if (!ndbOnlyResult.ok) {
     throw new Error(`Expected the shorter NDB Route Plan: ${ndbOnlyResult.failure.code}`);
   }
+
   expect(ndbOnlyResult.value.plan.totalDistanceNm).toBeLessThan(
     resultWithNdb.value.plan.totalDistanceNm
   );
@@ -316,6 +326,7 @@ test('returns a successful NDB-fallback Route Plan only after VOR-family exhaust
   if (!result.ok) {
     throw new Error(`Expected an NDB-fallback Route Plan: ${result.failure.code}`);
   }
+
   expect(result.value.plan.searchMode).toBe('ndb-fallback');
   expect(result.value.plan.routePoints.map(routePoint => routePoint.databaseId)).toEqual([
     'departure',
@@ -374,6 +385,7 @@ test('selects the same stable mixed-family Route Plan for ten database row permu
   if (expected === undefined || !expected.ok) {
     throw new Error('Expected a deterministic mixed-family Route Plan.');
   }
+
   expect(expected.value.plan.searchMode).toBe('ndb-fallback');
   expect(
     expected.value.plan.routePoints.map(routePoint => routePoint.databaseId)
@@ -683,6 +695,7 @@ test('preserves true-course routing and deterministically warns for unavailable 
   if (!result.ok) {
     throw new Error(`Expected missing magnetic references to preserve the plan.`);
   }
+
   expect(result.value.plan.routePoints.map(routePoint => routePoint.databaseId)).toEqual([
     'departure',
     'vor-first',
@@ -767,6 +780,7 @@ test('does not interpret ambiguous OpenAIP magnetic fields as accepted reference
   if (!result.ok) {
     throw new Error(`Expected ambiguous raw-source fields to preserve the plan.`);
   }
+
   expect(result.value.plan.routePoints[1]).toMatchObject({
     kind: 'vor-family',
     magneticDeclinationDegEast: null,
@@ -846,6 +860,7 @@ test.each(['VOR', 'VOR-DME', 'VORTAC', 'DVOR', 'DVOR-DME', 'DVORTAC'])(
         `Expected a Route Plan using a ${family} Navaid: ${result.failure.code}`
       );
     }
+
     expect(result.value.plan.searchMode).toBe('vor-family');
     expect(result.value.plan.routePoints[1]).toMatchObject({kind: 'vor-family', family});
   }
@@ -905,6 +920,7 @@ async function planSyntheticRoute(
   if (!opened.ok) {
     throw new Error(`Expected the synthetic database to open: ${opened.failure.code}`);
   }
+
   const result = await opened.value.planRoute({
     departureIcao: 'AAAA',
     arrivalIcao: 'BBBB',

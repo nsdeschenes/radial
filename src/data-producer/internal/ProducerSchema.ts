@@ -222,6 +222,7 @@ function readProducerSchemaVersion(row: Record<string, unknown>): ProducerSchema
   if (version.some(component => !Number.isSafeInteger(component) || component < 1)) {
     throw new Error(`Producer Schema version ${formatVersion(version)} is impossible.`);
   }
+
   return version;
 }
 
@@ -253,6 +254,7 @@ function planMigrations(
     if (visitedVersions.has(formattedVersion)) {
       throw new Error('Producer Schema migration registry contains a cycle.');
     }
+
     visitedVersions.add(formattedVersion);
 
     const migration = RECOGNIZED_MIGRATIONS.find(candidate =>
@@ -263,6 +265,7 @@ function planMigrations(
         `No recognized Producer Schema migration starts at ${formattedVersion}.`
       );
     }
+
     if (
       migration.to.some(
         (component, index) =>
@@ -271,6 +274,7 @@ function planMigrations(
     ) {
       throw new Error('Producer Schema migration registry contains an invalid step.');
     }
+
     plan.push(migration);
     version = migration.to;
   }
@@ -361,9 +365,11 @@ async function inspectProducerSchema(
   } catch {
     return {kind: 'invalid'};
   }
+
   if (!versionsMatch(version, CURRENT_VERSION)) {
     return {kind: 'invalid'};
   }
+
   return {
     kind: 'current',
     producerSchemaVersion: version[0],
@@ -387,6 +393,7 @@ async function readStoredVersion(
   if (rows.length !== 1 || rows[0]?.['singleton'] !== true) {
     throw new Error('Producer Schema state must contain exactly one singleton row.');
   }
+
   return readProducerSchemaVersion(rows[0]);
 }
 
@@ -402,11 +409,13 @@ async function migrateProducerSchema(
         await connection.run(statement);
       }
     }
+
     if (!(await hasCurrentObjects(connection))) {
       throw new Error(
         `Migrated Producer Schema objects do not match version ${formatVersion(CURRENT_VERSION)}.`
       );
     }
+
     const migratedVersion = await readStoredVersion(connection);
     if (!versionsMatch(migratedVersion, CURRENT_VERSION)) {
       throw new Error(
@@ -417,6 +426,7 @@ async function migrateProducerSchema(
     await connection.run('ROLLBACK');
     throw error;
   }
+
   await connection.run('COMMIT');
 }
 
@@ -433,18 +443,22 @@ async function initializeProducerSchema(instance: DuckDBInstance): Promise<void>
       if (!(await hasCurrentObjects(connection))) {
         throw new Error('Producer Schema objects do not match version 1/1/1.');
       }
+
       const version = await readStoredVersion(connection);
       if (versionsMatch(version, CURRENT_VERSION)) {
         return;
       }
+
       if (version.some((component, index) => component > CURRENT_VERSION[index]!)) {
         throw new Error(
           `Producer Schema version ${formatVersion(version)} is newer than supported ${formatVersion(CURRENT_VERSION)}.`
         );
       }
+
       await migrateProducerSchema(connection, version);
       return;
     }
+
     if (await plannerDatabaseContract.hasAnyReservedRelation(connection)) {
       throw new Error('Producer Schema public view names collide with existing objects.');
     }
@@ -458,6 +472,7 @@ async function initializeProducerSchema(instance: DuckDBInstance): Promise<void>
       await connection.run('ROLLBACK');
       throw error;
     }
+
     await connection.run('COMMIT');
   } finally {
     connection.closeSync();
@@ -492,10 +507,12 @@ async function readActiveNavaidSnapshotId(
     if (rows.length !== 1) {
       throw new Error('Producer Schema state must contain exactly one singleton row.');
     }
+
     const activeSnapshotId = rows[0]?.['active_navaid_snapshot_id'];
     if (activeSnapshotId !== null && typeof activeSnapshotId !== 'string') {
       throw new Error('Producer Schema active Navaid Snapshot marker is invalid.');
     }
+
     return activeSnapshotId;
   } finally {
     connection.closeSync();

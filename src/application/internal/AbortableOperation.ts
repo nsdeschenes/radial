@@ -3,6 +3,7 @@ function abortError(signal: AbortSignal): Error {
   if (reason instanceof Error) {
     return reason;
   }
+
   const error = new Error('The operation was aborted.');
   error.name = 'AbortError';
   return error;
@@ -23,6 +24,7 @@ async function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> 
     await new Promise<void>(resolve => setTimeout(resolve, milliseconds));
     return;
   }
+
   throwIfAborted(signal);
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -34,6 +36,7 @@ async function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> 
       cleanup();
       reject(abortError(signal));
     };
+
     const cleanup = () => signal.removeEventListener('abort', onAbort);
     signal.addEventListener('abort', onAbort, {once: true});
     if (signal.aborted) {
@@ -49,6 +52,7 @@ async function awaitWithAbort<Value>(
   if (signal === undefined) {
     return operation;
   }
+
   if (signal.aborted) {
     throw abortError(signal);
   }
@@ -58,6 +62,7 @@ async function awaitWithAbort<Value>(
       cleanup();
       reject(abortError(signal));
     };
+
     const cleanup = () => signal.removeEventListener('abort', onAbort);
     signal.addEventListener('abort', onAbort, {once: true});
     void operation.then(

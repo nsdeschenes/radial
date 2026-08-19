@@ -50,6 +50,7 @@ async function acquireProductionFAANasrCycle(
     if (error instanceof FAANasrCycleSourceError) {
       throw error;
     }
+
     throw new FAANasrCycleSourceError(
       'invalid-response',
       'FAA NASR archive response is invalid.'
@@ -82,6 +83,7 @@ async function buildCycleArtifact(
   ) {
     throw new Error('FAA NASR archive does not contain a valid NAV_BASE.csv.');
   }
+
   const csvText = new TextDecoder('utf-8', {fatal: true}).decode(csvBytes);
   const records = parseCsvRecords(csvText, effectiveDate);
   const retrievedAt = new Date().toISOString();
@@ -123,32 +125,40 @@ async function fetchArchive(
       if (signal?.aborted) {
         throw abortableOperation.abortError(signal);
       }
+
       if (abortableOperation.isAbortError(error)) {
         throw error;
       }
+
       if (error instanceof FAANasrCycleSourceError) {
         throw error;
       }
+
       if (attempt === MAX_ATTEMPTS) {
         throw new FAANasrCycleSourceError(
           'unavailable',
           'FAA NASR archive is unavailable.'
         );
       }
+
       await waitBeforeRetry(attempt, undefined, startedAt, signal);
       continue;
     }
+
     if (response.downloadedArchive !== undefined) {
       return response.downloadedArchive;
     }
+
     if (!RETRYABLE_STATUSES.has(response.status) || attempt === MAX_ATTEMPTS) {
       throw new FAANasrCycleSourceError(
         'unavailable',
         'FAA NASR archive is unavailable.'
       );
     }
+
     await waitBeforeRetry(attempt, response.retryAfter, startedAt, signal);
   }
+
   throw new FAANasrCycleSourceError('unavailable', 'FAA NASR archive is unavailable.');
 }
 
@@ -175,6 +185,7 @@ async function requestArchive(
         retryAfter: response.headers.get('retry-after'),
       };
     }
+
     const declaredLength = Number(response.headers.get('content-length'));
     if (Number.isFinite(declaredLength) && declaredLength > MAX_ARCHIVE_BYTES) {
       await response.body.cancel();
@@ -183,6 +194,7 @@ async function requestArchive(
         'FAA NASR archive has an invalid size.'
       );
     }
+
     const archiveBytes = new Uint8Array(await response.arrayBuffer());
     if (archiveBytes.byteLength === 0 || archiveBytes.byteLength > MAX_ARCHIVE_BYTES) {
       throw new FAANasrCycleSourceError(
@@ -190,6 +202,7 @@ async function requestArchive(
         'FAA NASR archive has an invalid size.'
       );
     }
+
     return {
       status: response.status,
       retryAfter: null,
@@ -218,6 +231,7 @@ async function waitBeforeRetry(
   if (Date.now() - startedAt + delayMs > MAX_ELAPSED_MS) {
     throw new Error('FAA NASR acquisition exceeded its elapsed-time ceiling.');
   }
+
   await abortableOperation.sleep(delayMs, signal);
 }
 
@@ -225,6 +239,7 @@ function parseRetryAfter(value: string | null | undefined): number | undefined {
   if (value === null || value === undefined) {
     return undefined;
   }
+
   const seconds = /^\d+$/.test(value) ? Number(value) : undefined;
   const milliseconds =
     seconds === undefined ? Date.parse(value) - Date.now() : seconds * 1000;
@@ -238,6 +253,7 @@ function applicableEffectiveDate(retrievalStartedAt: string): string {
   if (!Number.isFinite(retrievalTime)) {
     throw new Error('FAA NASR retrieval start must be a valid timestamp.');
   }
+
   const cycleOffset = Math.floor((retrievalTime - AIRAC_ANCHOR) / AIRAC_INTERVAL_MS);
   return new Date(AIRAC_ANCHOR + cycleOffset * AIRAC_INTERVAL_MS)
     .toISOString()
@@ -251,9 +267,11 @@ function airacCycleId(effectiveDate: string): string {
   while (new Date(firstCycleTime).getUTCFullYear() < year) {
     firstCycleTime += AIRAC_INTERVAL_MS;
   }
+
   while (new Date(firstCycleTime - AIRAC_INTERVAL_MS).getUTCFullYear() === year) {
     firstCycleTime -= AIRAC_INTERVAL_MS;
   }
+
   const cycleNumber =
     Math.round((effectiveTime - firstCycleTime) / AIRAC_INTERVAL_MS) + 1;
   return `${String(year).slice(2)}${String(cycleNumber).padStart(2, '0')}`;
@@ -278,10 +296,12 @@ function parseCsvRecords(
   ) {
     throw new Error('FAA NASR NAV_BASE.csv has invalid headers.');
   }
+
   return rows.map((row, index) => {
     if (row.length !== headers.length) {
       throw new Error(`FAA NASR NAV_BASE.csv row ${index + 1} has an invalid shape.`);
     }
+
     const record = Object.fromEntries(
       headers.map((header, column) => [header, row[column]])
     );
@@ -289,6 +309,7 @@ function parseCsvRecords(
     if (record['EFF_DATE'] !== expectedEffectiveDate) {
       throw new Error(`FAA NASR NAV_BASE.csv row ${index + 1} has an invalid cycle.`);
     }
+
     return Object.freeze(record);
   });
 }
@@ -323,13 +344,16 @@ function parseCsv(csvText: string): string[][] {
       field += character;
     }
   }
+
   if (quoted) {
     throw new Error('FAA NASR NAV_BASE.csv contains an unterminated quoted field.');
   }
+
   if (field !== '' || row.length > 0) {
     row.push(field.replace(/\r$/, ''));
     rows.push(row);
   }
+
   return rows;
 }
 

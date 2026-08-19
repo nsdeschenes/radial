@@ -15,6 +15,7 @@ test('verifies complete provenance and checksums for every committed source fixt
     'wmm2025-test-vectors',
     'faa-nasr-2607-nav-base',
   ]);
+
   for (const record of manifest.records) {
     expect(record.sourceIdentity).not.toBe('');
     expect(record.sourceUrl).toMatch(/^https:\/\//u);

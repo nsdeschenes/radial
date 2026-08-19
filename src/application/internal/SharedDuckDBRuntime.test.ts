@@ -80,6 +80,7 @@ test('retries same-ICAO Airport resolution with the waiting lease configuration'
         await releaseFirstLookup.promise;
         throw new Error('First lease source unavailable.');
       }
+
       return airportPage(request.page, 0, []);
     })
   );

@@ -22,6 +22,7 @@ const instance = await DuckDBInstance.create(databasePath);
 const publicationGate = new PublicationGate(new FifoOperationCoordinator());
 try {
   await initializeProducerSchema(instance);
+
   if (mode === 'seed') {
     await insertSyntheticCachedAirport(instance);
     await publishNavaidSnapshot(
@@ -33,11 +34,13 @@ try {
         publishedAt: () => '2026-08-17T12:00:02.000Z',
       }
     );
+
     process.exitCode = 0;
   } else if (mode === 'crash') {
     if (phase === undefined) {
       throw new Error('Expected a crash phase.');
     }
+
     await publishNavaidSnapshot(
       instance,
       createSyntheticNavaidSnapshotCandidate('2026-08-18T12:00:00.000Z'),
@@ -56,6 +59,7 @@ try {
     if (phase === 'after-commit') {
       process.kill(process.pid, 'SIGKILL');
     }
+
     process.exitCode = 0;
   } else {
     throw new Error(`Unknown worker mode ${JSON.stringify(mode)}.`);

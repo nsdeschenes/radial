@@ -189,6 +189,7 @@ class InMemoryRouteSearchDataSource implements RouteSearchDataSource {
     if (this.#failure === `${family}-candidates`) {
       return Promise.reject(new Error(`${family} candidate query failed.`));
     }
+
     const candidates =
       family === 'vor-family' ? this.#vorFamilyCandidates : this.#ndbCandidates;
     return Promise.resolve(
@@ -206,6 +207,7 @@ class InMemoryRouteSearchDataSource implements RouteSearchDataSource {
     if (this.#failure === 'pair-distances') {
       return Promise.reject(new Error('Pair-distance query failed.'));
     }
+
     const newlyAdmittedIds = new Set(
       newlyAdmittedCandidates.map(candidate => candidate.routePoint.databaseId)
     );

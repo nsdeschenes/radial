@@ -28,6 +28,7 @@ test('measures each candidate once and retains its canonical distances until adm
   if (initialLimitNm === undefined) {
     throw new Error('Expected an initial discovery limit.');
   }
+
   const inside = candidate('inside', 50, 55);
   const pending = candidate('pending', 70, 70);
 
@@ -40,12 +41,14 @@ test('measures each candidate once and retains its canonical distances until adm
   if (secondLimitNm === undefined) {
     throw new Error('Expected a second discovery limit.');
   }
+
   expect(discoverySession.admitMeasuredCandidates([], secondLimitNm)).toEqual([]);
 
   const finalLimitNm = discoverySession.nextLimitNm(undefined);
   if (finalLimitNm === undefined) {
     throw new Error('Expected a final discovery limit.');
   }
+
   expect(discoverySession.admitMeasuredCandidates([], finalLimitNm)).toEqual([pending]);
   expect(() => discoverySession.admitMeasuredCandidates([pending], finalLimitNm)).toThrow(
     /endpoint distances were measured more than once/

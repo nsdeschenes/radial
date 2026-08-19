@@ -140,6 +140,7 @@ function buildNavaidSnapshotCandidate(
   if (request.retrievalCompletedAt < request.retrievedAt) {
     throw new Error('retrievalCompletedAt must not precede retrievedAt.');
   }
+
   validateInputProvenance(request.provenance);
   const selectedNasrCycle = faaNasrFacilityVariation.selectApplicableCycle(
     request.faaNasrCycles,
@@ -151,6 +152,7 @@ function buildNavaidSnapshotCandidate(
   ) {
     throw new Error('FAA NASR retrieval time must fall within snapshot retrieval');
   }
+
   const {records: _, ...faaNasr} = selectedNasrCycle;
   const provenance = Object.freeze({
     ...request.provenance,
@@ -249,6 +251,7 @@ function identifyRecords(rawNavaids: readonly unknown[]): IdentifiedRecord[] {
     if (!isJsonObject(value)) {
       throw new Error(`raw Navaid ${index + 1} must be a JSON object.`);
     }
+
     try {
       return {record: value, canonicalRecord: canonicalizeJson(value)};
     } catch {
@@ -262,6 +265,7 @@ function identifyRecords(rawNavaids: readonly unknown[]): IdentifiedRecord[] {
       if (seenIds.has(sourceId)) {
         throw new Error(`duplicate non-null OpenAIP source identity ${sourceId}`);
       }
+
       seenIds.add(sourceId);
     }
   }
@@ -276,6 +280,7 @@ function identifyRecords(rawNavaids: readonly unknown[]): IdentifiedRecord[] {
       if (providedId !== undefined) {
         return {sourceRecordId: providedId, canonicalRecord, record};
       }
+
       const contentChecksum = checksum(canonicalRecord);
       const ordinal = (generatedOrdinals.get(contentChecksum) ?? 0) + 1;
       generatedOrdinals.set(contentChecksum, ordinal);
@@ -296,23 +301,28 @@ function deriveNavaid(
   if (sourceRecordId === '') {
     return {sourceRecordId, reason: 'missing-stable-identity'};
   }
+
   const family =
     typeof record['type'] === 'number' ? FAMILY_BY_TYPE.get(record['type']) : undefined;
   if (family === undefined) {
     return {sourceRecordId, reason: 'unsupported-navaid-type'};
   }
+
   const coordinates = coordinatesFrom(record['geometry']);
   if (coordinates === undefined) {
     return {sourceRecordId, reason: 'invalid-coordinates'};
   }
+
   const identifier = nonEmptyString(record['identifier']);
   if (identifier === undefined) {
     return {sourceRecordId, reason: 'missing-identifier'};
   }
+
   const frequency = frequencyFrom(record['frequency'], family);
   if (frequency === undefined) {
     return {sourceRecordId, reason: 'invalid-frequency'};
   }
+
   const publishedRangeNm = rangeFrom(record['range']);
   if (publishedRangeNm === undefined) {
     return {sourceRecordId, reason: 'invalid-published-range'};
@@ -346,10 +356,12 @@ function coordinatesFrom(
   if (!isJsonObject(value) || value['type'] !== 'Point') {
     return undefined;
   }
+
   const coordinates = value['coordinates'];
   if (!Array.isArray(coordinates) || coordinates.length !== 2) {
     return undefined;
   }
+
   const [longitude, latitude] = coordinates;
   if (
     typeof longitude !== 'number' ||
@@ -363,6 +375,7 @@ function coordinatesFrom(
   ) {
     return undefined;
   }
+
   return {longitude, latitude};
 }
 
@@ -373,14 +386,17 @@ function frequencyFrom(
   if (!isJsonObject(value) || typeof value['value'] !== 'string') {
     return undefined;
   }
+
   const expectedUnit = family === 'NDB' ? 1 : 2;
   if (value['unit'] !== expectedUnit || !/^\d{3}\.\d{3}$/.test(value['value'])) {
     return undefined;
   }
+
   const numericValue = Number(value['value']);
   if (!Number.isFinite(numericValue) || numericValue <= 0) {
     return undefined;
   }
+
   return {value: numericValue, unit: expectedUnit === 1 ? 'kHz' : 'MHz'};
 }
 
@@ -388,9 +404,11 @@ function rangeFrom(value: unknown): number | undefined {
   if (value === undefined) {
     return DEFAULT_PUBLISHED_RANGE_NM;
   }
+
   if (!isJsonObject(value) || value['unit'] !== 2) {
     return undefined;
   }
+
   const range = value['value'];
   return typeof range === 'number' && Number.isFinite(range) && range > 0
     ? range
@@ -417,6 +435,7 @@ function countryFrom(value: unknown): string | readonly string[] | undefined {
   if (typeof value === 'string') {
     return value;
   }
+
   return Array.isArray(value) && value.every(item => typeof item === 'string')
     ? value
     : undefined;
@@ -440,6 +459,7 @@ function nonEmptyString(value: unknown): string | undefined {
   if (typeof value !== 'string') {
     return undefined;
   }
+
   const normalized = value.trim();
   return normalized === '' ? undefined : normalized;
 }

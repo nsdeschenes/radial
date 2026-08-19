@@ -55,6 +55,7 @@ async function publishNavaidSnapshot(
       error instanceof Error ? error.message : 'Navaid Snapshot candidate is invalid.'
     );
   }
+
   abortableOperation.throwIfAborted(options.signal);
   const snapshotId = options.snapshotId ?? randomUUID();
   validateUuid(snapshotId);
@@ -81,14 +82,17 @@ async function publishNavaidSnapshotWithinGate(
     if (abortableOperation.isAbortError(error)) {
       throw error;
     }
+
     throw new NavaidSnapshotPublicationError(
       true,
       error instanceof Error ? error.message : 'Navaid Snapshot publication failed.'
     );
   }
+
   if (connection === undefined) {
     throw new NavaidSnapshotPublicationError(true);
   }
+
   let commitStarted = false;
   let transactionStarted = false;
 
@@ -133,6 +137,7 @@ async function publishNavaidSnapshotWithinGate(
       if (previousSnapshotId !== null) {
         await removeSnapshot(connection, previousSnapshotId, options.signal);
       }
+
       await verifyNoCrossSnapshotReferences(connection);
       await options.beforeCommit?.();
       await options.onBoundary?.('before-commit');
@@ -148,6 +153,7 @@ async function publishNavaidSnapshotWithinGate(
             : 'Navaid Snapshot publication failed.'
         );
       }
+
       try {
         await connection.run('ROLLBACK');
         throw new NavaidSnapshotPublicationError(
@@ -160,6 +166,7 @@ async function publishNavaidSnapshotWithinGate(
         if (rollbackError instanceof NavaidSnapshotPublicationError) {
           throw rollbackError;
         }
+
         throw new NavaidSnapshotPublicationError(false);
       }
     }
@@ -182,12 +189,14 @@ function validateCandidate(candidate: NavaidSnapshotCandidate): void {
   if (candidate.retrievalCompletedAt < candidate.retrievedAt) {
     throw new Error('candidate retrieval timestamps do not reconcile');
   }
+
   if (
     candidate.provenance.faaNasr.retrievedAt < candidate.retrievedAt ||
     candidate.provenance.faaNasr.retrievedAt > candidate.retrievalCompletedAt
   ) {
     throw new Error('candidate FAA NASR retrieval timestamp does not reconcile');
   }
+
   validateProvenance(candidate);
 
   const rawIdentities = new Set<string>();
@@ -195,6 +204,7 @@ function validateCandidate(candidate: NavaidSnapshotCandidate): void {
     if (raw.sourceRecordId === '' || rawIdentities.has(raw.sourceRecordId)) {
       throw new Error('candidate raw Navaid identities do not reconcile');
     }
+
     rawIdentities.add(raw.sourceRecordId);
     let parsed: unknown;
     try {
@@ -202,6 +212,7 @@ function validateCandidate(candidate: NavaidSnapshotCandidate): void {
     } catch {
       throw new Error('candidate raw Navaid canonical JSON is invalid');
     }
+
     if (
       parsed === null ||
       typeof parsed !== 'object' ||
@@ -229,9 +240,11 @@ function validateCandidate(candidate: NavaidSnapshotCandidate): void {
     ) {
       throw new Error('candidate planner-ready Navaids do not reconcile');
     }
+
     partitionIdentities.add(navaid.sourceRecordId);
     databaseIdentities.add(navaid.databaseId);
   }
+
   for (const exclusion of candidate.exclusions) {
     if (
       partitionIdentities.has(exclusion.sourceRecordId) ||
@@ -239,8 +252,10 @@ function validateCandidate(candidate: NavaidSnapshotCandidate): void {
     ) {
       throw new Error('candidate exclusions do not reconcile');
     }
+
     partitionIdentities.add(exclusion.sourceRecordId);
   }
+
   if (!sameSet(rawIdentities, partitionIdentities)) {
     throw new Error('candidate source partition does not reconcile');
   }
@@ -285,6 +300,7 @@ function validateCandidate(candidate: NavaidSnapshotCandidate): void {
   if (candidate.componentChecksums.rawNavaids !== expectedComponentChecksums.rawNavaids) {
     throw new Error('candidate raw Navaid checksum does not reconcile');
   }
+
   if (
     candidate.componentChecksums.plannerNavaids !==
       expectedComponentChecksums.plannerNavaids ||
@@ -294,6 +310,7 @@ function validateCandidate(candidate: NavaidSnapshotCandidate): void {
   ) {
     throw new Error('candidate component checksums do not reconcile');
   }
+
   const expectedSnapshotChecksum = checksum(
     canonicalizeJson({
       manifestVersion: 1,
@@ -333,6 +350,7 @@ function validateProvenance(candidate: NavaidSnapshotCandidate): void {
   if (requiredStrings.some(value => value.trim() === '')) {
     throw new Error('candidate provenance bundle is incomplete');
   }
+
   if (
     !Number.isFinite(provenance.magneticModel.epochYear) ||
     provenance.magneticModel.epochYear <= 0 ||
@@ -344,6 +362,7 @@ function validateProvenance(candidate: NavaidSnapshotCandidate): void {
   ) {
     throw new Error('candidate magnetic provenance bundle is invalid');
   }
+
   if (
     provenance.magneticModel.model !== expectedMagneticModel.model ||
     provenance.magneticModel.version !== expectedMagneticModel.version ||
@@ -426,6 +445,7 @@ function validFacilityVariationAudit(
   ) {
     return false;
   }
+
   if (audit.outcome !== 'matched') {
     return (
       audit.facilityVariationDegEast === null &&
@@ -435,6 +455,7 @@ function validFacilityVariationAudit(
       navaid.facilityVariationEffectiveDate === null
     );
   }
+
   return (
     audit.sourceIdentity !== null &&
     audit.sourceIdentity.trim() !== '' &&
@@ -545,6 +566,7 @@ async function insertCandidateRows(
     );
     await onBoundary?.('candidate-write');
   }
+
   for (const navaid of candidate.plannerNavaids) {
     abortableOperation.throwIfAborted(signal);
     await connection.run(
@@ -571,6 +593,7 @@ async function insertCandidateRows(
     );
     await onBoundary?.('candidate-write');
   }
+
   for (const exclusion of candidate.exclusions) {
     abortableOperation.throwIfAborted(signal);
     await connection.run(
@@ -579,6 +602,7 @@ async function insertCandidateRows(
     );
     await onBoundary?.('candidate-write');
   }
+
   for (const audit of candidate.facilityVariationAudits) {
     abortableOperation.throwIfAborted(signal);
     await connection.run(
@@ -622,6 +646,7 @@ async function regenerateAirportProjections(
     ) {
       throw new Error('Cached Airport projection input is invalid');
     }
+
     const magneticDeclinationDegEast = localMagneticDeclinationFromWmm2025({
       referenceDate: magneticReferenceDate,
       longitude,
@@ -668,6 +693,7 @@ async function verifyStoredCandidate(
   ) {
     throw new Error('stored candidate counts do not reconcile');
   }
+
   const storedAudits = await connection.runAndReadAll(
     `SELECT CAST(audit_record AS VARCHAR) AS audit_record
      FROM radial_producer.facility_variation_audits
@@ -786,6 +812,7 @@ async function removeSnapshot(
       [snapshotId]
     );
   }
+
   await connection.run(
     `DELETE FROM radial_producer.navaid_snapshots WHERE snapshot_id = CAST(? AS UUID)`,
     [snapshotId]
@@ -833,6 +860,7 @@ function requireString(value: unknown, name: string): string {
   if (typeof value !== 'string') {
     throw new Error(`${name} must be a string`);
   }
+
   return value;
 }
 

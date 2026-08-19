@@ -29,9 +29,11 @@ async function refreshFixture(
   if (sourceUrl.protocol !== 'https:') {
     throw new Error('Fixture refresh sources must use HTTPS.');
   }
+
   if (sourceUrl.username !== '' || sourceUrl.password !== '') {
     throw new Error('Fixture refresh URLs must not contain credentials.');
   }
+
   const response = await (request.fetcher ?? fetch)(sourceUrl, {
     redirect: 'manual',
     ...(request.headers === undefined ? {} : {headers: request.headers}),
@@ -44,6 +46,7 @@ async function refreshFixture(
   if (responseBytes.byteLength > MAX_FIXTURE_BYTES) {
     throw new Error('Fixture refresh response exceeded 64 MiB.');
   }
+
   const refreshedContents = formatFixtureContents(
     new TextDecoder('utf-8', {fatal: true}).decode(responseBytes),
     request.outputPath,
@@ -75,6 +78,7 @@ function formatFixtureContents(
     const parsed = parseJsonWithUniqueKeys(contents);
     return `${JSON.stringify(sortJsonKeys(parsed), undefined, 2)}\n`;
   }
+
   const normalized = contents.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
   return normalized === '' || normalized.endsWith('\n') ? normalized : `${normalized}\n`;
 }
@@ -83,6 +87,7 @@ function sortJsonKeys(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(item => sortJsonKeys(item));
   }
+
   if (value !== null && typeof value === 'object') {
     return Object.fromEntries(
       Object.entries(value)
@@ -90,6 +95,7 @@ function sortJsonKeys(value: unknown): unknown {
         .map(([key, nested]) => [key, sortJsonKeys(nested)])
     );
   }
+
   return value;
 }
 
@@ -100,6 +106,7 @@ async function readExistingContents(path: string): Promise<string> {
     if (isMissingFile(error)) {
       return '';
     }
+
     throw error;
   }
 }
@@ -120,6 +127,7 @@ function createFixtureDiff(
   if (existingContents === refreshedContents) {
     return `No changes for ${outputPath}.\n`;
   }
+
   const before = diffLines(existingContents);
   const after = diffLines(refreshedContents);
   return [
@@ -137,6 +145,7 @@ function diffLines(contents: string): string[] {
   if (lines.at(-1) === '') {
     lines.pop();
   }
+
   return lines;
 }
 
@@ -181,6 +190,7 @@ function parseArguments(args: readonly string[]): ParsedArguments | 'help' | und
   if (!networkAcknowledged || sourceUrl === undefined || outputPath === undefined) {
     return undefined;
   }
+
   return {sourceUrl, outputPath, apply};
 }
 
@@ -195,8 +205,10 @@ function headersForSource(sourceUrl: string): RequestInit['headers'] {
     if (apiKey === undefined || apiKey.trim() === '') {
       throw new Error('OPENAIP_API_KEY is required to refresh OpenAIP fixtures.');
     }
+
     return {'x-openaip-api-key': apiKey};
   }
+
   return undefined;
 }
 

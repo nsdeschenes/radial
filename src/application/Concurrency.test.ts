@@ -35,6 +35,7 @@ test('shares one ordinary same-ICAO Airport miss between concurrent plans', asyn
         await releaseLookup.promise;
         return airportPage(1, 1, [airport('airport-caaa', 'CAAA')]);
       }
+
       return airportPage(1, 0, []);
     });
     if (!opened.ok) {
@@ -103,21 +104,25 @@ test('keeps forced same-ICAO Airport reloads distinct and FIFO', async () => {
       if (request.search !== 'CAAA') {
         return airportPage(1, 0, []);
       }
+
       const sourceId = `airport-${sourceIds.length + 1}`;
       sourceIds.push(sourceId);
       if (sourceIds.length === 1) {
         firstLookupStarted.resolve();
         await releaseFirstLookup.promise;
       }
+
       return airportPage(1, 1, [airport(sourceId, 'CAAA')]);
     });
     if (!opened.ok) {
       throw new Error('Expected the application to open.');
     }
+
     const openedPlanner = await opened.value.planning.open();
     if (!openedPlanner.ok) {
       throw new Error('Expected the planner to open.');
     }
+
     await openedPlanner.value[Symbol.asyncDispose]();
 
     const firstReload = opened.value.dataManagement.reloadAirport({
@@ -162,20 +167,24 @@ test('acquires different Airport ICAOs concurrently', async () => {
       if (request.search !== 'CAAA' && request.search !== 'CBBB') {
         return airportPage(1, 0, []);
       }
+
       started.add(request.search);
       if (started.size === 2) {
         allLookupsStarted.resolve();
       }
+
       await releaseLookups.promise;
       return airportPage(1, 1, [airport(`airport-${request.search}`, request.search)]);
     });
     if (!opened.ok) {
       throw new Error('Expected the application to open.');
     }
+
     const openedPlanner = await opened.value.planning.open();
     if (!openedPlanner.ok) {
       throw new Error('Expected the planner to open.');
     }
+
     await openedPlanner.value[Symbol.asyncDispose]();
 
     const firstReload = opened.value.dataManagement.reloadAirport({
@@ -233,6 +242,7 @@ test('runs Navaid operations end to end in FIFO order', async () => {
             firstDerivationStarted.resolve();
             await releaseFirstDerivation.promise;
           }
+
           return [nasrCycle()];
         },
       }
@@ -278,11 +288,13 @@ test('cancelling one Airport waiter leaves shared work for another waiter', asyn
         await releaseLookup.promise;
         return airportPage(1, 1, [airport('airport-caaa', 'CAAA')]);
       }
+
       return airportPage(1, 0, []);
     });
     if (!opened.ok) {
       throw new Error('Expected the application to open.');
     }
+
     const openedPlanner = await opened.value.planning.open();
     if (!openedPlanner.ok) {
       throw new Error('Expected the planner to open.');
@@ -339,10 +351,12 @@ test('Navaid publication includes an Airport committed before its transaction', 
     if (!opened.ok) {
       throw new Error('Expected the application to open.');
     }
+
     const openedPlanner = await opened.value.planning.open();
     if (!openedPlanner.ok) {
       throw new Error('Expected the planner to open.');
     }
+
     await openedPlanner.value[Symbol.asyncDispose]();
 
     const airportReload = opened.value.dataManagement.reloadAirport({
@@ -397,10 +411,12 @@ test('Airport publication queued after a Navaid replacement uses the replacement
     if (!opened.ok) {
       throw new Error('Expected the application to open.');
     }
+
     const openedPlanner = await opened.value.planning.open();
     if (!openedPlanner.ok) {
       throw new Error('Expected the planner to open.');
     }
+
     await openedPlanner.value[Symbol.asyncDispose]();
     holdNavaidCommit = true;
 
@@ -419,6 +435,7 @@ test('Airport publication queued after a Navaid replacement uses the replacement
     if (!navaidResult.ok) {
       throw new Error('Expected the Navaid reload to succeed.');
     }
+
     await expect(airportReload).resolves.toMatchObject({ok: true});
     expect(await projectedAirportSnapshot(databasePath)).toEqual({
       snapshotId: navaidResult.value.snapshotId,
@@ -457,10 +474,12 @@ test('readers observe the old committed Airport or the replacement, never a part
     if (!opened.ok) {
       throw new Error('Expected the application to open.');
     }
+
     const openedPlanner = await opened.value.planning.open();
     if (!openedPlanner.ok) {
       throw new Error('Expected the planner to open.');
     }
+
     await openedPlanner.value[Symbol.asyncDispose]();
 
     await expect(
@@ -512,21 +531,26 @@ test('disposing one application alias does not close work owned by another alias
       if (request.search !== 'CAAA') {
         return airportPage(1, 0, []);
       }
+
       sourceId += 1;
       if (sourceId === 1) {
         airportCommitStarted.resolve();
         await releaseAirportCommit.promise;
       }
+
       return airportPage(1, 1, [airport(`airport-${sourceId}`, 'CAAA')]);
     };
+
     const first = await openApplication(databasePath, listOpenAIPAirports);
     if (!first.ok) {
       throw new Error('Expected the first application to open.');
     }
+
     const firstPlanner = await first.value.planning.open();
     if (!firstPlanner.ok) {
       throw new Error('Expected the first planner to open.');
     }
+
     await firstPlanner.value[Symbol.asyncDispose]();
 
     await symlink(databasePath, aliasPath);

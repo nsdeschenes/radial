@@ -44,9 +44,11 @@ function createProductionOpenAIPNavaidTransport(apiKey: string): OpenAIPNavaidTr
       if (request.signal?.aborted) {
         throw abortableOperation.abortError(request.signal);
       }
+
       if (error instanceof OpenAIPNavaidTransportError) {
         throw error;
       }
+
       throw new OpenAIPNavaidTransportError(
         'OpenAIP Navaid request transport failed.',
         true
@@ -72,9 +74,11 @@ async function readResponseBody(response: Response): Promise<string> {
       false
     );
   }
+
   if (response.body === null) {
     return '';
   }
+
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let byteCount = 0;
@@ -83,6 +87,7 @@ async function readResponseBody(response: Response): Promise<string> {
     if (result.done) {
       break;
     }
+
     byteCount += result.value.byteLength;
     if (byteCount > MAX_RESPONSE_BYTES) {
       await reader.cancel();
@@ -91,14 +96,17 @@ async function readResponseBody(response: Response): Promise<string> {
         false
       );
     }
+
     chunks.push(result.value);
   }
+
   const body = new Uint8Array(byteCount);
   let offset = 0;
   for (const chunk of chunks) {
     body.set(chunk, offset);
     offset += chunk.byteLength;
   }
+
   try {
     return new TextDecoder('utf-8', {fatal: true}).decode(body);
   } catch {

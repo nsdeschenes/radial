@@ -42,32 +42,40 @@ async function runCliWithSignal({
     io.writeStdout('Usage: radial data reload navaids\n');
     return 0;
   }
+
   if (isNavaidReload(args)) {
     return runNavaidReload({env, io, openApplication, signal});
   }
+
   if (isAirportReloadHelp(args)) {
     io.writeStdout('Usage: radial data reload airport <ICAO>\n');
     return 0;
   }
+
   if (isAirportReloadOption(args)) {
     writeAirportReloadUsage(io);
     return 2;
   }
+
   if (isAirportReload(args)) {
     return runAirportReload({args, env, io, openApplication, signal});
   }
+
   if (isDataStatusHelp(args)) {
     io.writeStdout('Usage: radial data status\n');
     return 0;
   }
+
   if (isDataStatus(args)) {
     return runDataStatus({env, io});
   }
+
   if (args[0] === 'data') {
     if (args[1] === 'reload' && args[2] === 'airport') {
       writeAirportReloadUsage(io);
       return 2;
     }
+
     if (args[1] === 'status') {
       io.writeStderr(
         'error [DATA_USAGE]: Invalid data command.\n' +
@@ -76,6 +84,7 @@ async function runCliWithSignal({
       );
       return 2;
     }
+
     io.writeStderr(
       'error [DATA_USAGE]: Invalid data command.\n' +
         'Cause: The Navaid reload accepts no arguments or operational flags.\n' +
@@ -213,6 +222,7 @@ async function runDataStatus({
     io.writeStderr(dataStatusOutput.formatFailure(result.failure));
     return 1;
   }
+
   io.writeStdout(dataStatusOutput.formatSuccess(result.value));
   return 0;
 }
@@ -238,6 +248,7 @@ async function runNavaidReload({
     );
     return 1;
   }
+
   if ((env['OPENAIP_API_KEY'] ?? '').trim() === '') {
     io.writeStderr(
       navaidReloadOutput.formatFailure({
@@ -260,9 +271,11 @@ async function runNavaidReload({
     if (isInterrupted(error, signal)) {
       return 130;
     }
+
     io.writeStderr(navaidReloadOutput.formatFailure(unexpectedDataFailure()));
     return 1;
   }
+
   if (!openedApplication.ok) {
     io.writeStderr(
       navaidReloadOutput.formatFailure({
@@ -293,6 +306,7 @@ async function runNavaidReload({
       io.writeStderr(navaidReloadOutput.formatFailure(unexpectedDataFailure()));
     }
   }
+
   let disposed = true;
   try {
     await openedApplication.value[Symbol.asyncDispose]();
@@ -302,16 +316,20 @@ async function runNavaidReload({
       io.writeStderr(navaidReloadOutput.formatFailure(unexpectedDataFailure()));
     }
   }
+
   if (interrupted) {
     return 130;
   }
+
   if (!disposed || result === undefined) {
     return 1;
   }
+
   if (!result.ok) {
     io.writeStderr(navaidReloadOutput.formatFailure(result.failure));
     return 1;
   }
+
   io.writeStdout(navaidReloadOutput.formatSuccess(result.value));
   return 0;
 }
@@ -377,9 +395,11 @@ async function runAirportReload({
     if (isInterrupted(error, signal)) {
       return 130;
     }
+
     io.writeStderr(airportReloadOutput.formatFailure(unexpectedDataFailure()));
     return 1;
   }
+
   if (!openedApplication.ok) {
     io.writeStderr(
       airportReloadOutput.formatFailure({
@@ -411,6 +431,7 @@ async function runAirportReload({
       io.writeStderr(airportReloadOutput.formatFailure(unexpectedDataFailure()));
     }
   }
+
   let disposed = true;
   try {
     await openedApplication.value[Symbol.asyncDispose]();
@@ -420,16 +441,20 @@ async function runAirportReload({
       io.writeStderr(airportReloadOutput.formatFailure(unexpectedDataFailure()));
     }
   }
+
   if (interrupted) {
     return 130;
   }
+
   if (!disposed || result === undefined) {
     return 1;
   }
+
   if (!result.ok) {
     io.writeStderr(airportReloadOutput.formatFailure(result.failure));
     return result.failure.code === 'DATA_INVALID_ICAO' ? 2 : 1;
   }
+
   io.writeStdout(airportReloadOutput.formatSuccess(result.value));
   return 0;
 }

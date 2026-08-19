@@ -16,6 +16,7 @@ function isDuckDBBusyError(error: unknown): boolean {
     if (typeof current !== 'object' || !('cause' in current)) {
       break;
     }
+
     current = current.cause;
   }
 

@@ -21,10 +21,12 @@ test('canonicalizes database aliases to one process-scoped identity', async () =
     if (!bootstrapped.ok) {
       throw new Error('Expected the bootstrap application to open.');
     }
+
     const bootstrappedPlanner = await bootstrapped.value.planning.open();
     if (!bootstrappedPlanner.ok) {
       throw new Error('Expected the bootstrap planner to open.');
     }
+
     await bootstrappedPlanner.value[Symbol.asyncDispose]();
     await bootstrapped.value[Symbol.asyncDispose]();
 
@@ -50,6 +52,7 @@ test('canonicalizes database aliases to one process-scoped identity', async () =
     if (planner.ok) {
       await planner.value[Symbol.asyncDispose]();
     }
+
     await relativeAlias.value[Symbol.asyncDispose]();
     await aliased.value[Symbol.asyncDispose]();
   } finally {
@@ -107,6 +110,7 @@ test('bootstraps the first Navaid Snapshot when planning opens and reuses it off
     if (planner.ok) {
       await planner.value[Symbol.asyncDispose]();
     }
+
     await opened.value[Symbol.asyncDispose]();
 
     const offline = await openRadialApplication(
@@ -126,6 +130,7 @@ test('bootstraps the first Navaid Snapshot when planning opens and reuses it off
     if (offlinePlanner.ok) {
       await offlinePlanner.value[Symbol.asyncDispose]();
     }
+
     await offline.value[Symbol.asyncDispose]();
 
     expect(openAipRequestCount).toBe(1);
@@ -243,9 +248,11 @@ test('concurrent first planners share one Navaid Snapshot bootstrap attempt', as
     if (firstPlanner.ok) {
       await firstPlanner.value[Symbol.asyncDispose]();
     }
+
     if (secondPlanner.ok) {
       await secondPlanner.value[Symbol.asyncDispose]();
     }
+
     await first.value[Symbol.asyncDispose]();
     await second.value[Symbol.asyncDispose]();
   } finally {
@@ -299,6 +306,7 @@ test('reports bootstrap failure safely and retries without activating a partial 
     if (retried.ok) {
       await retried.value[Symbol.asyncDispose]();
     }
+
     await opened.value[Symbol.asyncDispose]();
 
     const instance = await DuckDBInstance.create(databasePath);
@@ -496,6 +504,7 @@ test('publishes fresh reload identities and preserves the active snapshot on acq
         facilityVariationEpochYearMissingCount: 0,
       });
     }
+
     openAipUnavailable = true;
     await expect(
       opened.value.dataManagement.reloadNavaids({openAipApiKey: 'test-key'})
@@ -547,6 +556,7 @@ test('graceful disposal rejects new work while another alias remains usable', as
     if (!firstPlanner.ok) {
       throw new Error('Expected first planner to open.');
     }
+
     const activePlanning = firstPlanner.value.planRoute({
       departureIcao: 'AAAA',
       arrivalIcao: 'BBBB',
@@ -567,6 +577,7 @@ test('graceful disposal rejects new work while another alias remains usable', as
     if (planner.ok) {
       await planner.value[Symbol.asyncDispose]();
     }
+
     await second.value[Symbol.asyncDispose]();
   } finally {
     await rm(temporaryDirectory, {recursive: true});

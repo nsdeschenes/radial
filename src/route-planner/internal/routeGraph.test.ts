@@ -285,6 +285,7 @@ function assertSelectedRouteProperties(
   if (first === undefined || last === undefined) {
     throw new Error('Generated Route Plan endpoint invariant failed.');
   }
+
   expect(selected.legDistancesNm[0]).toBe(
     candidateById.get(first.databaseId)?.departureDistanceNm
   );
@@ -300,6 +301,7 @@ function assertSelectedRouteProperties(
     if (departure === undefined || arrival === undefined) {
       throw new Error('Generated Route Plan continuity invariant failed.');
     }
+
     const pair = graph.legs.find(
       leg =>
         (leg.firstDatabaseId === departure.databaseId &&
@@ -353,6 +355,7 @@ function exhaustiveRoute(graph: GeneratedGraph): SelectedRoute | undefined {
     if (current === undefined || totalDistanceNm > graph.maximumDistanceNm) {
       return;
     }
+
     const currentCandidate = candidatesById.get(current.databaseId);
     if (
       currentCandidate !== undefined &&
@@ -391,9 +394,11 @@ function compareReferenceRoutes(first: SelectedRoute, second: SelectedRoute): nu
   if (first.totalDistanceNm !== second.totalDistanceNm) {
     return first.totalDistanceNm < second.totalDistanceNm ? -1 : 1;
   }
+
   if (first.legDistancesNm.length !== second.legDistancesNm.length) {
     return first.legDistancesNm.length - second.legDistancesNm.length;
   }
+
   const firstIdentity = first.navaids.map(navaid => [
     navaid.identifier,
     navaid.databaseId,
@@ -427,9 +432,11 @@ function minimizeCounterexample(graph: GeneratedGraph): GeneratedGraph {
         break;
       }
     }
+
     if (changed) {
       continue;
     }
+
     for (const leg of minimized.legs) {
       const attempted = {
         ...minimized,
@@ -442,6 +449,7 @@ function minimizeCounterexample(graph: GeneratedGraph): GeneratedGraph {
       }
     }
   }
+
   return minimized;
 }
 
@@ -481,5 +489,6 @@ function shuffle<Value>(values: readonly Value[], random: () => number): Value[]
       shuffled[otherIndex] = value;
     }
   }
+
   return shuffled;
 }

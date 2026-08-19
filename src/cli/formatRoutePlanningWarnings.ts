@@ -21,6 +21,7 @@ function formatWarning(
   if (routeLeg === undefined) {
     throw new Error(`Warning references missing Route Leg ${warning.legNumber}.`);
   }
+
   const routePoint = routeLeg[warning.endpoint];
   const identifier =
     routePoint.kind === 'airport' ? routePoint.icao : routePoint.identifier;

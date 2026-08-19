@@ -40,6 +40,7 @@ test.each(CRASH_PHASES)(
       } else {
         expect(killed.signal).toBe('SIGKILL');
       }
+
       if (phase !== 'after-commit') {
         expect(killed.stdout).toContain(`reached:${phase}\n`);
       }
@@ -89,6 +90,7 @@ async function runCrashWorker(
     void output.reached.catch(() => {});
     return output.result;
   }
+
   await output.reached;
   child.kill('SIGKILL');
   return output.result;
@@ -116,6 +118,7 @@ function collectWorkerOutput(child: ReturnType<typeof spawn>): {
   if (child.stdout === null || child.stderr === null) {
     throw new Error('Expected piped worker output.');
   }
+
   let stdout = '';
   let stderr = '';
   let reachedResolve: (() => void) | undefined;
@@ -144,6 +147,7 @@ function collectWorkerOutput(child: ReturnType<typeof spawn>): {
       if (code !== 0 && signal === null) {
         reachedReject?.(new Error(`Worker failed: ${stderr}`));
       }
+
       resolve({code, signal, stdout, stderr});
     });
   });

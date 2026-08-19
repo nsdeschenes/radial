@@ -91,6 +91,7 @@ async function captureOpenAIPNavaids(
         if (!(error instanceof CollectionDriftError)) {
           throw error;
         }
+
         if (attempt === MAX_CAPTURE_ATTEMPTS) {
           throw new OpenAIPNavaidCaptureError(
             'snapshot-drift',
@@ -103,17 +104,21 @@ async function captureOpenAIPNavaids(
     if (request.signal?.aborted) {
       throw abortableOperation.abortError(request.signal);
     }
+
     if (abortableOperation.isAbortError(error)) {
       throw error;
     }
+
     if (error instanceof OpenAIPNavaidCaptureError) {
       throw error;
     }
+
     throw new OpenAIPNavaidCaptureError(
       'invalid-response',
       error instanceof Error ? error.message : 'OpenAIP Navaid response was invalid.'
     );
   }
+
   throw new Error('OpenAIP Navaid capture exhausted its attempt policy.');
 }
 
@@ -135,6 +140,7 @@ async function captureOneCollection(
     if (envelope.page !== pageNumber || envelope.limit !== PAGE_LIMIT) {
       throw new CollectionDriftError();
     }
+
     if (pageNumber === 1) {
       expectedTotalCount = envelope.totalCount;
       expectedTotalPages = envelope.totalPages;
@@ -174,10 +180,12 @@ async function captureOneCollection(
       ) {
         throw new CollectionDriftError();
       }
+
       seenIds.add(sourceId);
       previousId = sourceId;
       rawNavaids.push(item);
     }
+
     dependencies.onProgress?.({
       page: pageNumber,
       totalPages: envelope.totalPages,
@@ -188,8 +196,10 @@ async function captureOneCollection(
       if (rawNavaids.length !== expectedTotalCount) {
         throw new CollectionDriftError();
       }
+
       return rawNavaids;
     }
+
     pageNumber = expectedNextPage;
   }
 }
@@ -217,21 +227,25 @@ async function requestPageWithRetry(
       if (dependencies.signal?.aborted) {
         throw abortableOperation.abortError(dependencies.signal);
       }
+
       if (abortableOperation.isAbortError(error)) {
         throw error;
       }
+
       if (error instanceof OpenAIPNavaidTransportError && !error.retryable) {
         throw new OpenAIPNavaidCaptureError(
           'invalid-response',
           'OpenAIP Navaid transport rejected the request.'
         );
       }
+
       if (attempt === MAX_REQUEST_ATTEMPTS) {
         throw new OpenAIPNavaidCaptureError(
           'unavailable',
           `OpenAIP Navaid transport failed after ${MAX_REQUEST_ATTEMPTS} attempts.`
         );
       }
+
       await waitBeforeRetry(attempt, undefined, requestStartedAtMs, dependencies);
       continue;
     }
@@ -241,30 +255,35 @@ async function requestPageWithRetry(
     if (response.status === 200) {
       return response;
     }
+
     if (response.status === 401) {
       throw new OpenAIPNavaidCaptureError(
         'auth',
         'OpenAIP Navaid request failed with HTTP 401.'
       );
     }
+
     if (response.status === 403) {
       throw new OpenAIPNavaidCaptureError(
         'forbidden',
         'OpenAIP Navaid request failed with HTTP 403.'
       );
     }
+
     if (!RETRYABLE_STATUSES.has(response.status)) {
       throw new OpenAIPNavaidCaptureError(
         'invalid-response',
         `OpenAIP Navaid request failed with HTTP ${response.status}.`
       );
     }
+
     if (attempt === MAX_REQUEST_ATTEMPTS) {
       throw new OpenAIPNavaidCaptureError(
         'unavailable',
         `OpenAIP Navaid request failed with HTTP ${response.status} after ${MAX_REQUEST_ATTEMPTS} attempts.`
       );
     }
+
     await waitBeforeRetry(
       attempt,
       headerValue(response.headers, 'retry-after'),
@@ -272,6 +291,7 @@ async function requestPageWithRetry(
       dependencies
     );
   }
+
   throw new Error('OpenAIP Navaid request exhausted its retry policy.');
 }
 
@@ -287,6 +307,7 @@ async function waitBeforeRetry(
   if (elapsedMilliseconds(requestStartedAtMs, dependencies) + delayMs > MAX_ELAPSED_MS) {
     throw new Error('OpenAIP Navaid request exceeded its 5-minute elapsed ceiling.');
   }
+
   await abortableOperation.awaitWithAbort(
     dependencies.sleep(delayMs),
     dependencies.signal
@@ -297,12 +318,14 @@ function parseRetryAfter(value: string | undefined, now: Date): number | undefin
   if (value === undefined) {
     return undefined;
   }
+
   const seconds = /^\d+$/.test(value) ? Number(value) : undefined;
   const milliseconds =
     seconds === undefined ? Date.parse(value) - now.getTime() : seconds * 1000;
   if (!Number.isFinite(milliseconds) || milliseconds < 0 || milliseconds > 120_000) {
     return undefined;
   }
+
   return milliseconds;
 }
 
@@ -339,6 +362,7 @@ function parsePageEnvelope(body: string): PageEnvelope {
   } catch {
     throw new Error('OpenAIP Navaid response was not valid duplicate-key-free JSON.');
   }
+
   if (
     !isJsonObject(value) ||
     Object.keys(value).some(key => !ENVELOPE_KEYS.has(key)) ||
@@ -346,16 +370,19 @@ function parsePageEnvelope(body: string): PageEnvelope {
   ) {
     throw new Error('OpenAIP Navaid response had an incompatible envelope.');
   }
+
   for (const [index, item] of value['items'].entries()) {
     if (!isJsonObject(item)) {
       throw new Error(`OpenAIP Navaid item ${index + 1} was not a JSON object.`);
     }
+
     try {
       canonicalizeJson(item);
     } catch {
       throw new Error(`OpenAIP Navaid item ${index + 1} was not canonicalizable.`);
     }
   }
+
   const page = integerFrom(value, 'page', 1);
   const limit = integerFrom(value, 'limit', 1);
   const totalCount = integerFrom(value, 'totalCount', 0);
@@ -367,6 +394,7 @@ function parsePageEnvelope(body: string): PageEnvelope {
   ) {
     throw new Error('OpenAIP Navaid response had an incompatible envelope.');
   }
+
   return {
     page,
     limit,
@@ -386,6 +414,7 @@ function integerFrom(
   if (typeof field !== 'number' || !Number.isSafeInteger(field) || field < minimum) {
     throw new Error('OpenAIP Navaid response had an incompatible envelope.');
   }
+
   return field;
 }
 

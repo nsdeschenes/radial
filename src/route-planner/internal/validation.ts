@@ -105,6 +105,7 @@ function validateAirportIcao(value: string): AirportIcaoValidation {
       failure: {reason: 'invalid-icao', value, normalizedIcao},
     };
   }
+
   return {ok: true, value: normalizedIcao};
 }
 
