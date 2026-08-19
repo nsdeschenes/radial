@@ -78,7 +78,7 @@ test('rejects duplicate planner identities before a query interprets them', asyn
   });
 });
 
-test('rejects a Navaid whose family and frequency representation disagree', async () => {
+test('accepts a fractional-kHz NDB frequency', async () => {
   await using database = await syntheticPlannerDatabase.create({
     navaids: [
       {
@@ -91,8 +91,8 @@ test('rejects a Navaid whose family and frequency representation disagree', asyn
   });
 
   await expect(validateDatabase(database.databasePath)).resolves.toEqual({
-    ok: false,
-    violations: ['planner_navaids contains invalid planner-ready navigation data'],
+    ok: true,
+    metadata: null,
   });
 });
 

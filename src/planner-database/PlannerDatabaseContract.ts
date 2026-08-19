@@ -403,7 +403,7 @@ async function validate(connection: DuckDBConnection): Promise<ContractValidatio
           OR frequency_unit IS NULL
           OR published_range_nm IS NULL OR NOT isfinite(published_range_nm)
           OR published_range_nm <= 0
-          OR (family = 'NDB' AND (frequency_unit <> 'kHz' OR frequency_value <> trunc(frequency_value)))
+          OR (family = 'NDB' AND frequency_unit <> 'kHz')
           OR (family IN (${VOR_FAMILIES.map(family => `'${family}'`).join(', ')}) AND frequency_unit <> 'MHz')
       ) AS invalid_navigation_data,
       EXISTS(
@@ -535,10 +535,7 @@ function decodeNavaid(row: DatabaseRow): PlannerNavaid {
   } as const;
 
   if (family === 'NDB') {
-    if (
-      requiredString(row, 'frequency_unit') !== 'kHz' ||
-      !Number.isInteger(frequencyValue)
-    ) {
+    if (requiredString(row, 'frequency_unit') !== 'kHz') {
       throw invalidField('frequency_value');
     }
 
