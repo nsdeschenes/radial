@@ -745,25 +745,9 @@ test('writes a degraded NDB Route Plan to stdout, ordered warnings to stderr, an
   });
 });
 
-test.each([
-  {
-    name: 'missing airport lookup',
-    airports: [syntheticAirport('arrival', 'BBBB', 2)],
-    stderr: 'Departure airport "AAAA" was not found in the local database.\n',
-  },
-  {
-    name: 'ambiguous airport lookup',
-    airports: [
-      syntheticAirport('departure-1', 'AAAA', 0),
-      syntheticAirport('departure-2', ' aaaa ', 0),
-      syntheticAirport('arrival', 'BBBB', 2),
-    ],
-    stderr:
-      'Departure airport "AAAA" matched multiple usable records in the local database.\n',
-  },
-])('writes no partial Route Plan for a $name failure and exits 1', async scenario => {
+test('writes no partial Route Plan for a missing airport failure and exits 1', async () => {
   await using database = await syntheticPlannerDatabase.create({
-    airports: scenario.airports,
+    airports: [syntheticAirport('arrival', 'BBBB', 2)],
   });
   const capture = captureOutput();
 
@@ -775,7 +759,10 @@ test.each([
   });
 
   expect(exitCode).toBe(1);
-  expect(capture.output()).toEqual({stdout: '', stderr: scenario.stderr});
+  expect(capture.output()).toEqual({
+    stdout: '',
+    stderr: 'Departure airport "AAAA" was not found in the local database.\n',
+  });
 });
 
 test('writes no partial Route Plan when exhaustive search finds no route and exits 1', async () => {

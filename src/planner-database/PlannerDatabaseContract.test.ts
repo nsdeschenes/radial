@@ -29,6 +29,22 @@ test('accepts compatible planner relations and interprets their metadata', async
   });
 });
 
+test('accepts an additive compatible table in place of a canonical view', async () => {
+  await using database = await syntheticPlannerDatabase.create();
+  await syntheticPlannerDatabase.modify(
+    database.databasePath,
+    `CREATE TABLE compatible_airports AS SELECT *, 47 AS producer_extension
+      FROM main.planner_airports;
+    DROP VIEW main.planner_airports;
+    ALTER TABLE compatible_airports RENAME TO planner_airports;`
+  );
+
+  await expect(validateDatabase(database.databasePath)).resolves.toEqual({
+    ok: true,
+    metadata: null,
+  });
+});
+
 test('rejects a noncanonical Airport ICAO as non-planner-ready data', async () => {
   await using database = await syntheticPlannerDatabase.create({
     airports: [
@@ -59,6 +75,24 @@ test('rejects duplicate planner identities before a query interprets them', asyn
   await expect(validateDatabase(database.databasePath)).resolves.toEqual({
     ok: false,
     violations: ['planner_navaids contains duplicate planner-ready identity data'],
+  });
+});
+
+test('rejects a Navaid whose family and frequency representation disagree', async () => {
+  await using database = await syntheticPlannerDatabase.create({
+    navaids: [
+      {
+        ...syntheticNavaid('ndb', 'NDB'),
+        family: 'NDB',
+        frequencyValue: 365.5,
+        frequencyUnit: 'kHz',
+      },
+    ],
+  });
+
+  await expect(validateDatabase(database.databasePath)).resolves.toEqual({
+    ok: false,
+    violations: ['planner_navaids contains invalid planner-ready navigation data'],
   });
 });
 
