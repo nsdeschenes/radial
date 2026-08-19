@@ -8,7 +8,6 @@ import type buildNavaidSnapshotCandidate from '#radial/data-producer/internal/Na
 import NavaidSnapshotPublicationError from '#radial/data-producer/internal/NavaidSnapshotPublicationError.js';
 import NavaidSnapshotValidationError from '#radial/data-producer/internal/NavaidSnapshotValidationError.js';
 import type PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
-import publicationGateRegistry from '#radial/data-producer/internal/PublicationGateRegistry.js';
 import Wmm2025 from '#radial/data-producer/internal/Wmm2025.js';
 
 const {localMagneticDeclinationFromWmm2025, wmm2025Provenance} = Wmm2025;
@@ -31,7 +30,6 @@ type PublicationOptions = Readonly<{
   publishedAt?: () => string;
   beforeCommit?: () => void | Promise<void>;
   onBoundary?: (boundary: NavaidPublicationBoundary) => void | Promise<void>;
-  publicationGate?: PublicationGate;
   signal?: AbortSignal;
 }>;
 
@@ -46,6 +44,7 @@ type PublicationResult = Readonly<{
 async function publishNavaidSnapshot(
   instance: DuckDBInstance,
   candidate: NavaidSnapshotCandidate,
+  publicationGate: PublicationGate,
   options: PublicationOptions = {}
 ): Promise<PublicationResult> {
   abortableOperation.throwIfAborted(options.signal);
@@ -59,8 +58,6 @@ async function publishNavaidSnapshot(
   abortableOperation.throwIfAborted(options.signal);
   const snapshotId = options.snapshotId ?? randomUUID();
   validateUuid(snapshotId);
-  const publicationGate =
-    options.publicationGate ?? publicationGateRegistry.forInstance(instance);
   return publicationGate.run(
     () => publishNavaidSnapshotWithinGate(instance, candidate, snapshotId, options),
     options.signal

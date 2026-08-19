@@ -3,20 +3,19 @@ import type {DuckDBInstance} from '@duckdb/node-api';
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import reloadNavaids from '#radial/data-producer/internal/NavaidDataProducer.js';
 import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
-import publicationGateRegistry from '#radial/data-producer/internal/PublicationGateRegistry.js';
+import type PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 import isDuckDBBusyError from '#radial/db/duckdb/isDuckDBBusyError.js';
 
 type DataFailure = RadialApplicationTypes['DataFailure'];
-type NavaidDataProducerDependencies = NonNullable<Parameters<typeof reloadNavaids>[2]>;
+type NavaidDataProducerDependencies = NonNullable<Parameters<typeof reloadNavaids>[3]>;
 type BootstrapResult = Readonly<{ok: true}> | Readonly<{ok: false; failure: DataFailure}>;
 
 async function ensureFirstNavaidSnapshot(
   instance: DuckDBInstance,
   openAipApiKey: string,
+  publicationGate: PublicationGate,
   dependencies: NavaidDataProducerDependencies = {}
 ): Promise<BootstrapResult> {
-  const publicationGate =
-    dependencies.publicationGate ?? publicationGateRegistry.forInstance(instance);
   let readiness: 'ready' | 'bootstrap' | 'credentials-missing';
   try {
     readiness = await publicationGate.run(async () => {
@@ -60,10 +59,8 @@ async function ensureFirstNavaidSnapshot(
   const reloaded = await reloadNavaids(
     instance,
     {openAipApiKey},
-    {
-      ...dependencies,
-      publicationGate,
-    }
+    publicationGate,
+    dependencies
   );
   return reloaded.ok ? {ok: true} : reloaded;
 }
