@@ -11,6 +11,10 @@ import type PublicationGate from '#radial/data-producer/internal/PublicationGate
 import Wmm2025 from '#radial/data-producer/internal/Wmm2025.js';
 
 const {localMagneticDeclinationFromWmm2025, wmm2025Provenance} = Wmm2025;
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SHA256_CHECKSUM_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
 type NavaidSnapshotCandidate = ReturnType<typeof buildNavaidSnapshotCandidate>;
 
@@ -354,11 +358,11 @@ function validateProvenance(candidate: NavaidSnapshotCandidate): void {
   if (
     !Number.isFinite(provenance.magneticModel.epochYear) ||
     provenance.magneticModel.epochYear <= 0 ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(provenance.magneticModel.referenceDate) ||
+    !ISO_DATE_PATTERN.test(provenance.magneticModel.referenceDate) ||
     !validChecksum(provenance.magneticModel.coefficientChecksum) ||
     !validChecksum(provenance.faaNasr.archiveChecksum) ||
     !validChecksum(provenance.faaNasr.contentChecksum) ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(provenance.faaNasr.effectiveDate)
+    !ISO_DATE_PATTERN.test(provenance.faaNasr.effectiveDate)
   ) {
     throw new Error('candidate magnetic provenance bundle is invalid');
   }
@@ -388,7 +392,7 @@ function validPlannerNavaid(
     navaid.facilityVariationSource !== null &&
     navaid.facilityVariationSource.trim() !== '' &&
     (navaid.facilityVariationEffectiveDate === null ||
-      /^\d{4}-\d{2}-\d{2}$/.test(navaid.facilityVariationEffectiveDate));
+      ISO_DATE_PATTERN.test(navaid.facilityVariationEffectiveDate));
   return (
     navaid.sourceRecordId !== '' &&
     navaid.databaseId !== '' &&
@@ -837,11 +841,7 @@ function finiteInRange(
 }
 
 function validateUuid(value: string): void {
-  if (
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-      value
-    )
-  ) {
+  if (!UUID_PATTERN.test(value)) {
     throw new Error('snapshotId must be an opaque UUID.');
   }
 }
@@ -853,7 +853,7 @@ function validateTimestamp(value: string, name: string): void {
 }
 
 function validChecksum(value: string): boolean {
-  return /^sha256:[0-9a-f]{64}$/.test(value);
+  return SHA256_CHECKSUM_PATTERN.test(value);
 }
 
 function requireString(value: unknown, name: string): string {

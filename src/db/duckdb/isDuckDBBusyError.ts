@@ -1,15 +1,13 @@
+const DUCKDB_BUSY_ERROR_PATTERN =
+  /could not set lock on file|conflicting lock is held|database is locked/i;
+
 function isDuckDBBusyError(error: unknown): boolean {
   const visited = new Set<unknown>();
   let current: unknown = error;
 
   while (current !== undefined && current !== null && !visited.has(current)) {
     visited.add(current);
-    if (
-      current instanceof Error &&
-      /could not set lock on file|conflicting lock is held|database is locked/i.test(
-        current.message
-      )
-    ) {
+    if (current instanceof Error && DUCKDB_BUSY_ERROR_PATTERN.test(current.message)) {
       return true;
     }
 

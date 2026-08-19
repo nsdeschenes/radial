@@ -2,6 +2,12 @@ import {createHash} from 'node:crypto';
 
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
 
+const FACILITY_VARIATION_MAGNITUDE_PATTERN = /^\d{1,2}(?:\.\d+)?$/;
+const FOUR_DIGIT_VALUE_PATTERN = /^\d{4}$/;
+const DECIMAL_FREQUENCY_PATTERN = /^(\d{1,3})(?:\.(\d{1,6}))?$/;
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const SHA256_CHECKSUM_PATTERN = /^sha256:[0-9a-f]{64}$/;
+
 type JsonObject = Readonly<Record<string, unknown>>;
 
 type FAANasrCycleArtifact = Readonly<{
@@ -273,10 +279,10 @@ function parseFacilityVariation(
   const rawEpochYear = stringOrNull(record['MAG_VARN_YEAR']);
   if (
     rawMagnitude === null ||
-    !/^\d{1,2}(?:\.\d+)?$/.test(rawMagnitude.trim()) ||
+    !FACILITY_VARIATION_MAGNITUDE_PATTERN.test(rawMagnitude.trim()) ||
     (hemisphere !== 'E' && hemisphere !== 'W') ||
     rawEpochYear === null ||
-    !/^\d{4}$/.test(rawEpochYear.trim())
+    !FOUR_DIGIT_VALUE_PATTERN.test(rawEpochYear.trim())
   ) {
     return undefined;
   }
@@ -298,7 +304,7 @@ function parseFacilityVariation(
 }
 
 function decimalFrequencyHz(value: string): number | undefined {
-  const match = /^(\d{1,3})(?:\.(\d{1,6}))?$/.exec(value.trim());
+  const match = DECIMAL_FREQUENCY_PATTERN.exec(value.trim());
   if (match === null) {
     return undefined;
   }
@@ -465,7 +471,7 @@ function validateCycleMetadata(cycle: FAANasrCycleArtifact): FAANasrCycleArtifac
     throw new Error('FAA NASR source URL must use the official HTTPS origin');
   }
 
-  if (!/^\d{4}$/.test(cycle.cycleId)) {
+  if (!FOUR_DIGIT_VALUE_PATTERN.test(cycle.cycleId)) {
     throw new Error('FAA NASR cycle identity must use the four-digit AIRAC cycle');
   }
 
@@ -547,7 +553,7 @@ function validateRecordStructure(
 function validateDate(value: string, name: string): void {
   const parsed = new Date(`${value}T00:00:00Z`);
   if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+    !ISO_DATE_PATTERN.test(value) ||
     Number.isNaN(parsed.valueOf()) ||
     parsed.toISOString().slice(0, 10) !== value
   ) {
@@ -562,7 +568,7 @@ function validateTimestamp(value: string, name: string): void {
 }
 
 function validateChecksum(value: string, name: string): void {
-  if (!/^sha256:[0-9a-f]{64}$/.test(value)) {
+  if (!SHA256_CHECKSUM_PATTERN.test(value)) {
     throw new Error(`${name} must be a lowercase prefixed SHA-256 checksum`);
   }
 }

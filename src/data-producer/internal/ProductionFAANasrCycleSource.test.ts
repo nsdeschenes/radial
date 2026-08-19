@@ -5,6 +5,8 @@ import {afterEach, expect, test, vi} from 'vitest';
 
 import acquireProductionFAANasrCycle from '#radial/data-producer/internal/ProductionFAANasrCycleSource.js';
 
+const SHA256_CHECKSUM_PATTERN = /^sha256:[0-9a-f]{64}$/;
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -57,6 +59,6 @@ test('acquires and parses the applicable official FAA NAV CSV cycle', async () =
       },
     ],
   });
-  expect(cycles[0]?.archiveChecksum).toMatch(/^sha256:[0-9a-f]{64}$/);
-  expect(cycles[0]?.contentChecksum).toMatch(/^sha256:[0-9a-f]{64}$/);
+  expect(cycles[0]?.archiveChecksum).toMatch(SHA256_CHECKSUM_PATTERN);
+  expect(cycles[0]?.contentChecksum).toMatch(SHA256_CHECKSUM_PATTERN);
 });

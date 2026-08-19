@@ -5,6 +5,10 @@ import type RouteSearchTypes from '#radial/route-planner/internal/RouteSearchTyp
 import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
 import deterministicPermutation from '#radial/test/deterministicPermutation.js';
 
+const DUPLICATE_CANDIDATE_PAIR_ERROR_PATTERN =
+  /candidate pair was compared more than once/;
+const DUPLICATE_CANDIDATE_ERROR_PATTERN = /candidate was admitted more than once/;
+
 type VorFamilyRoutePoint = RoutePlannerTypes['VorFamilyRoutePoint'];
 type NavaidPairDistance = RouteSearchTypes['NavaidPairDistance'];
 type Candidate = ReturnType<typeof candidate>;
@@ -53,8 +57,8 @@ test('retains one monotonic graph while newly admitted candidates improve a prov
       [],
       [{firstDatabaseId: 'second', secondDatabaseId: 'first', distanceNm: 10}]
     )
-  ).toThrow(/candidate pair was compared more than once/);
-  expect(() => graph.admit([later], [])).toThrow(/candidate was admitted more than once/);
+  ).toThrow(DUPLICATE_CANDIDATE_PAIR_ERROR_PATTERN);
+  expect(() => graph.admit([later], [])).toThrow(DUPLICATE_CANDIDATE_ERROR_PATTERN);
 });
 
 test('uses exact Float64 distance, then Route Leg count, then stable Navaid identity sequence', () => {
