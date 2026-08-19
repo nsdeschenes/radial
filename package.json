@@ -20,8 +20,8 @@
     "acceptance:refresh-fixtures": "nub src/acceptance/refreshFixtures.ts",
     "acceptance:smoke": "nub src/acceptance/checkRoutePlannerSmoke.ts",
     "acceptance:stress": "vitest run src/acceptance/syntheticStressCorpus.test.ts",
-    "dev": "node --watch src/radial.ts",
-    "start": "node src/radial.ts",
+    "dev": "nub --watch src/radial.ts",
+    "start": "nub --import ./src/instrument.ts src/radial.ts",
     "check": "nub run fmt:check && nub run lint && nub run typecheck",
     "fix": "nub run fmt && nub run lint:fix",
     "fmt": "oxfmt",
@@ -38,6 +38,9 @@
   },
   "dependencies": {
     "@duckdb/node-api": "1.5.5-r.3",
+    "@opentelemetry/core": "^2.10.0",
+    "@sentry/node": "^10.70.0",
+    "@sentry/profiling-node": "^10.70.0",
     "fflate": "^0.8.3",
     "zod": "^4.4.3"
   },
