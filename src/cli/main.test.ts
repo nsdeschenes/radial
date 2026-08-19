@@ -42,7 +42,7 @@ test('reports malformed command input on stderr and exits 2', async () => {
     stdout: '',
     stderr:
       'Departure must be a four-letter ICAO airport code; received " YYZ ".\n' +
-      'Usage: radial <departure-icao> <arrival-icao>\n' +
+      'Usage: radial <departure-icao> <arrival-icao> [--warnings]\n' +
       'Example: radial CYYZ CYOW\n',
   });
 });
@@ -522,7 +522,7 @@ test('reports an incorrect positional argument count on stderr and exits 2', asy
     stdout: '',
     stderr:
       'Expected exactly two ICAO airport codes; received 1.\n' +
-      'Usage: radial <departure-icao> <arrival-icao>\n' +
+      'Usage: radial <departure-icao> <arrival-icao> [--warnings]\n' +
       'Example: radial CYYZ CYOW\n',
   });
 });
@@ -541,7 +541,7 @@ test('reports identical normalized airports on stderr and exits 2', async () => 
     stdout: '',
     stderr:
       'Departure and arrival must be different airports; both normalize to "CYYZ".\n' +
-      'Usage: radial <departure-icao> <arrival-icao>\n' +
+      'Usage: radial <departure-icao> <arrival-icao> [--warnings]\n' +
       'Example: radial CYYZ CYOW\n',
   });
 });
@@ -691,7 +691,7 @@ test('writes a complete normal Route Plan to stdout and exits 0', async () => {
   });
 });
 
-test('writes a degraded NDB Route Plan to stdout, ordered warnings to stderr, and exits 0', async () => {
+test('summarizes degraded Route Plan warnings unless details are requested', async () => {
   await using database = await syntheticPlannerDatabase.create({
     airports: [
       syntheticAirport('departure', 'AAAA', 0),
@@ -711,17 +711,25 @@ test('writes a degraded NDB Route Plan to stdout, ordered warnings to stderr, an
       },
     ],
   });
-  const capture = captureOutput();
+  const summaryCapture = captureOutput();
+  const detailedCapture = captureOutput();
 
-  const exitCode = await runCli({
+  const summaryExitCode = await runCli({
     args: ['AAAA', 'BBBB'],
     env: {RADIAL_DATABASE_PATH: database.databasePath},
-    io: capture.io,
+    io: summaryCapture.io,
+    openApplication: openSyntheticApplication,
+  });
+  const detailedExitCode = await runCli({
+    args: ['AAAA', 'BBBB', '--warnings'],
+    env: {RADIAL_DATABASE_PATH: database.databasePath},
+    io: detailedCapture.io,
     openApplication: openSyntheticApplication,
   });
 
-  expect(exitCode).toBe(0);
-  expect(capture.output()).toEqual({
+  expect(summaryExitCode).toBe(0);
+  expect(detailedExitCode).toBe(0);
+  expect(summaryCapture.output()).toEqual({
     stdout:
       'Route Points: AAAA → NDX → BBBB\n' +
       'Total Distance: 120.1 NM\n' +
@@ -736,12 +744,21 @@ test('writes a degraded NDB Route Plan to stdout, ordered warnings to stderr, an
       'Navaids\n' +
       'Identifier  Type  Frequency  Published Range\n' +
       'NDX         NDB   365.5 kHz          61.0 NM\n',
+    stderr: 'Route completed with 5 warnings. Re-run with --warnings to view details.\n',
+  });
+  expect(detailedCapture.output()).toEqual({
+    stdout: summaryCapture.output().stdout,
     stderr:
-      'Warning: NDB fallback was used after the VOR-family search was exhausted.\n' +
-      'Warning: Route Leg 1 departure magnetic course is unavailable at AAAA because Local Magnetic Declination is unavailable.\n' +
-      'Warning: Route Leg 1 arrival magnetic course is unavailable at NDX because Local Magnetic Declination is unavailable.\n' +
-      'Warning: Route Leg 2 departure magnetic course is unavailable at NDX because Local Magnetic Declination is unavailable.\n' +
-      'Warning: Route Leg 2 arrival magnetic course is unavailable at BBBB because Local Magnetic Declination is unavailable.\n',
+      'Warnings (5)\n' +
+      '\n' +
+      'NDB fallback\n' +
+      '  The VOR-family search was exhausted. The route uses NDBs instead.\n' +
+      '  Applies to the whole route.\n' +
+      '\n' +
+      'Magnetic course unavailable ×4\n' +
+      '  Local Magnetic Declination is missing, so magnetic courses could not be calculated.\n' +
+      '  Leg 1: AAAA departure, NDX arrival\n' +
+      '  Leg 2: NDX departure, BBBB arrival\n',
   });
 });
 

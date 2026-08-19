@@ -30,7 +30,7 @@ is not evidence of acceptance.
 | 19. Prefer VOR-family over a shorter NDB route                 | `keeps the completed VOR-family Route Plan when an NDB Route Plan would be shorter`                                                    |
 | 20. Admit NDB only after VOR-family exhaustion                 | `returns a successful NDB-fallback Route Plan only after VOR-family exhaustion`                                                        |
 | 21. Report Route Search Mode                                   | Normal and degraded exact CLI suites; `RP-REAL-SMOKE`                                                                                  |
-| 22. Warn on NDB fallback                                       | `writes a degraded NDB Route Plan to stdout, ordered warnings to stderr, and exits 0`                                                  |
+| 22. Warn on NDB fallback                                       | `summarizes degraded Route Plan warnings unless details are requested`                                                                 |
 | 23. Enforce the configured distance cap                        | Generated reference-solver suite; `RP-REAL-SMOKE`                                                                                      |
 | 24. Default the cap to 1.5                                     | Default configuration cases in `src/route-planner/RoutePlanner.test.ts`                                                                |
 | 25. Validate configured route factors                          | `rejects invalid planner configuration as a structured failure`; CLI invalid-factor case                                               |
@@ -43,7 +43,7 @@ is not evidence of acceptance.
 | 32. Calculate VOR Guidance from Facility Variation of Record   | Complete Route Plan and navigation cases documented in `docs/acceptance/issue-23.md`                                                   |
 | 33. Omit VOR Guidance for airports and NDBs                    | Complete Route Plan and degraded NDB exact CLI suites                                                                                  |
 | 34. Preserve true navigation without magnetic references       | `preserves true-course routing and deterministically warns for unavailable magnetic references`                                        |
-| 35. Render unavailable magnetic values and warnings            | Degraded exact CLI suite and warning formatter suite                                                                                   |
+| 35. Render unavailable magnetic values and warnings            | Degraded summary/detail CLI suite and warning formatter suite                                                                          |
 | 36. Warn when Facility Variation has no effective date         | Warning-order case documented in `docs/acceptance/issue-23.md`                                                                         |
 | 37. Normalize courses and round only for display               | Navigation normalization and complete formatter suites                                                                                 |
 | 38. Render the Route Plan summary                              | `renders the complete Route Plan with display-only rounding and calculated alignment`                                                  |
@@ -52,7 +52,7 @@ is not evidence of acceptance.
 | 41. Render Navaid identity, family, frequency, and range       | `renders each used Navaid once with its exact type and conventional frequency unit`                                                    |
 | 42. Use conventional frequency units                           | Exact Navaid formatter cases for VOR-family and NDB                                                                                    |
 | 43. Calculate totals before display rounding                   | Complete structured-result and display-rounding suites                                                                                 |
-| 44. Separate success and warning channels                      | Normal/degraded exact CLI suites; `RP-REAL-SMOKE` hashes channel-preserving CLI evidence                                               |
+| 44. Separate success and warning channels                      | Normal/degraded summary/detail CLI suites; `RP-REAL-SMOKE` hashes channel-preserving CLI evidence                                      |
 | 45. Exit 2 with usage for invalid command input                | Argument-count, malformed-ICAO, and identical-airport CLI cases                                                                        |
 | 46. Exit 1 without a partial plan for operational failures     | Initialization, lookup, query, contract, and no-route exact CLI cases                                                                  |
 | 47. Reuse and asynchronously dispose a planner                 | Route Planner lifecycle suite and application lifecycle suite                                                                          |
