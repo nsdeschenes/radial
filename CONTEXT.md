@@ -5,7 +5,7 @@ Radial plans old-school, ground-based radio-navigation routes for flight simulat
 ## Language
 
 **Route Plan**:
-A geometric path from a departure airport to an arrival airport through an ordered sequence of ground-based navaids.
+A geometric path from a departure airport to an arrival airport through one or more ordered ground-based Navaids. A direct airport-to-airport path is not a Route Plan.
 _Avoid_: Flight plan, airway route
 
 **Route Point**:
@@ -29,8 +29,16 @@ An operational course or radial referenced to a VOR-family Navaid's Facility Var
 _Avoid_: Bearing, travel course
 
 **Route Search Mode**:
-The navaid-family policy under which a Route Plan was found: VOR-family only or NDB fallback after the VOR-family search was exhausted.
+The navaid-admission policy under which a Route Plan was found: VOR-family only, or NDB fallback after VOR-family discovery was exhausted. An NDB-fallback Route Plan may retain VOR-family Navaids discovered before fallback began.
 _Avoid_: Route type, algorithm
+
+**Route Search**:
+The progressive discovery and evaluation of Navaids that can form a Route Plan within the configured distance limit. It admits VOR-family Navaids first and admits Fallback Navaids only after exhaustive VOR-family discovery finds no Route Plan.
+_Avoid_: Route planning, pathfinding
+
+**Progressive Discovery**:
+The staged widening of the endpoint-distance region from which Route Search admits Navaids, including completion of any region that could improve a provisional Route Plan.
+_Avoid_: Pagination, radius search
 
 **Local Magnetic Declination**:
 The angle between true and magnetic north at a Route Point on the database snapshot's magnetic reference date, expressed in degrees east-positive.
@@ -45,7 +53,7 @@ A navaid that supplies VOR guidance, including combined VOR/DME and VORTAC facil
 _Avoid_: VOR when referring to the whole family
 
 **Fallback Navaid**:
-An NDB admitted only when no route plan using VOR-family navaids can be found.
+An NDB admitted only after exhaustive VOR-family discovery fails to find a Route Plan.
 _Avoid_: Secondary waypoint
 
 **Navaid Snapshot**:
