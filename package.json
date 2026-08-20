@@ -21,7 +21,7 @@
     "acceptance:smoke": "nub src/acceptance/checkRoutePlannerSmoke.ts",
     "acceptance:stress": "vitest run src/acceptance/syntheticStressCorpus.test.ts",
     "dev": "nub --watch src/radial.ts",
-    "start": "nub --import ./src/instrument.ts src/radial.ts",
+    "start": "nub src/radial.ts",
     "check": "nub run fmt:check && nub run lint && nub run typecheck",
     "fix": "nub run fmt && nub run lint:fix",
     "fmt": "oxfmt",

@@ -3,7 +3,7 @@ import {resolve} from 'node:path';
 import {expect, test} from 'vitest';
 
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
-import runCli from '#radial/cli/main.js';
+import runCli from '#radial/cli/runCli.js';
 
 type OutputWrite = Readonly<{channel: 'stderr' | 'stdout'; text: string}>;
 type CompatibilityCase = Readonly<{

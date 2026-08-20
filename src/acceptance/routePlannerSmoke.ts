@@ -6,7 +6,7 @@ import type RoutePlannerAcceptanceTypes from '#radial/acceptance/RoutePlannerAcc
 import verifyAcceptanceRoutePlan from '#radial/acceptance/verifyAcceptanceRoutePlan.js';
 import verifyAcceptanceSnapshot from '#radial/acceptance/verifyAcceptanceSnapshot.js';
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
-import runCli from '#radial/cli/main.js';
+import runCli from '#radial/cli/runCli.js';
 import openRoutePlanner from '#radial/route-planner/RoutePlanner.js';
 import type RoutePlannerTypes from '#radial/route-planner/RoutePlannerTypes.js';
 

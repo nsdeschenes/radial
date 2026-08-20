@@ -5,7 +5,7 @@ import {join} from 'node:path';
 import {expect, test} from 'vitest';
 
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
-import runCli from '#radial/cli/main.js';
+import runCli from '#radial/cli/runCli.js';
 import openRoutePlanner from '#radial/route-planner/RoutePlanner.js';
 import syntheticPlannerDatabase from '#radial/test/route-planner/createSyntheticPlannerDatabase.js';
 
