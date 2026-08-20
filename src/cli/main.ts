@@ -1,6 +1,7 @@
 import * as Sentry from '@sentry/node';
 
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
+import runAirportReload from '#radial/cli/commands/runAirportReload.js';
 import runDataStatus from '#radial/cli/commands/runDataStatus.js';
 import runPlanRoute from '#radial/cli/commands/runPlanRoute.js';
 import airportReloadOutput from '#radial/cli/formatAirportReload.js';
@@ -78,13 +79,24 @@ async function runCliWithSignal({
   }
 
   if (isAirportReload(args)) {
-    return runAirportReload({
-      args,
-      env,
-      io,
-      openApplication: await resolveApplicationOpener(openApplication),
-      signal,
-    });
+    const rawIcao = args[3] ?? '';
+    const validatedIcao = validation.validateAirportIcao(rawIcao);
+    if (!validatedIcao.ok) {
+      io.writeStderr(
+        airportReloadOutput.formatFailure({
+          code: 'DATA_INVALID_ICAO',
+          summary: 'The Airport ICAO is invalid.',
+          cause: `The requested Airport ICAO ${JSON.stringify(rawIcao)} is not four ASCII letters.`,
+          action: 'Provide exactly one four-letter ICAO and retry the Airport reload.',
+          activeDataPreserved: true,
+        })
+      );
+      return 2;
+    }
+
+    runtime.selectCommand('reload-airport');
+    const result = await runAirportReload({icao: validatedIcao.value}, runtime.context);
+    return result.status;
   }
 
   if (isDataStatusHelp(args)) {
@@ -374,131 +386,6 @@ async function runNavaidReload({
   }
 
   io.writeStdout(navaidReloadOutput.formatSuccess(result.value));
-  return 0;
-}
-
-async function runAirportReload({
-  args,
-  env,
-  io,
-  openApplication,
-  signal,
-}: Omit<CliInput, 'args'> & {
-  args: readonly string[];
-  openApplication: CliRuntimeTypes['ApplicationOpener'];
-  signal: AbortSignal;
-}): Promise<number> {
-  if ((env['RADIAL_DATABASE_PATH'] ?? '').trim() === '') {
-    io.writeStderr(
-      airportReloadOutput.formatFailure({
-        code: 'DATA_DATABASE_PATH_MISSING',
-        summary: 'Database path is missing.',
-        cause: 'RADIAL_DATABASE_PATH is required.',
-        action:
-          'Set RADIAL_DATABASE_PATH to the DuckDB database file and retry the Airport reload.',
-        activeDataPreserved: true,
-      })
-    );
-    return 1;
-  }
-
-  const validatedIcao = validation.validateAirportIcao(args[3] ?? '');
-  if (!validatedIcao.ok) {
-    io.writeStderr(
-      airportReloadOutput.formatFailure({
-        code: 'DATA_INVALID_ICAO',
-        summary: 'The Airport ICAO is invalid.',
-        cause: `The requested Airport ICAO ${JSON.stringify(args[3] ?? '')} is not four ASCII letters.`,
-        action: 'Provide exactly one four-letter ICAO and retry the Airport reload.',
-        activeDataPreserved: true,
-      })
-    );
-    return 2;
-  }
-
-  if ((env['OPENAIP_API_KEY'] ?? '').trim() === '') {
-    io.writeStderr(
-      airportReloadOutput.formatFailure({
-        code: 'DATA_CREDENTIALS_MISSING',
-        summary: 'OpenAIP credentials are missing.',
-        cause: 'OPENAIP_API_KEY is required for an explicit Airport reload.',
-        action: 'Set OPENAIP_API_KEY and retry the Airport reload.',
-        activeDataPreserved: true,
-      })
-    );
-    return 1;
-  }
-
-  let openedApplication: Awaited<ReturnType<CliRuntimeTypes['ApplicationOpener']>>;
-  try {
-    openedApplication = await openApplication({
-      databasePath: env['RADIAL_DATABASE_PATH']!,
-    });
-  } catch (error) {
-    if (isInterrupted(error, signal)) {
-      return 130;
-    }
-
-    io.writeStderr(airportReloadOutput.formatFailure(unexpectedDataFailure()));
-    return 1;
-  }
-
-  if (!openedApplication.ok) {
-    io.writeStderr(
-      airportReloadOutput.formatFailure({
-        code: 'DATA_DATABASE_UNAVAILABLE',
-        summary: 'The configured database is unavailable.',
-        cause: 'The configured database could not be opened.',
-        action: 'Check RADIAL_DATABASE_PATH and retry the Airport reload.',
-        activeDataPreserved: true,
-      })
-    );
-    return 1;
-  }
-
-  let result: ApplicationTypes['AirportReloadResult'] | undefined;
-  let interrupted = false;
-  try {
-    result = await openedApplication.value.dataManagement.reloadAirport({
-      icao: validatedIcao.value,
-      openAipApiKey: env['OPENAIP_API_KEY']!,
-      onProgress(progress) {
-        io.writeStderr(airportReloadOutput.formatProgress(progress));
-      },
-      signal,
-    });
-  } catch (error) {
-    if (isInterrupted(error, signal)) {
-      interrupted = true;
-    } else {
-      io.writeStderr(airportReloadOutput.formatFailure(unexpectedDataFailure()));
-    }
-  }
-
-  let disposed = true;
-  try {
-    await openedApplication.value[Symbol.asyncDispose]();
-  } catch {
-    disposed = false;
-    if (!interrupted) {
-      io.writeStderr(airportReloadOutput.formatFailure(unexpectedDataFailure()));
-    }
-  }
-
-  if (interrupted) {
-    return 130;
-  }
-
-  if (!disposed || result === undefined) {
-    return 1;
-  }
-
-  if (!result.ok) {
-    io.writeStderr(airportReloadOutput.formatFailure(result.failure));
-    return result.failure.code === 'DATA_INVALID_ICAO' ? 2 : 1;
-  }
-
-  io.writeStdout(airportReloadOutput.formatSuccess(result.value));
   return 0;
 }
 
