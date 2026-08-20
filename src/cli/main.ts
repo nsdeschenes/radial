@@ -1,14 +1,13 @@
 import * as Sentry from '@sentry/node';
 
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
+import runDataStatus from '#radial/cli/commands/runDataStatus.js';
 import runPlanRoute from '#radial/cli/commands/runPlanRoute.js';
 import airportReloadOutput from '#radial/cli/formatAirportReload.js';
-import dataStatusOutput from '#radial/cli/formatDataStatus.js';
 import diagnostics from '#radial/cli/formatDiagnostics.js';
 import navaidReloadOutput from '#radial/cli/formatNavaidReload.js';
 import type CliRuntimeTypes from '#radial/cli/runtime/CliRuntimeContext.js';
 import createCliRuntimeContext from '#radial/cli/runtime/createCliRuntimeContext.js';
-import readDataStatus from '#radial/data-producer/internal/DataStatus.js';
 import validation from '#radial/route-planner/internal/validation.js';
 
 type CliInput = {
@@ -94,7 +93,22 @@ async function runCliWithSignal({
   }
 
   if (isDataStatus(args)) {
-    return runDataStatus({env, io});
+    runtime.selectCommand('data-status');
+    const result = await runDataStatus({}, runtime.context);
+    if (result.kind === 'expected-failure') {
+      Sentry.logger.error('Data status read failed', {
+        'radial.data.active_preserved': result.failure.activeDataPreserved,
+        'radial.failure.code': result.failure.code,
+      });
+    } else if (result.kind === 'success') {
+      Sentry.logger.info('Data status read completed', {
+        'radial.airport.cached_count': result.success.cachedAirports.length,
+        'radial.data.snapshot_present': result.success.snapshot !== null,
+        'radial.data.status': result.success.status,
+      });
+    }
+
+    return result.status;
   }
 
   if (args[0] === 'data') {
@@ -254,29 +268,6 @@ function writeAirportReloadUsage(io: CliRuntimeTypes['Io']): void {
       'Cause: The Airport reload accepts exactly one ICAO and no operational flags.\n' +
       'Action: Run "radial data reload airport <ICAO>".\n'
   );
-}
-
-async function runDataStatus({
-  env,
-  io,
-}: Omit<CliInput, 'args' | 'openApplication'>): Promise<number> {
-  const result = await readDataStatus(env['RADIAL_DATABASE_PATH'] ?? '');
-  if (!result.ok) {
-    Sentry.logger.error('Data status read failed', {
-      'radial.data.active_preserved': result.failure.activeDataPreserved,
-      'radial.failure.code': result.failure.code,
-    });
-    io.writeStderr(dataStatusOutput.formatFailure(result.failure));
-    return 1;
-  }
-
-  Sentry.logger.info('Data status read completed', {
-    'radial.airport.cached_count': result.value.cachedAirports.length,
-    'radial.data.snapshot_present': result.value.snapshot !== null,
-    'radial.data.status': result.value.status,
-  });
-  io.writeStdout(dataStatusOutput.formatSuccess(result.value));
-  return 0;
 }
 
 async function runNavaidReload({
