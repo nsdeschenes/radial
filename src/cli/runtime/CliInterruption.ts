@@ -17,10 +17,7 @@ function is(error: unknown): boolean {
 }
 
 function isCancellation(error: unknown, signal: AbortSignal): boolean {
-  return (
-    signal.aborted &&
-    (error === signal.reason || (error instanceof Error && error.name === 'AbortError'))
-  );
+  return signal.aborted && error === signal.reason;
 }
 
 export default {create, is, isCancellation};

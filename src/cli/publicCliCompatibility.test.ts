@@ -326,15 +326,9 @@ test('recognized interruption remains silent and exits 130 through the Public CL
     async reloadNavaids(request) {
       started.resolve();
       await new Promise((_resolve, reject) => {
-        request.signal?.addEventListener(
-          'abort',
-          () => {
-            const error = new Error('Compatibility invocation interrupted.');
-            error.name = 'AbortError';
-            reject(error);
-          },
-          {once: true}
-        );
+        request.signal?.addEventListener('abort', () => reject(request.signal?.reason), {
+          once: true,
+        });
       });
       throw new Error('The interrupted reload must not complete.');
     },

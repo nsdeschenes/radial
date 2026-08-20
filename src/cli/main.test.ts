@@ -378,15 +378,9 @@ test('cancels a pre-publication Navaid reload with exit status 130', async () =>
     request =>
       new Promise<ApplicationTypes['NavaidReloadResult']>((_resolve, reject) => {
         started.resolve();
-        request.signal?.addEventListener(
-          'abort',
-          () => {
-            const error = new Error('The reload was interrupted.');
-            error.name = 'AbortError';
-            reject(error);
-          },
-          {once: true}
-        );
+        request.signal?.addEventListener('abort', () => reject(request.signal?.reason), {
+          once: true,
+        });
       })
   );
 
