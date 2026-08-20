@@ -260,10 +260,15 @@ const compatibilityCases: readonly CompatibilityCase[] = [
     stdout: 'Usage: radial data reload airport <ICAO>\n',
   },
   {
-    name: 'rejected root help',
+    name: 'root help',
     args: ['--help'],
-    exitCode: 2,
-    stderr: `Expected exactly two ICAO airport codes; received 1.\n${ROUTE_USAGE}`,
+    exitCode: 0,
+    stdout:
+      'Usage:\n' +
+      '  radial <departure-icao> <arrival-icao> [--warnings]\n' +
+      '  radial data status\n' +
+      '  radial data reload navaids\n' +
+      '  radial data reload airport <ICAO>\n',
   },
   {
     name: 'rejected data help',
@@ -288,6 +293,20 @@ const compatibilityCases: readonly CompatibilityCase[] = [
     args: ['data', 'status', '--help', 'extra'],
     exitCode: 2,
     stderr: DATA_STATUS_USAGE,
+  },
+  {
+    name: 'rejected hidden default route',
+    args: ['__radial_internal_plan_route__', 'CYYZ', 'CYOW'],
+    exitCode: 2,
+    stderr: `Expected exactly two ICAO airport codes; received 3.\n${ROUTE_USAGE}`,
+  },
+  {
+    name: 'rejected hidden default route help',
+    args: ['__radial_internal_plan_route__', '--help'],
+    exitCode: 2,
+    stderr:
+      'Departure must be a four-letter ICAO airport code; received "__radial_internal_plan_route__".\n' +
+      ROUTE_USAGE,
   },
 ];
 
