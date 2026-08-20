@@ -10,8 +10,16 @@ test('keeps help and rejected invocations outside the operational lifecycle', as
   const events: string[] = [];
   const input = recordingInput(events);
 
+  await expect(runCli({...input, args: ['--help']})).resolves.toBe(0);
   await expect(runCli({...input, args: ['data', 'status', '--help']})).resolves.toBe(0);
+  await expect(runCli({...input, args: ['data', '--help']})).resolves.toBe(2);
   await expect(runCli({...input, args: ['invalid']})).resolves.toBe(2);
+  await expect(
+    runCli({
+      ...input,
+      args: ['__radial_internal_plan_route__', 'CYYZ', 'CYOW'],
+    })
+  ).resolves.toBe(2);
   await expect(
     runCli({...input, args: ['data', 'reload', 'airport', 'bad']})
   ).resolves.toBe(2);
