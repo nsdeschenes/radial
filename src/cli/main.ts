@@ -2,10 +2,10 @@ import * as Sentry from '@sentry/node';
 
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import runPlanRoute from '#radial/cli/commands/runPlanRoute.js';
+import runReloadNavaids from '#radial/cli/commands/runReloadNavaids.js';
 import airportReloadOutput from '#radial/cli/formatAirportReload.js';
 import dataStatusOutput from '#radial/cli/formatDataStatus.js';
 import diagnostics from '#radial/cli/formatDiagnostics.js';
-import navaidReloadOutput from '#radial/cli/formatNavaidReload.js';
 import type CliRuntimeTypes from '#radial/cli/runtime/CliRuntimeContext.js';
 import createCliRuntimeContext from '#radial/cli/runtime/createCliRuntimeContext.js';
 import readDataStatus from '#radial/data-producer/internal/DataStatus.js';
@@ -60,12 +60,9 @@ async function runCliWithSignal({
   }
 
   if (isNavaidReload(args)) {
-    return runNavaidReload({
-      env,
-      io,
-      openApplication: await resolveApplicationOpener(openApplication),
-      signal,
-    });
+    runtime.selectCommand('reload-navaids');
+    const result = await runReloadNavaids({}, runtime.context);
+    return result.status;
   }
 
   if (isAirportReloadHelp(args)) {
@@ -276,113 +273,6 @@ async function runDataStatus({
     'radial.data.status': result.value.status,
   });
   io.writeStdout(dataStatusOutput.formatSuccess(result.value));
-  return 0;
-}
-
-async function runNavaidReload({
-  env,
-  io,
-  openApplication,
-  signal,
-}: Omit<CliInput, 'args'> & {
-  openApplication: CliRuntimeTypes['ApplicationOpener'];
-  signal: AbortSignal;
-}): Promise<number> {
-  if ((env['RADIAL_DATABASE_PATH'] ?? '').trim() === '') {
-    io.writeStderr(
-      navaidReloadOutput.formatFailure({
-        code: 'DATA_DATABASE_PATH_MISSING',
-        summary: 'Database path is missing.',
-        cause: 'RADIAL_DATABASE_PATH is required.',
-        action: 'Set RADIAL_DATABASE_PATH to the DuckDB database file and retry.',
-        activeDataPreserved: true,
-      })
-    );
-    return 1;
-  }
-
-  if ((env['OPENAIP_API_KEY'] ?? '').trim() === '') {
-    io.writeStderr(
-      navaidReloadOutput.formatFailure({
-        code: 'DATA_CREDENTIALS_MISSING',
-        summary: 'OpenAIP credentials are missing.',
-        cause: 'OPENAIP_API_KEY is required for an explicit Navaid reload.',
-        action: 'Set OPENAIP_API_KEY and retry the Navaid reload.',
-        activeDataPreserved: true,
-      })
-    );
-    return 1;
-  }
-
-  let openedApplication: Awaited<ReturnType<CliRuntimeTypes['ApplicationOpener']>>;
-  try {
-    openedApplication = await openApplication({
-      databasePath: env['RADIAL_DATABASE_PATH']!,
-    });
-  } catch (error) {
-    if (isInterrupted(error, signal)) {
-      return 130;
-    }
-
-    io.writeStderr(navaidReloadOutput.formatFailure(unexpectedDataFailure()));
-    return 1;
-  }
-
-  if (!openedApplication.ok) {
-    io.writeStderr(
-      navaidReloadOutput.formatFailure({
-        code: 'DATA_DATABASE_UNAVAILABLE',
-        summary: 'The configured database is unavailable.',
-        cause: 'The configured database could not be opened.',
-        action: 'Check RADIAL_DATABASE_PATH and retry the Navaid reload.',
-        activeDataPreserved: true,
-      })
-    );
-    return 1;
-  }
-
-  let result: ApplicationTypes['NavaidReloadResult'] | undefined;
-  let interrupted = false;
-  try {
-    result = await openedApplication.value.dataManagement.reloadNavaids({
-      openAipApiKey: env['OPENAIP_API_KEY']!,
-      onProgress(progress) {
-        io.writeStderr(navaidReloadOutput.formatProgress(progress));
-      },
-      signal,
-    });
-  } catch (error) {
-    if (isInterrupted(error, signal)) {
-      interrupted = true;
-    } else {
-      io.writeStderr(navaidReloadOutput.formatFailure(unexpectedDataFailure()));
-    }
-  }
-
-  let disposed = true;
-  try {
-    await openedApplication.value[Symbol.asyncDispose]();
-  } catch {
-    disposed = false;
-    if (!interrupted) {
-      io.writeStderr(navaidReloadOutput.formatFailure(unexpectedDataFailure()));
-    }
-  }
-
-  if (interrupted) {
-    return 130;
-  }
-
-  if (!disposed || result === undefined) {
-    return 1;
-  }
-
-  if (!result.ok) {
-    io.writeStderr(navaidReloadOutput.formatFailure(result.failure));
-    return 1;
-  }
-
-  io.writeStdout(navaidReloadOutput.formatSuccess(result.value));
   return 0;
 }
 

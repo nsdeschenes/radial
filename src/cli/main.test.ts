@@ -269,7 +269,9 @@ test('provides Airport reload help and rejects extra arguments', async () => {
 test('streams Navaid reload progress to stderr and writes success only after commit', async () => {
   const capture = captureOutput();
   const reload = Promise.withResolvers<ApplicationTypes['NavaidReloadResult']>();
+  const started = Promise.withResolvers<void>();
   const application = syntheticApplication(async request => {
+    started.resolve();
     request.onProgress?.({stage: 'openaip', message: 'Acquiring OpenAIP Navaids.'});
     request.onProgress?.({stage: 'publish', message: 'Publishing Navaid Snapshot.'});
     return reload.promise;
@@ -283,8 +285,7 @@ test('streams Navaid reload progress to stderr and writes success only after com
       return {ok: true, value: application};
     },
   });
-  await Promise.resolve();
-  await Promise.resolve();
+  await started.promise;
 
   expect(capture.output()).toEqual({
     stdout: '',
@@ -409,7 +410,11 @@ test('waits for a publication result after interruption', async () => {
   const capture = captureOutput();
   const controller = new AbortController();
   const reload = Promise.withResolvers<ApplicationTypes['NavaidReloadResult']>();
-  const application = syntheticApplication(async () => reload.promise);
+  const started = Promise.withResolvers<void>();
+  const application = syntheticApplication(async () => {
+    started.resolve();
+    return reload.promise;
+  });
 
   const running = runCli({
     args: ['data', 'reload', 'navaids'],
@@ -420,14 +425,69 @@ test('waits for a publication result after interruption', async () => {
       return {ok: true, value: application};
     },
   });
-  await Promise.resolve();
+  await started.promise;
   controller.abort();
-  await Promise.resolve();
 
   expect(capture.output()).toEqual({stdout: '', stderr: ''});
   reload.resolve({ok: true, value: syntheticNavaidReloadSuccess()});
   await expect(running).resolves.toBe(0);
   expect(capture.output().stdout).toContain('Navaid Snapshot replaced\n');
+});
+
+test('disposes the Navaid reload application before returning success', async () => {
+  const capture = captureOutput();
+  const events: string[] = [];
+  const application = syntheticApplication(
+    async () => ({ok: true, value: syntheticNavaidReloadSuccess()}),
+    () => events.push('application disposed')
+  );
+
+  const exitCode = await runCli({
+    args: ['data', 'reload', 'navaids'],
+    env: {RADIAL_DATABASE_PATH: ':memory:', OPENAIP_API_KEY: 'secret-api-key'},
+    io: capture.io,
+    async openApplication() {
+      return {ok: true, value: application};
+    },
+  });
+  events.push('returned');
+
+  expect(exitCode).toBe(0);
+  expect(events).toEqual(['application disposed', 'returned']);
+});
+
+test('propagates Navaid reload disposal failure instead of interrupted status 130', async () => {
+  const capture = captureOutput();
+  const controller = new AbortController();
+  const started = Promise.withResolvers<void>();
+  const disposalFailure = new Error('Navaid reload cleanup failed');
+  const application = syntheticApplication(
+    request =>
+      new Promise((_resolve, reject) => {
+        started.resolve();
+        request.signal?.addEventListener('abort', () => reject(request.signal?.reason), {
+          once: true,
+        });
+      }),
+    () => {
+      throw disposalFailure;
+    }
+  );
+  const running = runCli({
+    args: ['data', 'reload', 'navaids'],
+    env: {RADIAL_DATABASE_PATH: ':memory:', OPENAIP_API_KEY: 'secret-api-key'},
+    io: capture.io,
+    signal: controller.signal,
+    async openApplication() {
+      return {ok: true, value: application};
+    },
+  });
+
+  await started.promise;
+  controller.abort();
+
+  await expect(running).rejects.toBe(disposalFailure);
+  expect(capture.output()).toEqual({stdout: '', stderr: ''});
 });
 
 test('streams Airport reload progress and writes success only after commit', async () => {
@@ -1137,7 +1197,8 @@ function syntheticRouteApplication({
 }
 
 function syntheticApplication(
-  reloadNavaids: ApplicationTypes['DataManagementCapability']['reloadNavaids']
+  reloadNavaids: ApplicationTypes['DataManagementCapability']['reloadNavaids'],
+  onDispose: () => void = () => {}
 ): ApplicationTypes['Application'] {
   return {
     databasePath: ':synthetic:',
@@ -1155,7 +1216,9 @@ function syntheticApplication(
         throw new Error('Route planning is not used by this test.');
       },
     },
-    async [Symbol.asyncDispose]() {},
+    async [Symbol.asyncDispose]() {
+      onDispose();
+    },
   };
 }
 
