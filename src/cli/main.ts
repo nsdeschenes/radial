@@ -1,53 +1,71 @@
 import * as Sentry from '@sentry/node';
 
-import openRadialApplication from '#radial/application/RadialApplication.js';
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
+import runPlanRoute from '#radial/cli/commands/runPlanRoute.js';
 import airportReloadOutput from '#radial/cli/formatAirportReload.js';
 import dataStatusOutput from '#radial/cli/formatDataStatus.js';
 import diagnostics from '#radial/cli/formatDiagnostics.js';
 import navaidReloadOutput from '#radial/cli/formatNavaidReload.js';
-import formatRoutePlan from '#radial/cli/formatRoutePlan.js';
-import formatRoutePlanningWarnings from '#radial/cli/formatRoutePlanningWarnings.js';
-import formatRoutePlanningWarningSummary from '#radial/cli/formatRoutePlanningWarningSummary.js';
+import type CliRuntimeTypes from '#radial/cli/runtime/CliRuntimeContext.js';
+import createCliRuntimeContext from '#radial/cli/runtime/createCliRuntimeContext.js';
 import readDataStatus from '#radial/data-producer/internal/DataStatus.js';
 import validation from '#radial/route-planner/internal/validation.js';
-
-type CliIo = {
-  writeStdout(text: string): void;
-  writeStderr(text: string): void;
-};
 
 type CliInput = {
   args: readonly string[];
   env: Readonly<Record<string, string | undefined>>;
-  io: CliIo;
-  openApplication?: typeof openRadialApplication;
+  io: CliRuntimeTypes['Io'];
+  openApplication?: CliRuntimeTypes['ApplicationOpener'];
   signal?: AbortSignal;
 };
 
 async function runCli(input: CliInput): Promise<number> {
   const interrupt = createInterruptSignal(input.signal);
+  const runtime = createCliRuntimeContext({
+    env: input.env,
+    io: input.io,
+    signal: interrupt.signal,
+    ...(input.openApplication === undefined
+      ? {}
+      : {loadApplication: async () => input.openApplication!}),
+  });
   try {
-    return await runCliWithSignal({...input, signal: interrupt.signal});
+    return await runCliWithSignal({
+      args: input.args,
+      openApplication: input.openApplication,
+      runtime,
+    });
   } finally {
-    interrupt.dispose();
+    try {
+      await runtime[Symbol.asyncDispose]();
+    } finally {
+      interrupt.dispose();
+    }
   }
 }
 
 async function runCliWithSignal({
   args,
-  env,
-  io,
-  openApplication = openRadialApplication,
-  signal,
-}: Omit<CliInput, 'signal'> & {signal: AbortSignal}): Promise<number> {
+  openApplication,
+  runtime,
+}: Readonly<{
+  args: readonly string[];
+  openApplication: CliRuntimeTypes['ApplicationOpener'] | undefined;
+  runtime: ReturnType<typeof createCliRuntimeContext>;
+}>): Promise<number> {
+  const {env, io, signal} = runtime.context;
   if (isNavaidReloadHelp(args)) {
     io.writeStdout('Usage: radial data reload navaids\n');
     return 0;
   }
 
   if (isNavaidReload(args)) {
-    return runNavaidReload({env, io, openApplication, signal});
+    return runNavaidReload({
+      env,
+      io,
+      openApplication: await resolveApplicationOpener(openApplication),
+      signal,
+    });
   }
 
   if (isAirportReloadHelp(args)) {
@@ -61,7 +79,13 @@ async function runCliWithSignal({
   }
 
   if (isAirportReload(args)) {
-    return runAirportReload({args, env, io, openApplication, signal});
+    return runAirportReload({
+      args,
+      env,
+      io,
+      openApplication: await resolveApplicationOpener(openApplication),
+      signal,
+    });
   }
 
   if (isDataStatusHelp(args)) {
@@ -114,61 +138,27 @@ async function runCliWithSignal({
     return 2;
   }
 
-  const configuredFactor = env['RADIAL_MAX_ROUTE_FACTOR'];
-  const openedApplication = await openApplication({
-    databasePath: env['RADIAL_DATABASE_PATH'] ?? '',
-    ...(configuredFactor === undefined ? {} : {maxRouteFactor: Number(configuredFactor)}),
-    openAipApiKey: env['OPENAIP_API_KEY'] ?? '',
-  });
-
-  if (!openedApplication.ok) {
-    io.writeStderr(diagnostics.formatPlannerOpenDiagnostic(openedApplication.failure));
-    return 1;
-  }
-
-  try {
-    const openedPlanner = await openedApplication.value.planning.open();
-    if (!openedPlanner.ok) {
-      io.writeStderr(diagnostics.formatPlannerOpenDiagnostic(openedPlanner.failure));
-      return 1;
-    }
-
-    try {
-      const result = await openedPlanner.value.planRoute({
-        ...validatedRequest.value,
-        signal,
-      });
-      if (!result.ok) {
-        io.writeStderr(diagnostics.formatRoutePlanningDiagnostic(result.failure));
-        return result.failure.code === 'invalid-request' ? 2 : 1;
+  runtime.selectCommand('plan-route');
+  const result = await runPlanRoute(
+    {request: validatedRequest.value, warningDetailsRequested},
+    runtime.context
+  );
+  if (result.kind === 'success') {
+    Sentry.metrics.distribution('total_route_legs', result.success.plan.routeLegs.length);
+    Sentry.metrics.distribution(
+      'total_route_distance',
+      result.success.plan.totalDistanceNm,
+      {
+        attributes: {
+          arrival_icao: result.request.arrivalIcao,
+          departure_icao: result.request.departureIcao,
+        },
       }
-
-      Sentry.metrics.distribution('total_route_legs', result.value.plan.routeLegs.length);
-      Sentry.metrics.distribution(
-        'total_route_distance',
-        result.value.plan.totalDistanceNm,
-        {
-          attributes: {
-            arrival_icao: request.arrivalIcao,
-            departure_icao: request.departureIcao,
-          },
-        }
-      );
-
-      logRoutePlanningWarnings(result.value, validatedRequest.value);
-      io.writeStdout(formatRoutePlan(result.value.plan));
-      io.writeStderr(
-        warningDetailsRequested
-          ? formatRoutePlanningWarnings(result.value)
-          : formatRoutePlanningWarningSummary(result.value)
-      );
-      return 0;
-    } finally {
-      await openedPlanner.value[Symbol.asyncDispose]();
-    }
-  } finally {
-    await openedApplication.value[Symbol.asyncDispose]();
+    );
+    logRoutePlanningWarnings(result.success, result.request);
   }
+
+  return result.status;
 }
 
 function logRoutePlanningWarnings(
@@ -258,7 +248,7 @@ function isDataStatusHelp(args: readonly string[]): boolean {
   );
 }
 
-function writeAirportReloadUsage(io: CliIo): void {
+function writeAirportReloadUsage(io: CliRuntimeTypes['Io']): void {
   io.writeStderr(
     'error [DATA_USAGE]: Invalid data command.\n' +
       'Cause: The Airport reload accepts exactly one ICAO and no operational flags.\n' +
@@ -295,7 +285,7 @@ async function runNavaidReload({
   openApplication,
   signal,
 }: Omit<CliInput, 'args'> & {
-  openApplication: typeof openRadialApplication;
+  openApplication: CliRuntimeTypes['ApplicationOpener'];
   signal: AbortSignal;
 }): Promise<number> {
   if ((env['RADIAL_DATABASE_PATH'] ?? '').trim() === '') {
@@ -324,7 +314,7 @@ async function runNavaidReload({
     return 1;
   }
 
-  let openedApplication: Awaited<ReturnType<typeof openRadialApplication>>;
+  let openedApplication: Awaited<ReturnType<CliRuntimeTypes['ApplicationOpener']>>;
   try {
     openedApplication = await openApplication({
       databasePath: env['RADIAL_DATABASE_PATH']!,
@@ -404,7 +394,7 @@ async function runAirportReload({
   signal,
 }: Omit<CliInput, 'args'> & {
   args: readonly string[];
-  openApplication: typeof openRadialApplication;
+  openApplication: CliRuntimeTypes['ApplicationOpener'];
   signal: AbortSignal;
 }): Promise<number> {
   if ((env['RADIAL_DATABASE_PATH'] ?? '').trim() === '') {
@@ -448,7 +438,7 @@ async function runAirportReload({
     return 1;
   }
 
-  let openedApplication: Awaited<ReturnType<typeof openRadialApplication>>;
+  let openedApplication: Awaited<ReturnType<CliRuntimeTypes['ApplicationOpener']>>;
   try {
     openedApplication = await openApplication({
       databasePath: env['RADIAL_DATABASE_PATH']!,
@@ -557,6 +547,17 @@ function unexpectedDataFailure(): ApplicationTypes['DataFailure'] {
     action: 'Check RADIAL_DATABASE_PATH and retry.',
     activeDataPreserved: true,
   };
+}
+
+async function resolveApplicationOpener(
+  injectedOpener: CliRuntimeTypes['ApplicationOpener'] | undefined
+): Promise<CliRuntimeTypes['ApplicationOpener']> {
+  if (injectedOpener !== undefined) {
+    return injectedOpener;
+  }
+
+  const applicationModule = await import('#radial/application/RadialApplication.js');
+  return applicationModule.default;
 }
 
 export default runCli;

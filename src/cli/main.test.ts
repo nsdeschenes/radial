@@ -853,6 +853,289 @@ test('reports the failed query operation without writing a partial Route Plan an
   });
 });
 
+test('returns silent status 130 without loading the application after a pre-open interruption', async () => {
+  const capture = captureOutput();
+  const controller = new AbortController();
+  let applicationLoaded = false;
+  controller.abort();
+
+  const exitCode = await runCli({
+    args: ['AAAA', 'BBBB'],
+    env: {RADIAL_DATABASE_PATH: ':synthetic:'},
+    io: capture.io,
+    signal: controller.signal,
+    async openApplication() {
+      applicationLoaded = true;
+      throw new Error('The application must not open.');
+    },
+  });
+
+  expect(exitCode).toBe(130);
+  expect(capture.output()).toEqual({stdout: '', stderr: ''});
+  expect(applicationLoaded).toBe(false);
+});
+
+test('disposes an application opened after interruption without opening its planner', async () => {
+  const capture = captureOutput();
+  const controller = new AbortController();
+  const openingStarted = Promise.withResolvers<void>();
+  const opened = Promise.withResolvers<ApplicationTypes['ApplicationOpenResult']>();
+  let plannerOpened = false;
+  let applicationDisposeCount = 0;
+  const application = syntheticRouteApplication({
+    async openPlanner() {
+      plannerOpened = true;
+      throw new Error('The planner callback must be suppressed.');
+    },
+    onApplicationDispose() {
+      applicationDisposeCount += 1;
+    },
+  });
+  const running = runCli({
+    args: ['AAAA', 'BBBB'],
+    env: {RADIAL_DATABASE_PATH: ':synthetic:'},
+    io: capture.io,
+    signal: controller.signal,
+    async openApplication() {
+      openingStarted.resolve();
+      return opened.promise;
+    },
+  });
+
+  await openingStarted.promise;
+  controller.abort();
+  opened.resolve({ok: true, value: application});
+
+  await expect(running).resolves.toBe(130);
+  expect(capture.output()).toEqual({stdout: '', stderr: ''});
+  expect(plannerOpened).toBe(false);
+  expect(applicationDisposeCount).toBe(1);
+});
+
+test('propagates an unrelated AbortError and disposes the planner and application first', async () => {
+  const capture = captureOutput();
+  const abortError = new Error('unrelated abort');
+  abortError.name = 'AbortError';
+  const events: string[] = [];
+  const application = syntheticRouteApplication({
+    async planRoute() {
+      throw abortError;
+    },
+    onPlannerDispose() {
+      events.push('planner disposed');
+    },
+    onApplicationDispose() {
+      events.push('application disposed');
+    },
+  });
+
+  const running = runCli({
+    args: ['AAAA', 'BBBB'],
+    env: {RADIAL_DATABASE_PATH: ':synthetic:'},
+    io: capture.io,
+    async openApplication() {
+      return {ok: true, value: application};
+    },
+  });
+
+  await expect(running).rejects.toBe(abortError);
+  expect(events).toEqual(['planner disposed', 'application disposed']);
+  expect(capture.output()).toEqual({stdout: '', stderr: ''});
+});
+
+test('propagates application cleanup failure instead of interrupted status 130', async () => {
+  const capture = captureOutput();
+  const controller = new AbortController();
+  const started = Promise.withResolvers<void>();
+  const cleanupFailure = new Error('application cleanup failed');
+  const application = syntheticRouteApplication({
+    async planRoute(request) {
+      started.resolve();
+      return new Promise((_resolve, reject) => {
+        request.signal?.addEventListener('abort', () => reject(request.signal?.reason), {
+          once: true,
+        });
+      });
+    },
+    onApplicationDispose() {
+      throw cleanupFailure;
+    },
+  });
+  const running = runCli({
+    args: ['AAAA', 'BBBB'],
+    env: {RADIAL_DATABASE_PATH: ':synthetic:'},
+    io: capture.io,
+    signal: controller.signal,
+    async openApplication() {
+      return {ok: true, value: application};
+    },
+  });
+
+  await started.promise;
+  controller.abort();
+
+  await expect(running).rejects.toBe(cleanupFailure);
+  expect(capture.output()).toEqual({stdout: '', stderr: ''});
+});
+
+test('propagates planner cleanup failure instead of interrupted status 130', async () => {
+  const capture = captureOutput();
+  const controller = new AbortController();
+  const started = Promise.withResolvers<void>();
+  const cleanupFailure = new Error('planner cleanup failed');
+  const application = syntheticRouteApplication({
+    async planRoute(request) {
+      started.resolve();
+      return new Promise((_resolve, reject) => {
+        request.signal?.addEventListener('abort', () => reject(request.signal?.reason), {
+          once: true,
+        });
+      });
+    },
+    onPlannerDispose() {
+      throw cleanupFailure;
+    },
+  });
+  const running = runCli({
+    args: ['AAAA', 'BBBB'],
+    env: {RADIAL_DATABASE_PATH: ':synthetic:'},
+    io: capture.io,
+    signal: controller.signal,
+    async openApplication() {
+      return {ok: true, value: application};
+    },
+  });
+
+  await started.promise;
+  controller.abort();
+
+  await expect(running).rejects.toBe(cleanupFailure);
+  expect(capture.output()).toEqual({stdout: '', stderr: ''});
+});
+
+test('completes planner and application disposal before returning success', async () => {
+  const capture = captureOutput();
+  const events: string[] = [];
+  const application = syntheticRouteApplication({
+    async planRoute() {
+      return {
+        ok: true,
+        value: {
+          plan: {
+            totalDistanceNm: 0,
+            searchMode: 'vor-family',
+            routePoints: [],
+            routeLegs: [],
+            magneticReference: null,
+          },
+          warnings: [],
+        },
+      };
+    },
+    onPlannerDispose() {
+      events.push('planner disposed');
+    },
+    onApplicationDispose() {
+      events.push('application disposed');
+    },
+  });
+
+  const exitCode = await runCli({
+    args: ['AAAA', 'BBBB'],
+    env: {RADIAL_DATABASE_PATH: ':synthetic:'},
+    io: capture.io,
+    async openApplication() {
+      return {ok: true, value: application};
+    },
+  });
+  events.push('returned');
+
+  expect(exitCode).toBe(0);
+  expect(events).toEqual(['planner disposed', 'application disposed', 'returned']);
+});
+
+test('completes planner and application disposal before returning an expected failure', async () => {
+  const capture = captureOutput();
+  const events: string[] = [];
+  const application = syntheticRouteApplication({
+    async planRoute() {
+      return {
+        ok: false,
+        failure: {
+          code: 'no-route',
+          departureIcao: 'AAAA',
+          arrivalIcao: 'BBBB',
+          maxRouteFactor: 1.5,
+          completedSearchLimits: [],
+        },
+      };
+    },
+    onPlannerDispose() {
+      events.push('planner disposed');
+    },
+    onApplicationDispose() {
+      events.push('application disposed');
+    },
+  });
+
+  const exitCode = await runCli({
+    args: ['AAAA', 'BBBB'],
+    env: {RADIAL_DATABASE_PATH: ':synthetic:'},
+    io: capture.io,
+    async openApplication() {
+      return {ok: true, value: application};
+    },
+  });
+  events.push('returned');
+
+  expect(exitCode).toBe(1);
+  expect(events).toEqual(['planner disposed', 'application disposed', 'returned']);
+});
+
+function syntheticRouteApplication({
+  openPlanner,
+  planRoute,
+  onPlannerDispose = () => {},
+  onApplicationDispose = () => {},
+}: {
+  openPlanner?: ApplicationTypes['PlanningCapability']['open'];
+  planRoute?: ApplicationTypes['Planner']['planRoute'];
+  onPlannerDispose?: () => void;
+  onApplicationDispose?: () => void;
+}): ApplicationTypes['Application'] {
+  const planner: ApplicationTypes['Planner'] = {
+    planRoute:
+      planRoute ??
+      (async () => {
+        throw new Error('Route planning is not used by this test.');
+      }),
+    async [Symbol.asyncDispose]() {
+      onPlannerDispose();
+    },
+  };
+
+  return {
+    databasePath: ':synthetic:',
+    dataManagement: {
+      async status() {
+        throw new Error('Data status is not used by this test.');
+      },
+      async reloadNavaids() {
+        throw new Error('Navaid reload is not used by this test.');
+      },
+      async reloadAirport() {
+        throw new Error('Airport reload is not used by this test.');
+      },
+    },
+    planning: {
+      open: openPlanner ?? (async () => ({ok: true, value: planner})),
+    },
+    async [Symbol.asyncDispose]() {
+      onApplicationDispose();
+    },
+  };
+}
+
 function syntheticApplication(
   reloadNavaids: ApplicationTypes['DataManagementCapability']['reloadNavaids']
 ): ApplicationTypes['Application'] {
