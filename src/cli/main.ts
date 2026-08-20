@@ -4,9 +4,9 @@ import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js
 import runAirportReload from '#radial/cli/commands/runAirportReload.js';
 import runDataStatus from '#radial/cli/commands/runDataStatus.js';
 import runPlanRoute from '#radial/cli/commands/runPlanRoute.js';
+import runReloadNavaids from '#radial/cli/commands/runReloadNavaids.js';
 import airportReloadOutput from '#radial/cli/formatAirportReload.js';
 import diagnostics from '#radial/cli/formatDiagnostics.js';
-import navaidReloadOutput from '#radial/cli/formatNavaidReload.js';
 import type CliRuntimeTypes from '#radial/cli/runtime/CliRuntimeContext.js';
 import createCliRuntimeContext from '#radial/cli/runtime/createCliRuntimeContext.js';
 import validation from '#radial/route-planner/internal/validation.js';
@@ -32,7 +32,6 @@ async function runCli(input: CliInput): Promise<number> {
   try {
     return await runCliWithSignal({
       args: input.args,
-      openApplication: input.openApplication,
       runtime,
     });
   } finally {
@@ -46,26 +45,21 @@ async function runCli(input: CliInput): Promise<number> {
 
 async function runCliWithSignal({
   args,
-  openApplication,
   runtime,
 }: Readonly<{
   args: readonly string[];
-  openApplication: CliRuntimeTypes['ApplicationOpener'] | undefined;
   runtime: ReturnType<typeof createCliRuntimeContext>;
 }>): Promise<number> {
-  const {env, io, signal} = runtime.context;
+  const {io} = runtime.context;
   if (isNavaidReloadHelp(args)) {
     io.writeStdout('Usage: radial data reload navaids\n');
     return 0;
   }
 
   if (isNavaidReload(args)) {
-    return runNavaidReload({
-      env,
-      io,
-      openApplication: await resolveApplicationOpener(openApplication),
-      signal,
-    });
+    runtime.selectCommand('reload-navaids');
+    const result = await runReloadNavaids({}, runtime.context);
+    return result.status;
   }
 
   if (isAirportReloadHelp(args)) {
@@ -282,113 +276,6 @@ function writeAirportReloadUsage(io: CliRuntimeTypes['Io']): void {
   );
 }
 
-async function runNavaidReload({
-  env,
-  io,
-  openApplication,
-  signal,
-}: Omit<CliInput, 'args'> & {
-  openApplication: CliRuntimeTypes['ApplicationOpener'];
-  signal: AbortSignal;
-}): Promise<number> {
-  if ((env['RADIAL_DATABASE_PATH'] ?? '').trim() === '') {
-    io.writeStderr(
-      navaidReloadOutput.formatFailure({
-        code: 'DATA_DATABASE_PATH_MISSING',
-        summary: 'Database path is missing.',
-        cause: 'RADIAL_DATABASE_PATH is required.',
-        action: 'Set RADIAL_DATABASE_PATH to the DuckDB database file and retry.',
-        activeDataPreserved: true,
-      })
-    );
-    return 1;
-  }
-
-  if ((env['OPENAIP_API_KEY'] ?? '').trim() === '') {
-    io.writeStderr(
-      navaidReloadOutput.formatFailure({
-        code: 'DATA_CREDENTIALS_MISSING',
-        summary: 'OpenAIP credentials are missing.',
-        cause: 'OPENAIP_API_KEY is required for an explicit Navaid reload.',
-        action: 'Set OPENAIP_API_KEY and retry the Navaid reload.',
-        activeDataPreserved: true,
-      })
-    );
-    return 1;
-  }
-
-  let openedApplication: Awaited<ReturnType<CliRuntimeTypes['ApplicationOpener']>>;
-  try {
-    openedApplication = await openApplication({
-      databasePath: env['RADIAL_DATABASE_PATH']!,
-    });
-  } catch (error) {
-    if (isInterrupted(error, signal)) {
-      return 130;
-    }
-
-    io.writeStderr(navaidReloadOutput.formatFailure(unexpectedDataFailure()));
-    return 1;
-  }
-
-  if (!openedApplication.ok) {
-    io.writeStderr(
-      navaidReloadOutput.formatFailure({
-        code: 'DATA_DATABASE_UNAVAILABLE',
-        summary: 'The configured database is unavailable.',
-        cause: 'The configured database could not be opened.',
-        action: 'Check RADIAL_DATABASE_PATH and retry the Navaid reload.',
-        activeDataPreserved: true,
-      })
-    );
-    return 1;
-  }
-
-  let result: ApplicationTypes['NavaidReloadResult'] | undefined;
-  let interrupted = false;
-  try {
-    result = await openedApplication.value.dataManagement.reloadNavaids({
-      openAipApiKey: env['OPENAIP_API_KEY']!,
-      onProgress(progress) {
-        io.writeStderr(navaidReloadOutput.formatProgress(progress));
-      },
-      signal,
-    });
-  } catch (error) {
-    if (isInterrupted(error, signal)) {
-      interrupted = true;
-    } else {
-      io.writeStderr(navaidReloadOutput.formatFailure(unexpectedDataFailure()));
-    }
-  }
-
-  let disposed = true;
-  try {
-    await openedApplication.value[Symbol.asyncDispose]();
-  } catch {
-    disposed = false;
-    if (!interrupted) {
-      io.writeStderr(navaidReloadOutput.formatFailure(unexpectedDataFailure()));
-    }
-  }
-
-  if (interrupted) {
-    return 130;
-  }
-
-  if (!disposed || result === undefined) {
-    return 1;
-  }
-
-  if (!result.ok) {
-    io.writeStderr(navaidReloadOutput.formatFailure(result.failure));
-    return 1;
-  }
-
-  io.writeStdout(navaidReloadOutput.formatSuccess(result.value));
-  return 0;
-}
-
 function createInterruptSignal(parentSignal: AbortSignal | undefined): {
   signal: AbortSignal;
   dispose: () => void;
@@ -411,31 +298,6 @@ function createInterruptSignal(parentSignal: AbortSignal | undefined): {
       parentSignal?.removeEventListener('abort', onParentAbort);
     },
   };
-}
-
-function isInterrupted(error: unknown, signal: AbortSignal): boolean {
-  return signal.aborted || (error instanceof Error && error.name === 'AbortError');
-}
-
-function unexpectedDataFailure(): ApplicationTypes['DataFailure'] {
-  return {
-    code: 'DATA_DATABASE_UNAVAILABLE',
-    summary: 'The configured database is unavailable.',
-    cause: 'Radial could not complete the data operation.',
-    action: 'Check RADIAL_DATABASE_PATH and retry.',
-    activeDataPreserved: true,
-  };
-}
-
-async function resolveApplicationOpener(
-  injectedOpener: CliRuntimeTypes['ApplicationOpener'] | undefined
-): Promise<CliRuntimeTypes['ApplicationOpener']> {
-  if (injectedOpener !== undefined) {
-    return injectedOpener;
-  }
-
-  const applicationModule = await import('#radial/application/RadialApplication.js');
-  return applicationModule.default;
 }
 
 export default runCli;

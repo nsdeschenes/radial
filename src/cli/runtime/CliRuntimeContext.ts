@@ -16,6 +16,7 @@ type CliRuntimeContext = Readonly<{
   io: CliIo;
   signal: AbortSignal;
   command: Readonly<{readonly id: CliCommandId | undefined}>;
+  disposeApplication(): Promise<void>;
   withApplication<Value>(
     config: ApplicationTypes['ApplicationConfig'],
     use: (application: ApplicationTypes['Application']) => Promise<Value>

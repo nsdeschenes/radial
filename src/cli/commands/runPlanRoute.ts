@@ -61,7 +61,7 @@ async function runPlanRoute(
               signal: runtime.signal,
             });
           } catch (error) {
-            if (isSharedSignalCancellation(error, runtime.signal)) {
+            if (cliInterruption.isCancellation(error, runtime.signal)) {
               return {kind: 'interrupted', status: 130};
             }
 
@@ -111,10 +111,6 @@ async function runPlanRoute(
   }
 
   return applicationResult.value;
-}
-
-function isSharedSignalCancellation(error: unknown, signal: AbortSignal): boolean {
-  return signal.aborted && error === signal.reason;
 }
 
 export default runPlanRoute;
