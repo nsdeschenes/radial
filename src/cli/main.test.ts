@@ -212,6 +212,32 @@ test('validates the Airport reload argument before opening the application', asy
   });
 });
 
+test('reports a missing Airport reload database path before opening the application', async () => {
+  const capture = captureOutput();
+  let applicationOpened = false;
+
+  const exitCode = await runCli({
+    args: ['data', 'reload', 'airport', 'CAAA'],
+    env: {OPENAIP_API_KEY: 'secret-api-key'},
+    io: capture.io,
+    async openApplication() {
+      applicationOpened = true;
+      throw new Error('The application must not open for invalid configuration.');
+    },
+  });
+
+  expect(applicationOpened).toBe(false);
+  expect(exitCode).toBe(1);
+  expect(capture.output()).toEqual({
+    stdout: '',
+    stderr:
+      'error [DATA_DATABASE_PATH_MISSING]: Database path is missing.\n' +
+      'Cause: RADIAL_DATABASE_PATH is required.\n' +
+      'Action: Set RADIAL_DATABASE_PATH to the DuckDB database file and retry the Airport reload.\n' +
+      'Active data remains unchanged.\n',
+  });
+});
+
 test('reports missing Airport reload credentials before opening the application', async () => {
   const capture = captureOutput();
 
@@ -433,10 +459,12 @@ test('waits for a publication result after interruption', async () => {
 test('streams Airport reload progress and writes success only after commit', async () => {
   const capture = captureOutput();
   const reload = Promise.withResolvers<ApplicationTypes['AirportReloadResult']>();
+  const started = Promise.withResolvers<void>();
   const application = syntheticAirportApplication(async request => {
     expect(request.icao).toBe('CAAA');
     request.onProgress?.({stage: 'openaip', message: 'Looking up Airport CAAA.'});
     request.onProgress?.({stage: 'publish', message: 'Publishing Cached Airport.'});
+    started.resolve();
     return reload.promise;
   });
 
@@ -448,8 +476,7 @@ test('streams Airport reload progress and writes success only after commit', asy
       return {ok: true, value: application};
     },
   });
-  await Promise.resolve();
-  await Promise.resolve();
+  await started.promise;
 
   expect(capture.output()).toEqual({
     stdout: '',
@@ -510,6 +537,136 @@ test('writes a failed Airport reload only to stderr', async () => {
       'Active data remains unchanged.\n',
   });
   expect(capture.output().stderr).not.toContain('secret-api-key');
+});
+
+test('propagates an unrelated Airport reload AbortError after application disposal', async () => {
+  const capture = captureOutput();
+  const abortError = new Error('unrelated abort');
+  abortError.name = 'AbortError';
+  const events: string[] = [];
+  const application = syntheticAirportApplication(
+    async () => {
+      throw abortError;
+    },
+    () => events.push('application disposed')
+  );
+
+  await expect(
+    runCli({
+      args: ['data', 'reload', 'airport', 'CAAA'],
+      env: {RADIAL_DATABASE_PATH: ':memory:', OPENAIP_API_KEY: 'secret-api-key'},
+      io: capture.io,
+      async openApplication() {
+        return {ok: true, value: application};
+      },
+    })
+  ).rejects.toBe(abortError);
+  expect(events).toEqual(['application disposed']);
+  expect(capture.output()).toEqual({stdout: '', stderr: ''});
+});
+
+test('returns silent status 130 after interrupted Airport reload disposal', async () => {
+  const capture = captureOutput();
+  const controller = new AbortController();
+  const started = Promise.withResolvers<void>();
+  const events: string[] = [];
+  const application = syntheticAirportApplication(
+    request => {
+      started.resolve();
+      return new Promise((_resolve, reject) => {
+        request.signal?.addEventListener('abort', () => reject(request.signal?.reason), {
+          once: true,
+        });
+      });
+    },
+    () => events.push('application disposed')
+  );
+  const running = runCli({
+    args: ['data', 'reload', 'airport', 'CAAA'],
+    env: {RADIAL_DATABASE_PATH: ':memory:', OPENAIP_API_KEY: 'secret-api-key'},
+    io: capture.io,
+    signal: controller.signal,
+    async openApplication() {
+      return {ok: true, value: application};
+    },
+  });
+
+  await started.promise;
+  controller.abort();
+
+  await expect(running).resolves.toBe(130);
+  expect(events).toEqual(['application disposed']);
+  expect(capture.output()).toEqual({stdout: '', stderr: ''});
+});
+
+test('committed Airport replacement wins over late interruption', async () => {
+  const capture = captureOutput();
+  const controller = new AbortController();
+  const reload = Promise.withResolvers<ApplicationTypes['AirportReloadResult']>();
+  const started = Promise.withResolvers<void>();
+  const application = syntheticAirportApplication(async () => {
+    started.resolve();
+    return reload.promise;
+  });
+  const running = runCli({
+    args: ['data', 'reload', 'airport', 'CAAA'],
+    env: {RADIAL_DATABASE_PATH: ':memory:', OPENAIP_API_KEY: 'secret-api-key'},
+    io: capture.io,
+    signal: controller.signal,
+    async openApplication() {
+      return {ok: true, value: application};
+    },
+  });
+
+  await started.promise;
+  controller.abort();
+  reload.resolve({
+    ok: true,
+    value: {
+      status: 'replaced',
+      icao: 'CAAA',
+      sourceId: 'airport-caaa',
+      retrievedAt: '2026-07-10T00:00:00.000Z',
+    },
+  });
+
+  await expect(running).resolves.toBe(0);
+  expect(capture.output().stdout).toContain('Cached Airport replaced\n');
+});
+
+test('propagates Airport reload cleanup failure instead of interrupted status 130', async () => {
+  const capture = captureOutput();
+  const controller = new AbortController();
+  const started = Promise.withResolvers<void>();
+  const cleanupFailure = new Error('application cleanup failed');
+  const application = syntheticAirportApplication(
+    request => {
+      started.resolve();
+      return new Promise((_resolve, reject) => {
+        request.signal?.addEventListener('abort', () => reject(request.signal?.reason), {
+          once: true,
+        });
+      });
+    },
+    () => {
+      throw cleanupFailure;
+    }
+  );
+  const running = runCli({
+    args: ['data', 'reload', 'airport', 'CAAA'],
+    env: {RADIAL_DATABASE_PATH: ':memory:', OPENAIP_API_KEY: 'secret-api-key'},
+    io: capture.io,
+    signal: controller.signal,
+    async openApplication() {
+      return {ok: true, value: application};
+    },
+  });
+
+  await started.promise;
+  controller.abort();
+
+  await expect(running).rejects.toBe(cleanupFailure);
+  expect(capture.output()).toEqual({stdout: '', stderr: ''});
 });
 
 test('reports an incorrect positional argument count on stderr and exits 2', async () => {
@@ -1160,7 +1317,8 @@ function syntheticApplication(
 }
 
 function syntheticAirportApplication(
-  reloadAirport: ApplicationTypes['DataManagementCapability']['reloadAirport']
+  reloadAirport: ApplicationTypes['DataManagementCapability']['reloadAirport'],
+  onApplicationDispose: () => void = () => {}
 ): ApplicationTypes['Application'] {
   return {
     databasePath: ':synthetic:',
@@ -1178,7 +1336,9 @@ function syntheticAirportApplication(
         throw new Error('Route planning is not used by this test.');
       },
     },
-    async [Symbol.asyncDispose]() {},
+    async [Symbol.asyncDispose]() {
+      onApplicationDispose();
+    },
   };
 }
 
