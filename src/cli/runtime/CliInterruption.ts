@@ -16,4 +16,11 @@ function is(error: unknown): boolean {
   return error instanceof CliInterruptionError;
 }
 
-export default {create, is};
+function isCancellation(error: unknown, signal: AbortSignal): boolean {
+  return (
+    signal.aborted &&
+    (error === signal.reason || (error instanceof Error && error.name === 'AbortError'))
+  );
+}
+
+export default {create, is, isCancellation};

@@ -59,6 +59,7 @@ test('exposes an immutable environment snapshot and capability-only context', as
   expect(Object.isFrozen(scope.context.command)).toBe(true);
   expect(Object.keys(scope.context).sort()).toEqual([
     'command',
+    'disposeApplication',
     'env',
     'io',
     'signal',

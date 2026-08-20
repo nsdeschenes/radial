@@ -51,6 +51,7 @@ function createCliRuntimeContext(input: RuntimeInput): RuntimeScope {
 
   const context: CliRuntimeTypes['Context'] = Object.freeze({
     command,
+    disposeApplication,
     env: environmentSnapshot,
     io: input.io,
     signal: input.signal,

@@ -36,6 +36,16 @@ async function runReloadNavaids(
     return {kind: 'expected-failure', status: 1};
   }
 
+  try {
+    return await reloadNavaidsWithApplication(runtime);
+  } finally {
+    await runtime.disposeApplication();
+  }
+}
+
+async function reloadNavaidsWithApplication(
+  runtime: CliRuntimeTypes['Context']
+): Promise<CliCommandResultTypes['Result']> {
   let applicationResult:
     | Readonly<{ok: true; value: CliCommandResultTypes['Result']}>
     | Readonly<{
@@ -56,7 +66,7 @@ async function runReloadNavaids(
             signal: runtime.signal,
           });
         } catch (error) {
-          if (isSharedSignalCancellation(error, runtime.signal)) {
+          if (cliInterruption.isCancellation(error, runtime.signal)) {
             return {kind: 'interrupted', status: 130};
           }
 
@@ -94,13 +104,6 @@ async function runReloadNavaids(
   }
 
   return applicationResult.value;
-}
-
-function isSharedSignalCancellation(error: unknown, signal: AbortSignal): boolean {
-  return (
-    signal.aborted &&
-    (error === signal.reason || (error instanceof Error && error.name === 'AbortError'))
-  );
 }
 
 export default runReloadNavaids;

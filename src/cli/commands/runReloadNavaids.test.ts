@@ -227,6 +227,39 @@ test('writes success only after committed publication wins over late cancellatio
   });
 });
 
+test('disposes the application before the handler result leaves its runtime scope', async () => {
+  let disposed = false;
+  const scope = createCliRuntimeContext({
+    env: {
+      OPENAIP_API_KEY: 'secret-api-key',
+      RADIAL_DATABASE_PATH: ':synthetic:',
+    },
+    io: {writeStderr() {}, writeStdout() {}},
+    signal: new AbortController().signal,
+    async loadApplication() {
+      return async () => ({
+        ok: true,
+        value: syntheticApplication(
+          async () => ({ok: true, value: syntheticNavaidReloadSuccess()}),
+          () => {
+            disposed = true;
+          }
+        ),
+      });
+    },
+  });
+
+  try {
+    await expect(runReloadNavaids({}, scope.context)).resolves.toEqual({
+      kind: 'success',
+      status: 0,
+    });
+    expect(disposed).toBe(true);
+  } finally {
+    await scope[Symbol.asyncDispose]();
+  }
+});
+
 function runtimeContext({
   env,
   writeStderr,
@@ -238,6 +271,7 @@ function runtimeContext({
 }>): CliRuntimeTypes['Context'] {
   return {
     command: {id: 'reload-navaids'},
+    async disposeApplication() {},
     env,
     io: {writeStdout() {}, writeStderr},
     signal: new AbortController().signal,
@@ -246,7 +280,8 @@ function runtimeContext({
 }
 
 function syntheticApplication(
-  reloadNavaids: ApplicationTypes['DataManagementCapability']['reloadNavaids']
+  reloadNavaids: ApplicationTypes['DataManagementCapability']['reloadNavaids'],
+  onDispose: () => void = () => {}
 ): ApplicationTypes['Application'] {
   return {
     databasePath: ':synthetic:',
@@ -264,7 +299,9 @@ function syntheticApplication(
         throw new Error('Route planning is not used by this test.');
       },
     },
-    async [Symbol.asyncDispose]() {},
+    async [Symbol.asyncDispose]() {
+      onDispose();
+    },
   };
 }
 
