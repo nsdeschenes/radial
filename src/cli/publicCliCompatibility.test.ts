@@ -405,7 +405,10 @@ test.each(compatibilityCases)('$name preserves the Public CLI contract', async s
   );
   expect(application.evidence.navaidReloads).toBe(sample.navaidReload === true ? 1 : 0);
   expect(application.evidence.commandLoads).toBe(
-    (sample.commandLoad ?? sample.admitted) === true ? 1 : 0
+    (sample.commandLoad ??
+      (sample.admitted === true && sample.routeRequest === undefined)) === true
+      ? 1
+      : 0
   );
   expect(application.evidence.telemetryLoads).toBe(sample.admitted === true ? 1 : 0);
 });

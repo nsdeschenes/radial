@@ -2,22 +2,12 @@ import {run} from '@stricli/core';
 import type {StricliProcess} from '@stricli/core';
 import {expect, test} from 'vitest';
 
+import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import buildCliApplication from '#radial/cli/buildCliApplication.js';
 import type CliInputTypes from '#radial/cli/CliInput.js';
 import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
 
 test.each([
-  {
-    args: [' cyyz ', 'cyow'],
-    status: 0,
-    metadata: {
-      id: 'plan-route',
-      attributes: {
-        'radial.route.arrival_icao': 'CYOW',
-        'radial.route.departure_icao': 'CYYZ',
-      },
-    },
-  },
   {args: ['data', 'status'], metadata: {id: 'data-status'}, status: 1},
   {
     args: ['data', 'reload', 'navaids'],
@@ -61,6 +51,46 @@ test.each([
     expect(admittedMetadata).toEqual([metadata]);
   }
 );
+
+test('dispatches normalized Route Plan values through the deep command entry', async () => {
+  const admittedMetadata: CliTelemetryTypes['CommandMetadata'][] = [];
+  let plannedRequest: ApplicationTypes['RoutePlanningRequest'] | undefined;
+  const input: CliInputTypes['Input'] = {
+    args: [' cyyz ', 'cyow'],
+    env: {RADIAL_DATABASE_PATH: ':synthetic:'},
+    io: {writeStderr() {}, writeStdout() {}},
+    async loadTelemetry() {
+      return {
+        async execute(metadata, operation) {
+          admittedMetadata.push(metadata);
+          return operation();
+        },
+        recordOperation() {},
+        async close() {},
+      };
+    },
+    async openApplication() {
+      return {ok: true, value: routeApplication(request => (plannedRequest = request))};
+    },
+  };
+
+  const process = await runBuiltApplication(input);
+
+  expect(process.exitCode).toBe(0);
+  expect(admittedMetadata).toEqual([
+    {
+      id: 'plan-route',
+      attributes: {
+        'radial.route.arrival_icao': 'CYOW',
+        'radial.route.departure_icao': 'CYYZ',
+      },
+    },
+  ]);
+  expect(plannedRequest).toMatchObject({
+    arrivalIcao: 'CYOW',
+    departureIcao: 'CYYZ',
+  });
+});
 
 test('renders help without entering the temporary command dispatcher', async () => {
   let operationalLifecycleEntries = 0;
@@ -117,4 +147,50 @@ async function runBuiltApplication(
 
   await run(cliApplication.application, input.args, context);
   return process;
+}
+
+function routeApplication(
+  onPlan: (request: ApplicationTypes['RoutePlanningRequest']) => void
+): ApplicationTypes['Application'] {
+  return {
+    databasePath: ':synthetic:',
+    dataManagement: {
+      async status() {
+        throw new Error('Data status is not used.');
+      },
+      async reloadNavaids() {
+        throw new Error('Navaid reload is not used.');
+      },
+      async reloadAirport() {
+        throw new Error('Airport reload is not used.');
+      },
+    },
+    planning: {
+      async open() {
+        return {
+          ok: true,
+          value: {
+            async planRoute(request) {
+              onPlan(request);
+              return {
+                ok: true,
+                value: {
+                  plan: {
+                    magneticReference: null,
+                    routeLegs: [],
+                    routePoints: [],
+                    searchMode: 'vor-family',
+                    totalDistanceNm: 0,
+                  },
+                  warnings: [],
+                },
+              };
+            },
+            async [Symbol.asyncDispose]() {},
+          },
+        };
+      },
+    },
+    async [Symbol.asyncDispose]() {},
+  };
 }

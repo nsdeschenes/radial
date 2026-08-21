@@ -1,12 +1,11 @@
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
+import type CliCommandMetadataTypes from '#radial/cli/CliCommandMetadata.js';
 import type CliCommandResultTypes from '#radial/cli/commands/CliCommandResult.js';
-import type runCli from '#radial/cli/runCli.js';
 
-type CliCommandTypes = NonNullable<(typeof runCli)['commandTypes']>;
 type RoutePlanningWarningCode =
   ApplicationTypes['RoutePlanningSuccess']['warnings'][number]['code'];
 
-type CommandMetadata = CliCommandTypes['metadata'];
+type CommandMetadata = CliCommandMetadataTypes['Metadata'];
 
 type OperationEvent =
   | Readonly<{

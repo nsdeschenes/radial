@@ -1,24 +1,26 @@
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
-import type CliCommandResultTypes from '#radial/cli/commands/CliCommandResult.js';
+import type CliInputTypes from '#radial/cli/CliInput.js';
 import diagnostics from '#radial/cli/formatDiagnostics.js';
 import formatRoutePlan from '#radial/cli/formatRoutePlan.js';
 import formatRoutePlanningWarnings from '#radial/cli/formatRoutePlanningWarnings.js';
 import formatRoutePlanningWarningSummary from '#radial/cli/formatRoutePlanningWarningSummary.js';
+import runAdmittedCliCommand from '#radial/cli/runAdmittedCliCommand.js';
 import cliInterruption from '#radial/cli/runtime/CliInterruption.js';
 import type CliRuntimeTypes from '#radial/cli/runtime/CliRuntimeContext.js';
 import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
 
 type PlanRouteInput = Readonly<{
-  request: ApplicationTypes['RoutePlanningRequest'];
+  arrivalIcao: string;
+  departureIcao: string;
   warningDetailsRequested: boolean;
 }>;
 
-type PlanRouteSuccess = CliCommandResultTypes['Result'] &
-  Readonly<{
-    kind: 'success';
-    request: ApplicationTypes['RoutePlanningRequest'];
-    success: ApplicationTypes['RoutePlanningSuccess'];
-  }>;
+type PlanRouteSuccess = Readonly<{
+  kind: 'success';
+  request: ApplicationTypes['RoutePlanningRequest'];
+  status: 0;
+  success: ApplicationTypes['RoutePlanningSuccess'];
+}>;
 
 type PlanRouteResult =
   | PlanRouteSuccess
@@ -26,7 +28,36 @@ type PlanRouteResult =
   | Readonly<{kind: 'interrupted'; status: 130}>;
 
 async function runPlanRoute(
-  input: PlanRouteInput,
+  capabilities: CliInputTypes['Admitted'],
+  input: PlanRouteInput
+): Promise<0 | 1 | 2 | 130> {
+  const request: ApplicationTypes['RoutePlanningRequest'] = {
+    arrivalIcao: input.arrivalIcao,
+    departureIcao: input.departureIcao,
+  };
+  return runAdmittedCliCommand(capabilities, {
+    metadata: {
+      id: 'plan-route',
+      attributes: {
+        'radial.route.arrival_icao': input.arrivalIcao,
+        'radial.route.departure_icao': input.departureIcao,
+      },
+    },
+    async execute(runtime, telemetry) {
+      const result = await executePlanRoute(
+        request,
+        input.warningDetailsRequested,
+        runtime,
+        telemetry
+      );
+      return result.status;
+    },
+  });
+}
+
+async function executePlanRoute(
+  request: ApplicationTypes['RoutePlanningRequest'],
+  warningDetailsRequested: boolean,
   runtime: CliRuntimeTypes['Context'],
   telemetry: CliTelemetryTypes['Session']
 ): Promise<PlanRouteResult> {
@@ -59,7 +90,7 @@ async function runPlanRoute(
           let result: ApplicationTypes['RoutePlanningResult'];
           try {
             result = await openedPlanner.value.planRoute({
-              ...input.request,
+              ...request,
               signal: runtime.signal,
             });
           } catch (error) {
@@ -82,14 +113,14 @@ async function runPlanRoute(
 
           runtime.io.writeStdout(formatRoutePlan(result.value.plan));
           runtime.io.writeStderr(
-            input.warningDetailsRequested
+            warningDetailsRequested
               ? formatRoutePlanningWarnings(result.value)
               : formatRoutePlanningWarningSummary(result.value)
           );
           return {
             kind: 'success',
             status: 0,
-            request: input.request,
+            request,
             success: result.value,
           };
         } finally {

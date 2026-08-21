@@ -16,6 +16,7 @@ import type {
 
 import type CliInputTypes from '#radial/cli/CliInput.js';
 import runDataStatus from '#radial/cli/commands/runDataStatus.js';
+import runPlanRoute from '#radial/cli/commands/runPlanRoute.js';
 import runReloadNavaids from '#radial/cli/commands/runReloadNavaids.js';
 import airportReloadOutput from '#radial/cli/formatAirportReload.js';
 import diagnostics from '#radial/cli/formatDiagnostics.js';
@@ -128,6 +129,13 @@ const routePlan = describeCommand<RoutePlanFlags, RoutePlanArgs>()({
         : diagnostics.formatInvalidRequestDiagnostic(validated.failure);
     },
   },
+  runAdmitted(input, flags, departureIcao, arrivalIcao) {
+    return runPlanRoute(input, {
+      arrivalIcao,
+      departureIcao,
+      warningDetailsRequested: flags.warnings === true,
+    });
+  },
   metadata(_flags, departureIcao, arrivalIcao) {
     return {
       id: 'plan-route',
@@ -137,15 +145,8 @@ const routePlan = describeCommand<RoutePlanFlags, RoutePlanArgs>()({
       },
     } as const;
   },
-  async loadCompatibilityExecution(flags, departureIcao, arrivalIcao) {
-    const commandModule = await import('#radial/cli/commands/runPlanRoute.js');
-    const request = {arrivalIcao, departureIcao};
-    return (runtime, telemetry) =>
-      commandModule.default(
-        {request, warningDetailsRequested: flags.warnings === true},
-        runtime,
-        telemetry
-      );
+  async loadCompatibilityExecution() {
+    throw new Error('The Route Plan command does not use compatibility execution.');
   },
 });
 

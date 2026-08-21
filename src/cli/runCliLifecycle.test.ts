@@ -36,15 +36,15 @@ test.each(['loader', 'handler'] as const)(
 
     const result = runCli({
       ...input,
-      args: ['CYYZ', 'CYOW'],
+      args: ['data', 'reload', 'airport', 'CYYZ'],
       async loadCommand() {
-        events.push('handler loaded plan-route');
+        events.push('handler loaded reload-airport');
         if (defectSource === 'loader') {
           throw defect;
         }
 
         return async () => {
-          events.push('handler executed plan-route');
+          events.push('handler executed reload-airport');
           throw defect;
         };
       },
@@ -53,9 +53,9 @@ test.each(['loader', 'handler'] as const)(
     await expect(result).rejects.toBe(defect);
     expect(events).toEqual([
       'telemetry initialized',
-      'span started plan-route',
-      'handler loaded plan-route',
-      ...(defectSource === 'handler' ? ['handler executed plan-route'] : []),
+      'span started reload-airport',
+      'handler loaded reload-airport',
+      ...(defectSource === 'handler' ? ['handler executed reload-airport'] : []),
       'defect captured',
       'span ended',
       'telemetry closed',
@@ -113,17 +113,6 @@ test('runs every admitted command through one ordered lifecycle', async () => {
 });
 
 test.each([
-  {
-    args: [' cyyz ', 'cyow'],
-    status: 0,
-    metadata: {
-      id: 'plan-route',
-      attributes: {
-        'radial.route.arrival_icao': 'CYOW',
-        'radial.route.departure_icao': 'CYYZ',
-      },
-    },
-  },
   {args: ['data', 'status'], metadata: {id: 'data-status'}, status: 1},
   {
     args: ['data', 'reload', 'navaids'],
@@ -185,8 +174,6 @@ test('captures an escaping defect once while the span is active and rethrows it 
   expect(events).toEqual([
     'telemetry initialized',
     'span started plan-route',
-    'handler loaded plan-route',
-    'handler executed plan-route',
     'application opened',
     'defect captured',
     'span ended',
@@ -209,7 +196,7 @@ test('does not let telemetry close failure replace a command result or exception
 
   await expect(
     runCli({
-      args: ['CYYZ', 'CYOW'],
+      args: ['data', 'reload', 'airport', 'CYYZ'],
       env: {},
       io: {writeStderr() {}, writeStdout() {}},
       async loadCommand() {
@@ -221,7 +208,7 @@ test('does not let telemetry close failure replace a command result or exception
 
   await expect(
     runCli({
-      args: ['CYYZ', 'CYOW'],
+      args: ['data', 'reload', 'airport', 'CYYZ'],
       env: {},
       io: {writeStderr() {}, writeStdout() {}},
       async loadCommand() {

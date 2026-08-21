@@ -56,6 +56,8 @@ test('pins one private Stricli parser authority with import-light eager modules'
     dataStatusSource,
     executableSource,
     lifecycleSource,
+    navaidReloadSource,
+    routePlanSource,
     runtimeSource,
   ] = await Promise.all([
     readFile('src/cli/runCli.ts', 'utf8'),
@@ -63,6 +65,8 @@ test('pins one private Stricli parser authority with import-light eager modules'
     readFile('src/cli/commands/runDataStatus.ts', 'utf8'),
     readFile('src/cli/runCliExecutable.ts', 'utf8'),
     readFile('src/cli/runAdmittedCliCommand.ts', 'utf8'),
+    readFile('src/cli/commands/runReloadNavaids.ts', 'utf8'),
+    readFile('src/cli/commands/runPlanRoute.ts', 'utf8'),
     readFile('src/cli/runtime/createCliRuntimeContext.ts', 'utf8'),
   ]);
   const eagerSources = [
@@ -71,6 +75,8 @@ test('pins one private Stricli parser authority with import-light eager modules'
     dataStatusSource,
     executableSource,
     lifecycleSource,
+    navaidReloadSource,
+    routePlanSource,
     runtimeSource,
   ];
 
