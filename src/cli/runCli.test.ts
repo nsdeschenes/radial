@@ -158,6 +158,32 @@ test('reports a nonexistent database as uninitialized without creating it', asyn
   }
 });
 
+test('rejects a blank Data Status path before opening the application', async () => {
+  const capture = captureOutput();
+  let applicationOpened = false;
+
+  const exitCode = await runCli({
+    args: ['data', 'status'],
+    env: {RADIAL_DATABASE_PATH: '  '},
+    io: capture.io,
+    async openApplication() {
+      applicationOpened = true;
+      throw new Error('The application must not open for invalid configuration.');
+    },
+  });
+
+  expect(applicationOpened).toBe(false);
+  expect(exitCode).toBe(1);
+  expect(capture.output()).toEqual({
+    stdout: '',
+    stderr:
+      'error [DATA_DATABASE_PATH_MISSING]: Database path is missing.\n' +
+      'Cause: RADIAL_DATABASE_PATH is required for data status.\n' +
+      'Action: Set RADIAL_DATABASE_PATH to the DuckDB database file and retry.\n' +
+      'Active data remains unchanged.\n',
+  });
+});
+
 test('validates Navaid reload configuration before opening the application', async () => {
   const capture = captureOutput();
   let applicationOpened = false;

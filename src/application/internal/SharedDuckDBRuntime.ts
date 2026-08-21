@@ -1,4 +1,4 @@
-import {realpath} from 'node:fs/promises';
+import {realpath, stat} from 'node:fs/promises';
 import {basename, dirname, join, resolve} from 'node:path';
 
 import {DuckDBInstance} from '@duckdb/node-api';
@@ -11,6 +11,7 @@ import type RadialApplicationTypes from '#radial/application/RadialApplicationTy
 import ensureCachedAirport from '#radial/data-producer/internal/AirportDataProducer.js';
 import ensureFirstNavaidSnapshot from '#radial/data-producer/internal/BootstrapNavaidSnapshot.js';
 import readDataStatus from '#radial/data-producer/internal/DataStatus.js';
+import dataStatusResult from '#radial/data-producer/internal/DataStatusResult.js';
 import reloadNavaids from '#radial/data-producer/internal/NavaidDataProducer.js';
 import PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 import isDuckDBBusyError from '#radial/db/duckdb/isDuckDBBusyError.js';
@@ -150,6 +151,7 @@ class SharedDuckDBRuntime {
   readonly databasePath: string;
   readonly #airportResolutionCoordinator: AirportResolutionCoordinator;
   readonly #navaidOperationCoordinator = new FifoOperationCoordinator();
+  readonly #ownershipTransitionCoordinator = new FifoOperationCoordinator();
   readonly #publicationGate = new PublicationGate(new FifoOperationCoordinator());
   #instance: DuckDBInstance | undefined;
   #instancePromise: Promise<DuckDBInstance> | undefined;
@@ -162,7 +164,15 @@ class SharedDuckDBRuntime {
   }
 
   async readDataStatus(): Promise<RadialApplicationTypes['DataStatusResult']> {
-    return readDataStatus.fromInstance(await this.#getInstance(), this.databasePath);
+    if (this.#instance !== undefined) {
+      return readDataStatus(this.#instance, this.databasePath);
+    }
+
+    return this.#ownershipTransitionCoordinator.run(() =>
+      this.#instance === undefined
+        ? this.#readDataStatusWithoutPersistentInstance()
+        : readDataStatus(this.#instance, this.databasePath)
+    );
   }
 
   async reloadNavaids(
@@ -238,6 +248,7 @@ class SharedDuckDBRuntime {
       await Promise.all([
         this.#airportResolutionCoordinator.whenIdle(),
         this.#navaidOperationCoordinator.whenIdle(),
+        this.#ownershipTransitionCoordinator.whenIdle(),
         this.#publicationGate.whenIdle(),
       ]);
     } catch (error) {
@@ -248,6 +259,7 @@ class SharedDuckDBRuntime {
       () => this.#airportResolutionCoordinator.close(),
       () => this.#publicationGate.close(),
       () => this.#navaidOperationCoordinator.close(),
+      () => this.#ownershipTransitionCoordinator.close(),
       () => this.#instance?.closeSync(),
     ]) {
       try {
@@ -263,8 +275,74 @@ class SharedDuckDBRuntime {
   }
 
   async #getInstance(): Promise<DuckDBInstance> {
-    this.#instancePromise ??= this.#createInstance();
+    this.#instancePromise ??= this.#ownershipTransitionCoordinator.run(() =>
+      this.#createInstance()
+    );
     return this.#instancePromise;
+  }
+
+  async #readDataStatusWithoutPersistentInstance(): Promise<
+    RadialApplicationTypes['DataStatusResult']
+  > {
+    if (this.databasePath === ':memory:') {
+      return dataStatusResult.success(
+        dataStatusResult.uninitializedValue(this.databasePath)
+      );
+    }
+
+    let databaseExists: boolean;
+    try {
+      databaseExists = (await stat(this.databasePath)).isFile();
+    } catch (error) {
+      if (isMissingPathError(error)) {
+        return dataStatusResult.success(
+          dataStatusResult.uninitializedValue(this.databasePath)
+        );
+      }
+
+      return dataStatusResult.failure(
+        'DATA_DATABASE_UNAVAILABLE',
+        'The configured database is unavailable.',
+        'The configured database path could not be inspected.',
+        'Check RADIAL_DATABASE_PATH and retry.'
+      );
+    }
+
+    if (!databaseExists) {
+      return dataStatusResult.failure(
+        'DATA_DATABASE_UNAVAILABLE',
+        'The configured database is unavailable.',
+        'The configured database path is not a regular file.',
+        'Set RADIAL_DATABASE_PATH to a DuckDB database file and retry.'
+      );
+    }
+
+    let instance: DuckDBInstance;
+    try {
+      instance = await DuckDBInstance.create(this.databasePath, {
+        access_mode: 'READ_ONLY',
+      });
+    } catch (error) {
+      return isDuckDBBusyError(error)
+        ? dataStatusResult.failure(
+            'DATA_DATABASE_BUSY',
+            'The configured database is busy.',
+            'Another process owns the native DuckDB database file.',
+            'Route the operation through the owning process or obtain exclusive maintenance access.'
+          )
+        : dataStatusResult.failure(
+            'DATA_DATABASE_UNAVAILABLE',
+            'The configured database is unavailable.',
+            'The existing database could not be opened for read-only inspection.',
+            'Check database availability and retry.'
+          );
+    }
+
+    try {
+      return await readDataStatus(instance, this.databasePath);
+    } finally {
+      instance.closeSync();
+    }
   }
 
   async #createInstance(): Promise<DuckDBInstance> {
