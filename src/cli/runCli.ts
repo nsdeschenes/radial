@@ -16,6 +16,7 @@ import type {
   CommandBuilderArguments,
   CommandContext,
   CommandFunction,
+  RouteMap,
   StricliIntegration,
   StricliProcess,
 } from '@stricli/core';
@@ -26,16 +27,14 @@ import diagnostics from '#radial/cli/formatDiagnostics.js';
 import runAdmittedCliCommand from '#radial/cli/runAdmittedCliCommand.js';
 import validation from '#radial/route-planner/internal/validation.js';
 
-type SelectedDescriptionCell = {value: object | undefined};
 type CliStricliContext = CommandContext &
   Readonly<{
     input: CliInputTypes['Input'];
-    invocation: readonly string[];
     process: StricliProcess;
-    selectedDescription: SelectedDescriptionCell;
+    routePlanDepartureIcao: {value: string | undefined};
+    selectedDescription: {value: object | undefined};
   }>;
-type CliApplicationContext = ApplicationContext &
-  Readonly<{invocation: readonly string[]}>;
+type CliApplicationContext = ApplicationContext;
 
 type CommandDescription<
   Flags extends BaseFlags,
@@ -56,13 +55,17 @@ type CommandDescription<
   loadExecution(flags: Flags, ...args: Args): Promise<CliInputTypes['CommandExecution']>;
 }>;
 
-type RoutePlanFlags = Readonly<{warnings?: boolean}>;
-type RoutePlanArgs = [departureIcao: string, arrivalIcao: string];
+type RoutePlanArgs = [
+  departureIcao: string,
+  arrivalIcao: string,
+  warningDetailsRequested?: boolean,
+];
 type AirportReloadArgs = [icao: string];
 type NoFlags = Readonly<Record<never, never>>;
 type NoArgs = [];
 
-const INTERNAL_PLAN_ROUTE = '__radial_internal_plan_route__';
+const INTERNAL_PLAN_ROUTE = '\0radial-plan-route';
+const INTERNAL_WARNINGS_ARGUMENT = '\0radial-warnings';
 const airportReloadUsage =
   'error [DATA_USAGE]: Invalid data command.\n' +
   'Cause: The Airport reload accepts exactly one ICAO and no operational flags.\n' +
@@ -74,34 +77,30 @@ function describeCommand<Flags extends BaseFlags, Args extends BaseArgs>() {
   ) => description;
 }
 
-const routePlan = describeCommand<RoutePlanFlags, RoutePlanArgs>()({
+const routePlan = describeCommand<NoFlags, RoutePlanArgs>()({
   id: 'plan-route',
-  route: [],
+  route: [INTERNAL_PLAN_ROUTE],
   docs: {brief: 'Plan a Route'},
   parameters: {
-    flags: {
-      warnings: {
-        brief: 'Show Route Plan warning details',
-        kind: 'boolean',
-        optional: true,
-      },
-    },
+    flags: {},
     positional: {
       kind: 'tuple',
       parameters: [
         {
           brief: 'Departure Airport ICAO',
-          parse(this: CliStricliContext) {
-            return parseRoutePlanInvocation(this.invocation).departureIcao;
-          },
+          parse: parseRoutePlanDepartureIcao,
           placeholder: 'departure-icao',
         },
         {
           brief: 'Arrival Airport ICAO',
-          parse(this: CliStricliContext) {
-            return parseRoutePlanInvocation(this.invocation).arrivalIcao;
-          },
+          parse: parseRoutePlanArrivalIcao,
           placeholder: 'arrival-icao',
+        },
+        {
+          brief: 'Show Route Plan warning details',
+          optional: true,
+          parse: parseTerminalWarnings,
+          placeholder: '--warnings',
         },
       ],
     },
@@ -137,12 +136,12 @@ const routePlan = describeCommand<RoutePlanFlags, RoutePlanArgs>()({
       },
     } as const;
   },
-  async loadExecution(flags, departureIcao, arrivalIcao) {
+  async loadExecution(_flags, departureIcao, arrivalIcao, warningDetailsRequested) {
     const commandModule = await import('#radial/cli/commands/runPlanRoute.js');
     const request = {arrivalIcao, departureIcao};
     return (runtime, telemetry) =>
       commandModule.default(
-        {request, warningDetailsRequested: flags.warnings === true},
+        {request, warningDetailsRequested: warningDetailsRequested === true},
         runtime,
         telemetry
       );
@@ -309,20 +308,43 @@ interface RunCli {
 const ROOT_HELP =
   'Usage:\n' +
   commandDescriptions.map(description => description.help.rootUsageLine).join('');
-const commandSelections = new WeakMap<object, object>();
+const commandSelections = new WeakMap<object, CatalogCommandDescription>();
+const compatibilityInvocations = new WeakMap<StricliProcess, readonly string[]>();
 const application = buildCliApplication();
 
-function parseRoutePlanInvocation(invocation: readonly string[]) {
-  const routeArguments = routeArgumentsFromInvocation(invocation);
-  const validated = validation.validateRoutePlanningRequest({
-    arrivalIcao: routeArguments[1] ?? '',
-    departureIcao: routeArguments[0] ?? '',
-  });
-  if (routeArguments.length !== 2 || !validated.ok) {
-    throw new Error('Radial rejected the Route Plan invocation.');
+function parseRoutePlanDepartureIcao(this: CliStricliContext, input: string): string {
+  const validated = validation.validateAirportIcao(input);
+  if (!validated.ok) {
+    throw new Error('Radial rejected the departure Airport ICAO.');
   }
 
+  this.routePlanDepartureIcao.value = validated.value;
   return validated.value;
+}
+
+function parseRoutePlanArrivalIcao(this: CliStricliContext, input: string): string {
+  const departureIcao = this.routePlanDepartureIcao.value;
+  if (departureIcao === undefined) {
+    throw new Error('Radial did not parse the departure Airport ICAO.');
+  }
+
+  const validated = validation.validateRoutePlanningRequest({
+    arrivalIcao: input,
+    departureIcao,
+  });
+  if (!validated.ok) {
+    throw new Error('Radial rejected the arrival Airport ICAO.');
+  }
+
+  return validated.value.arrivalIcao;
+}
+
+function parseTerminalWarnings(input: string): boolean {
+  if (input !== INTERNAL_WARNINGS_ARGUMENT) {
+    throw new Error('Radial rejected the Route Plan warning-details argument.');
+  }
+
+  return true;
 }
 
 function routeArgumentsFromInvocation(invocation: readonly string[]) {
@@ -346,12 +368,16 @@ function matchesInvocation(actual: readonly string[], expected: readonly string[
 }
 
 function buildCliApplication(): Application<CliStricliContext> {
-  const compiledCommands = new Map<object, Command<CliStricliContext>>([
-    [routePlan, buildDescribedCommand(routePlan)],
-    [dataStatus, buildDescribedCommand(dataStatus)],
-    [reloadNavaids, buildDescribedCommand(reloadNavaids)],
-    [reloadAirport, buildDescribedCommand(reloadAirport)],
-  ]);
+  const compiledCommands = new Map<CatalogCommandDescription, Command<CliStricliContext>>(
+    commandDescriptions.map(description => [
+      description,
+      buildCatalogCommand(description),
+    ])
+  );
+  for (const [description, command] of compiledCommands) {
+    commandSelections.set(command, description);
+  }
+
   const commandFor = (description: CatalogCommandDescription) => {
     const command = compiledCommands.get(description);
     if (command === undefined) {
@@ -363,31 +389,7 @@ function buildCliApplication(): Application<CliStricliContext> {
     return command;
   };
 
-  const reload = buildRouteMap({
-    docs: {brief: 'Reload local data'},
-    routes: {
-      [routeToken(reloadAirport, 2)]: commandFor(reloadAirport),
-      [routeToken(reloadNavaids, 2)]: commandFor(reloadNavaids),
-    },
-  });
-  const data = buildRouteMap({
-    docs: {brief: 'Inspect or reload local data'},
-    routes: {
-      [routeToken(reloadNavaids, 1)]: reload,
-      [routeToken(dataStatus, 1)]: commandFor(dataStatus),
-    },
-  });
-  const root = buildRouteMap({
-    defaultCommand: INTERNAL_PLAN_ROUTE,
-    docs: {
-      brief: 'Radial flight-simulation route planner',
-      hideRoute: {[INTERNAL_PLAN_ROUTE]: true},
-    },
-    routes: {
-      [INTERNAL_PLAN_ROUTE]: commandFor(routePlan),
-      [routeToken(dataStatus, 0)]: data,
-    },
-  });
+  const root = buildCatalogRouteMap(commandDescriptions, commandFor);
 
   return buildApplication(
     root,
@@ -403,15 +405,57 @@ function buildCliApplication(): Application<CliStricliContext> {
   );
 }
 
-function routeToken(description: CatalogCommandDescription, index: number): string {
-  const token = description.route[index];
-  if (token === undefined) {
-    throw new Error(
-      `Radial command ${JSON.stringify(description.id)} has no route token at index ${index}.`
-    );
+function buildCatalogCommand(
+  description: CatalogCommandDescription
+): Command<CliStricliContext> {
+  type ErasedCatalogDescription = CommandDescription<
+    BaseFlags,
+    BaseArgs,
+    CatalogCommandId,
+    CatalogCommandMetadata
+  >;
+  return buildDescribedCommand(description as unknown as ErasedCatalogDescription);
+}
+
+function buildCatalogRouteMap(
+  entries: readonly CatalogCommandDescription[],
+  commandFor: (description: CatalogCommandDescription) => Command<CliStricliContext>,
+  depth = 0
+): RouteMap<CliStricliContext> {
+  const routes: Record<string, Command<CliStricliContext> | RouteMap<CliStricliContext>> =
+    {};
+  const routeTokens = new Set(entries.map(entry => entry.route[depth]));
+
+  for (const token of routeTokens) {
+    if (token === undefined) {
+      throw new Error('Radial cannot build a route for an empty command path.');
+    }
+
+    const matchingEntries = entries.filter(entry => entry.route[depth] === token);
+    const leaf = matchingEntries.find(entry => entry.route.length === depth + 1);
+    if (leaf !== undefined) {
+      if (matchingEntries.length !== 1) {
+        throw new Error(`Radial route ${JSON.stringify(leaf.route)} is not unique.`);
+      }
+
+      routes[token] = commandFor(leaf);
+      continue;
+    }
+
+    routes[token] = buildCatalogRouteMap(matchingEntries, commandFor, depth + 1);
   }
 
-  return token;
+  return buildRouteMap({
+    ...(depth === 0 ? {defaultCommand: INTERNAL_PLAN_ROUTE} : {}),
+    docs: {
+      brief:
+        depth === 0
+          ? 'Radial flight-simulation route planner'
+          : `Radial ${entries[0]?.route[depth - 1] ?? 'nested'} commands`,
+      ...(depth === 0 ? {hideRoute: {[INTERNAL_PLAN_ROUTE]: true}} : {}),
+    },
+    routes,
+  });
 }
 
 function buildDescribedCommand<
@@ -427,7 +471,6 @@ function buildDescribedCommand<
     loader: admittedLoader(description),
     parameters: description.parameters,
   });
-  commandSelections.set(command, description);
   return command;
 }
 
@@ -476,9 +519,10 @@ function helpIntegration(): StricliIntegration<CliStricliContext> {
       global: true,
       run() {
         const context = this as CliApplicationContext;
-        const help = helpForInvocation(context.invocation);
+        const invocation = compatibilityInvocationFor(context.process);
+        const help = helpForInvocation(invocation);
         if (help === undefined) {
-          context.process.stderr.write(rejectedInvocationDiagnostic(context.invocation));
+          context.process.stderr.write(rejectedInvocationDiagnostic(invocation));
           context.process.exitCode = 2;
           return;
         }
@@ -499,11 +543,22 @@ function missingSubcommandIntegration(): StricliIntegration<CliStricliContext> {
       hidden: true,
       run() {
         const context = this as CliApplicationContext;
-        context.process.stderr.write(rejectedInvocationDiagnostic(context.invocation));
+        context.process.stderr.write(
+          rejectedInvocationDiagnostic(compatibilityInvocationFor(context.process))
+        );
         context.process.exitCode = 2;
       },
     },
   };
+}
+
+function compatibilityInvocationFor(process: StricliProcess): readonly string[] {
+  const invocation = compatibilityInvocations.get(process);
+  if (invocation === undefined) {
+    throw new Error('Radial has no compatibility invocation for this Stricli process.');
+  }
+
+  return invocation;
 }
 
 function helpForInvocation(invocation: readonly string[]): string | undefined {
@@ -573,12 +628,13 @@ const runCli: RunCli = async input => {
   };
   const context: CliStricliContext = {
     input,
-    invocation: input.args,
     process: processFacade,
+    routePlanDepartureIcao: {value: undefined},
     selectedDescription: {value: undefined},
   };
+  compatibilityInvocations.set(processFacade, input.args);
 
-  await run(application, input.args, context);
+  await run(application, input.args.map(adaptStricliToken), context);
 
   const exitCode = processFacade.exitCode;
   if (exitCode === ExitCode.InvalidArgument || exitCode === ExitCode.UnknownCommand) {
@@ -589,6 +645,10 @@ const runCli: RunCli = async input => {
 
   return translateExitCode(exitCode);
 };
+
+function adaptStricliToken(argument: string): string {
+  return argument === '--warnings' ? INTERNAL_WARNINGS_ARGUMENT : argument;
+}
 
 function translateExitCode(exitCode: number | string | null | undefined): number {
   if (exitCode === ExitCode.InvalidArgument || exitCode === ExitCode.UnknownCommand) {

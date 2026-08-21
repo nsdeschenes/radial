@@ -10,7 +10,12 @@ const MANUAL_DISPATCH_PREDICATE = /function is(?:AirportReload|DataStatus|Navaid
 const OPERATIONAL_STATIC_IMPORT =
   /^import (?!type\b).*from ['"](?:@duckdb|@sentry|#radial\/(?:application|data-producer|instrument(?:\.js)?))/mu;
 const BUILD_COMMAND = /buildCommand</g;
+const BUILD_ROUTE_MAP = /buildRouteMap\(/g;
 const STRICLI_RUN = /\brun\(application,/g;
+const RAW_INVOCATION_ADMISSION =
+  /\bparseRoutePlanInvocation\b|\bthis\.invocation\b|\binvocation:\s*input\.args\b/u;
+const MANUAL_ROUTE_HIERARCHY =
+  /\brouteToken\(|const\s+(?:data|reload|root)\s*=\s*buildRouteMap\(/u;
 const RAW_ARGUMENT_TELEMETRY = /\b(?:args|invocation)\b/u;
 const INDEX_MODULE = /(?:^|\/)index\.ts$/u;
 const INDEX_IMPORT = /from ['"][^'"]*\/index\.js['"]/u;
@@ -52,8 +57,15 @@ test('pins one private Stricli parser authority with import-light eager modules'
 
   expect(packageJson.dependencies['@stricli/core']).toBe('1.3.0');
   expect(adapterSource.match(BUILD_COMMAND)).toHaveLength(1);
+  expect(adapterSource.match(BUILD_ROUTE_MAP)).toHaveLength(1);
   expect(adapterSource.match(STRICLI_RUN)).toHaveLength(1);
   expect(adapterSource).not.toMatch(MANUAL_DISPATCH_PREDICATE);
+  expect(adapterSource).not.toMatch(MANUAL_ROUTE_HIERARCHY);
+  expect(adapterSource).not.toMatch(RAW_INVOCATION_ADMISSION);
+  expect(adapterSource).toContain(
+    'buildCatalogRouteMap(commandDescriptions, commandFor)'
+  );
+  expect(adapterSource).toContain('input.args.map(adaptStricliToken)');
   expect(adapterSource).not.toContain("aliases: ['h']");
   expect(lifecycleSource).not.toMatch(RAW_ARGUMENT_TELEMETRY);
 
