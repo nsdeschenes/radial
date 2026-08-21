@@ -8,8 +8,8 @@ import {expect, test} from 'vitest';
 import FifoOperationCoordinator from '#radial/application/internal/FifoOperationCoordinator.js';
 import readDataStatus from '#radial/data-producer/internal/DataStatus.js';
 import buildNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidate.js';
-import publishNavaidSnapshot from '#radial/data-producer/internal/NavaidSnapshotPublication.js';
-import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import validateNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidateValidation.js';
+import producerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 import createSyntheticFAANasrCycle from '#radial/test/createSyntheticFAANasrCycle.js';
 
@@ -46,14 +46,14 @@ test('reports pre-bootstrap Cached Airports from an inactive Producer Schema', a
   const instance = await DuckDBInstance.create(databasePath);
 
   try {
-    await initializeProducerSchema(instance);
+    await producerSchema.prepare(instance);
     const connection = await instance.connect();
     try {
       await connection.run(
         `INSERT INTO radial_producer.cached_airports VALUES
           ('CYYZ', 'airport-yyz', 'Toronto Pearson', -79.6306, 43.6777,
            '{"_id":"airport-yyz"}',
-           'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+           'sha256:581b0b5f9856d1f68cfd15960a3ebd920e106848b6906749a9e2ca8581c88790',
            'openaip:airport:airport-yyz',
            TIMESTAMPTZ '2026-08-17 11:00:00+00',
            TIMESTAMPTZ '2026-08-17 11:00:01+00')`
@@ -86,7 +86,7 @@ test('reports pre-bootstrap Cached Airports from an inactive Producer Schema', a
             longitude: -79.6306,
             latitude: 43.6777,
             recordChecksum:
-              'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+              'sha256:581b0b5f9856d1f68cfd15960a3ebd920e106848b6906749a9e2ca8581c88790',
             sourceIdentity: 'openaip:airport:airport-yyz',
             retrievedAt: '2026-08-17T11:00:00.000Z',
             publishedAt: '2026-08-17T11:00:01.000Z',
@@ -105,7 +105,7 @@ test('distinguishes an invalid Producer Schema from ordinary uninitialized data'
   const instance = await DuckDBInstance.create(databasePath);
 
   try {
-    await initializeProducerSchema(instance);
+    await producerSchema.prepare(instance);
     const connection = await instance.connect();
     try {
       await connection.run('DROP TABLE radial_producer.raw_navaids');
@@ -132,7 +132,7 @@ test('reports the active snapshot provenance, counts, and Facility Variation rea
   const instance = await DuckDBInstance.create(databasePath);
 
   try {
-    await initializeProducerSchema(instance);
+    await producerSchema.prepare(instance);
     const candidate = buildNavaidSnapshotCandidate({
       faaNasrCycles: [
         createSyntheticFAANasrCycle([
@@ -168,9 +168,9 @@ test('reports the active snapshot provenance, counts, and Facility Variation rea
       retrievedAt: '2026-07-10T00:00:00.000Z',
       retrievalCompletedAt: '2026-07-10T00:00:02.000Z',
     });
-    await publishNavaidSnapshot(
+    await producerSchema.publishNavaidSnapshot(
       instance,
-      candidate,
+      validateNavaidSnapshotCandidate(candidate),
       new PublicationGate(new FifoOperationCoordinator()),
       {
         snapshotId: '11111111-1111-4111-8111-111111111111',

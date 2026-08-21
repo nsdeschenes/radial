@@ -6,13 +6,14 @@ import type RadialApplicationTypes from '#radial/application/RadialApplicationTy
 import FAANasrCycleSourceError from '#radial/data-producer/internal/FAANasrCycleSourceError.js';
 import faaNasrFacilityVariation from '#radial/data-producer/internal/FAANasrFacilityVariation.js';
 import buildNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidate.js';
-import publishNavaidSnapshot from '#radial/data-producer/internal/NavaidSnapshotPublication.js';
+import validateNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidateValidation.js';
 import NavaidSnapshotPublicationError from '#radial/data-producer/internal/NavaidSnapshotPublicationError.js';
 import NavaidSnapshotValidationError from '#radial/data-producer/internal/NavaidSnapshotValidationError.js';
 import captureOpenAIPNavaids from '#radial/data-producer/internal/OpenAIPNavaidCapture.js';
 import OpenAIPNavaidCaptureError from '#radial/data-producer/internal/OpenAIPNavaidCaptureError.js';
 import type OpenAIPNavaidTransport from '#radial/data-producer/internal/OpenAIPNavaidTransport.js';
-import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import producerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import type NavaidSnapshotCandidate from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotCandidate.js';
 import acquireProductionFAANasrCycle from '#radial/data-producer/internal/ProductionFAANasrCycleSource.js';
 import createProductionOpenAIPNavaidTransport from '#radial/data-producer/internal/ProductionOpenAIPNavaidTransport.js';
 import type PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
@@ -61,7 +62,7 @@ async function reloadNavaids(
           'db.system.name': 'duckdb',
         },
       },
-      () => publicationGate.run(() => initializeProducerSchema(instance), request.signal)
+      () => publicationGate.run(() => producerSchema.prepare(instance), request.signal)
     );
     abortableOperation.throwIfAborted(request.signal);
   } catch (error) {
@@ -213,7 +214,7 @@ async function reloadNavaids(
   request.onProgress?.({stage: 'derive', message: 'validating raw records'});
   request.onProgress?.({stage: 'derive', message: 'deriving planner-ready data'});
   request.onProgress?.({stage: 'derive', message: 'calculating magnetic data'});
-  let candidate: ReturnType<typeof buildNavaidSnapshotCandidate>;
+  let candidate: NavaidSnapshotCandidate;
   try {
     candidate = Sentry.startSpan(
       {name: 'Derive Navaid Snapshot candidate', op: 'function'},
@@ -266,6 +267,7 @@ async function reloadNavaids(
   abortableOperation.throwIfAborted(request.signal);
   request.onProgress?.({stage: 'publish', message: 'publishing Navaid Snapshot'});
   try {
+    const validatedCandidate = validateNavaidSnapshotCandidate(candidate);
     const published = await Sentry.startSpan(
       {
         name: 'Publish Navaid Snapshot',
@@ -277,23 +279,28 @@ async function reloadNavaids(
         },
       },
       () =>
-        publishNavaidSnapshot(instance, candidate, publicationGate, {
-          ...(dependencies.beforeNavaidCommit === undefined
-            ? {}
-            : {beforeCommit: dependencies.beforeNavaidCommit}),
-          ...(request.signal === undefined ? {} : {signal: request.signal}),
-        })
+        producerSchema.publishNavaidSnapshot(
+          instance,
+          validatedCandidate,
+          publicationGate,
+          {
+            ...(dependencies.beforeNavaidCommit === undefined
+              ? {}
+              : {beforeCommit: dependencies.beforeNavaidCommit}),
+            ...(request.signal === undefined ? {} : {signal: request.signal}),
+          }
+        )
     );
     request.onProgress?.({stage: 'complete', message: 'Navaid Snapshot committed.'});
     Sentry.logger.info('Navaid Snapshot published', {
-      'radial.navaid.exclusion_count': candidate.exclusions.length,
-      'radial.navaid.planner_count': candidate.plannerNavaids.length,
+      'radial.navaid.exclusion_count': validatedCandidate.exclusions.length,
+      'radial.navaid.planner_count': validatedCandidate.plannerNavaids.length,
       'radial.navaid.snapshot_id': published.snapshotId,
     });
     for (const [kind, count] of [
-      ['excluded', candidate.exclusions.length],
-      ['planner', candidate.plannerNavaids.length],
-      ['raw', candidate.rawNavaids.length],
+      ['excluded', validatedCandidate.exclusions.length],
+      ['planner', validatedCandidate.plannerNavaids.length],
+      ['raw', validatedCandidate.rawNavaids.length],
     ] as const) {
       Sentry.metrics.gauge('radial.product.navaid_records', count, {
         attributes: {kind},
@@ -303,11 +310,21 @@ async function reloadNavaids(
     return {
       ok: true,
       value: {
-        ...published,
-        ...committedCounts(candidate),
-        retrievedAt: candidate.retrievedAt,
-        retrievalCompletedAt: candidate.retrievalCompletedAt,
-        provenance: candidate.provenance,
+        snapshotId: published.snapshotId,
+        snapshotChecksum: published.snapshotChecksum,
+        rawNavaidCount: published.rawNavaidCount,
+        plannerNavaidCount: published.plannerNavaidCount,
+        vorFamilyNavaidCount: published.vorFamilyNavaidCount,
+        fallbackNavaidCount: published.fallbackNavaidCount,
+        exclusionCount: published.exclusionCount,
+        exclusionCounts: published.exclusionCounts,
+        facilityVariationPresentCount: published.facilityVariationPresentCount,
+        facilityVariationMissingCount: published.facilityVariationMissingCount,
+        facilityVariationEpochYearMissingCount:
+          published.facilityVariationEpochYearMissingCount,
+        retrievedAt: validatedCandidate.retrievedAt,
+        retrievalCompletedAt: validatedCandidate.retrievalCompletedAt,
+        provenance: validatedCandidate.provenance,
       },
     };
   } catch (error) {
@@ -345,37 +362,6 @@ async function reloadNavaids(
       error instanceof NavaidSnapshotPublicationError ? error.activeDataPreserved : false
     );
   }
-}
-
-function committedCounts(candidate: ReturnType<typeof buildNavaidSnapshotCandidate>) {
-  const exclusionCounts = new Map<string, number>();
-  for (const exclusion of candidate.exclusions) {
-    exclusionCounts.set(
-      exclusion.reason,
-      (exclusionCounts.get(exclusion.reason) ?? 0) + 1
-    );
-  }
-
-  return {
-    vorFamilyNavaidCount: candidate.plannerNavaids.filter(
-      navaid => navaid.family !== 'NDB'
-    ).length,
-    fallbackNavaidCount: candidate.plannerNavaids.filter(
-      navaid => navaid.family === 'NDB'
-    ).length,
-    exclusionCounts: [...exclusionCounts]
-      .toSorted(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-      .map(([reason, count]) => ({reason, count})),
-    facilityVariationPresentCount: candidate.facilityVariationAudits.filter(
-      audit => audit.outcome === 'matched'
-    ).length,
-    facilityVariationMissingCount: candidate.facilityVariationAudits.filter(
-      audit => audit.outcome !== 'matched'
-    ).length,
-    facilityVariationEpochYearMissingCount: candidate.facilityVariationAudits.filter(
-      audit => audit.outcome === 'matched' && audit.facilityVariationEpochYear === null
-    ).length,
-  };
 }
 
 function failure(

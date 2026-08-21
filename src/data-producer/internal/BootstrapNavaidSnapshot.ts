@@ -3,7 +3,7 @@ import * as Sentry from '@sentry/node';
 
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import reloadNavaids from '#radial/data-producer/internal/NavaidDataProducer.js';
-import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import producerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import type PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 import isDuckDBBusyError from '#radial/db/duckdb/isDuckDBBusyError.js';
 
@@ -17,28 +17,31 @@ async function ensureFirstNavaidSnapshot(
   publicationGate: PublicationGate,
   dependencies: NavaidDataProducerDependencies = {}
 ): Promise<BootstrapResult> {
-  let readiness: 'ready' | 'bootstrap' | 'credentials-missing';
+  let readiness: 'ready' | 'bootstrap' | 'credentials-missing' | 'invalid';
   try {
     readiness = await publicationGate.run(async () => {
-      const schemaExists = await initializeProducerSchema.producerSchemaExists(instance);
-      if (schemaExists) {
-        await initializeProducerSchema(instance);
-        if (
-          (await initializeProducerSchema.readActiveNavaidSnapshotId(instance)) !== null
-        ) {
-          return 'ready';
-        }
+      const inspection = await producerSchema.inspect(instance);
+      if (inspection.kind === 'invalid') {
+        return 'invalid';
+      }
+
+      if (inspection.kind === 'current' && inspection.snapshot !== null) {
+        return 'ready';
       }
 
       if (openAipApiKey.trim() === '') {
         return 'credentials-missing';
       }
 
-      await initializeProducerSchema(instance);
+      await producerSchema.prepare(instance);
       return 'bootstrap';
     });
   } catch (error) {
     return isDuckDBBusyError(error) ? databaseBusy() : databaseInvalid();
+  }
+
+  if (readiness === 'invalid') {
+    return databaseInvalid();
   }
 
   if (readiness === 'ready') {

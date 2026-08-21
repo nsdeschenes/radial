@@ -1,5 +1,10 @@
 import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 
+import producerSchemaNavaidSnapshotCodec from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotCodec.js';
+import committedNavaidSnapshotInspection from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotInspection.js';
+import publishValidatedNavaidSnapshot from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotStore.js';
+import type PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
+import type ValidatedNavaidSnapshotCandidate from '#radial/data-producer/internal/ValidatedNavaidSnapshotCandidate.js';
 import plannerDatabaseContract from '#radial/planner-database/PlannerDatabaseContract.js';
 
 const PRODUCER_VIEW_SOURCES = {
@@ -200,6 +205,10 @@ type ProducerSchemaMigration = {
   readonly to: ProducerSchemaVersion;
 };
 
+type CommittedNavaidInspection = Awaited<
+  ReturnType<typeof committedNavaidSnapshotInspection.inspect>
+>;
+
 type ProducerSchemaInspection =
   | Readonly<{kind: 'absent'}>
   | Readonly<{
@@ -207,8 +216,11 @@ type ProducerSchemaInspection =
       producerSchemaVersion: number;
       plannerContractVersion: number;
       checksumManifestVersion: number;
+      activeNavaidSnapshotId: string | null;
+      snapshot: CommittedNavaidInspection['snapshot'];
+      cachedAirports: CommittedNavaidInspection['cachedAirports'];
     }>
-  | Readonly<{kind: 'invalid'}>;
+  | Readonly<{kind: 'invalid'; diagnostic: string}>;
 
 const CURRENT_VERSION: ProducerSchemaVersion = [1, plannerDatabaseContract.version, 1];
 const RECOGNIZED_MIGRATIONS: readonly ProducerSchemaMigration[] = [];
@@ -220,7 +232,9 @@ function readProducerSchemaVersion(row: Record<string, unknown>): ProducerSchema
     Number(row['checksum_manifest_version']),
   ];
   if (version.some(component => !Number.isSafeInteger(component) || component < 1)) {
-    throw new Error(`Producer Schema version ${formatVersion(version)} is impossible.`);
+    throw new InvalidProducerSchemaError(
+      `Producer Schema version ${formatVersion(version)} is impossible.`
+    );
   }
 
   return version;
@@ -344,6 +358,54 @@ async function hasCurrentObjects(
 }
 
 async function inspectProducerSchema(
+  instance: DuckDBInstance
+): Promise<ProducerSchemaInspection> {
+  const connection = await instance.connect();
+  let transactionStarted = false;
+  try {
+    await connection.run('BEGIN TRANSACTION');
+    transactionStarted = true;
+    const inspection = await inspectProducerSchemaTransaction(connection);
+    if (inspection.kind === 'invalid') {
+      await connection.run('ROLLBACK');
+    } else {
+      await connection.run('COMMIT');
+    }
+
+    transactionStarted = false;
+    return inspection;
+  } catch (error) {
+    if (transactionStarted) {
+      try {
+        await connection.run('ROLLBACK');
+      } catch {
+        // The original operational failure is the useful inspection diagnostic.
+      }
+    }
+
+    throw error;
+  } finally {
+    connection.closeSync();
+  }
+}
+
+async function publishNavaidSnapshot(
+  instance: DuckDBInstance,
+  candidate: ValidatedNavaidSnapshotCandidate,
+  publicationGate: PublicationGate,
+  options: Parameters<typeof publishValidatedNavaidSnapshot>[5] = {}
+) {
+  return publishValidatedNavaidSnapshot(
+    instance,
+    candidate,
+    publicationGate,
+    inspectProducerSchemaTransaction,
+    producerSchemaNavaidSnapshotCodec,
+    options
+  );
+}
+
+async function inspectProducerSchemaTransaction(
   connection: DuckDBConnection
 ): Promise<ProducerSchemaInspection> {
   const schemas = await connection.runAndReadAll(`
@@ -352,31 +414,238 @@ async function inspectProducerSchema(
     WHERE schema_name = 'radial_producer'
   `);
   if (schemas.getRowObjectsJS().length === 0) {
+    if (await plannerDatabaseContract.hasAnyReservedRelation(connection)) {
+      return invalidInspection(
+        'The Producer Schema is absent while a planner view name is already in use.'
+      );
+    }
+
     return {kind: 'absent'};
   }
 
   if (!(await hasCurrentObjects(connection))) {
-    return {kind: 'invalid'};
+    return invalidInspection('Producer Schema objects do not match version 1/1/1.');
   }
 
-  let version: ProducerSchemaVersion;
+  let state: ProducerSchemaState;
   try {
-    version = await readStoredVersion(connection);
-  } catch {
-    return {kind: 'invalid'};
+    state = await readProducerSchemaState(connection);
+  } catch (error) {
+    if (error instanceof InvalidProducerSchemaError) {
+      return invalidInspection(error.message);
+    }
+
+    throw error;
   }
 
-  if (!versionsMatch(version, CURRENT_VERSION)) {
-    return {kind: 'invalid'};
+  if (!versionsMatch(state.version, CURRENT_VERSION)) {
+    return invalidInspection(
+      `Producer Schema version ${formatVersion(state.version)} is not supported; expected ${formatVersion(CURRENT_VERSION)}.`
+    );
+  }
+
+  const structuralDiagnostic = await inspectSnapshotStructure(
+    connection,
+    state.activeNavaidSnapshotId
+  );
+  if (structuralDiagnostic !== null) {
+    return invalidInspection(structuralDiagnostic);
+  }
+
+  let committedNavaids: CommittedNavaidInspection;
+  try {
+    committedNavaids = await committedNavaidSnapshotInspection.inspect(
+      connection,
+      state.activeNavaidSnapshotId,
+      producerSchemaNavaidSnapshotCodec
+    );
+  } catch (error) {
+    if (committedNavaidSnapshotInspection.isInvalidError(error)) {
+      return invalidInspection(error.message);
+    }
+
+    throw error;
   }
 
   return {
     kind: 'current',
-    producerSchemaVersion: version[0],
-    plannerContractVersion: version[1],
-    checksumManifestVersion: version[2],
+    producerSchemaVersion: state.version[0],
+    plannerContractVersion: state.version[1],
+    checksumManifestVersion: state.version[2],
+    activeNavaidSnapshotId: state.activeNavaidSnapshotId,
+    snapshot: committedNavaids.snapshot,
+    cachedAirports: committedNavaids.cachedAirports,
   };
 }
+
+type ProducerSchemaState = Readonly<{
+  version: ProducerSchemaVersion;
+  activeNavaidSnapshotId: string | null;
+}>;
+
+async function readProducerSchemaState(
+  connection: DuckDBConnection
+): Promise<ProducerSchemaState> {
+  const state = await connection.runAndReadAll(`
+    SELECT
+      singleton,
+      producer_schema_version,
+      planner_contract_version,
+      checksum_manifest_version,
+      CAST(active_navaid_snapshot_id AS VARCHAR) AS active_navaid_snapshot_id
+    FROM radial_producer.producer_state
+  `);
+  const rows = state.getRowObjectsJS();
+  if (rows.length !== 1 || rows[0]?.['singleton'] !== true) {
+    throw new InvalidProducerSchemaError(
+      'Producer Schema state must contain exactly one singleton row.'
+    );
+  }
+
+  const activeNavaidSnapshotId = rows[0]['active_navaid_snapshot_id'];
+  if (activeNavaidSnapshotId !== null && typeof activeNavaidSnapshotId !== 'string') {
+    throw new InvalidProducerSchemaError(
+      'Producer Schema active Navaid Snapshot marker is invalid.'
+    );
+  }
+
+  return {
+    version: readProducerSchemaVersion(rows[0]),
+    activeNavaidSnapshotId,
+  };
+}
+
+async function inspectSnapshotStructure(
+  connection: DuckDBConnection,
+  activeNavaidSnapshotId: string | null
+): Promise<string | null> {
+  const snapshotReader = await connection.runAndReadAll(`
+    SELECT CAST(snapshot_id AS VARCHAR) AS snapshot_id
+    FROM radial_producer.navaid_snapshots
+    ORDER BY snapshot_id
+  `);
+  const snapshotIds = snapshotReader.getRowObjectsJS().map(row => row['snapshot_id']);
+  if (snapshotIds.some(snapshotId => typeof snapshotId !== 'string')) {
+    return 'A Navaid Snapshot metadata row has a null or invalid Snapshot identity.';
+  }
+
+  if (activeNavaidSnapshotId === null && snapshotIds.length > 0) {
+    return 'Navaid Snapshot metadata exists without an active Snapshot marker.';
+  }
+
+  if (activeNavaidSnapshotId !== null && snapshotIds.length === 0) {
+    return 'The active Navaid Snapshot marker does not identify a Snapshot.';
+  }
+
+  if (snapshotIds.length > 1) {
+    return 'Committed Producer Schema storage contains multiple Navaid Snapshots.';
+  }
+
+  if (activeNavaidSnapshotId !== null && snapshotIds[0] !== activeNavaidSnapshotId) {
+    return 'The active Navaid Snapshot marker identifies a different Snapshot than committed metadata.';
+  }
+
+  const orphanReader = await connection.runAndReadAll(`
+    SELECT table_name, count(*) AS orphan_count
+    FROM (
+      SELECT 'raw_navaids' AS table_name, snapshot_id
+      FROM radial_producer.raw_navaids
+      UNION ALL
+      SELECT 'planner_navaids', snapshot_id
+      FROM radial_producer.planner_navaids
+      UNION ALL
+      SELECT 'navaid_exclusions', snapshot_id
+      FROM radial_producer.navaid_exclusions
+      UNION ALL
+      SELECT 'facility_variation_audits', snapshot_id
+      FROM radial_producer.facility_variation_audits
+      UNION ALL
+      SELECT 'planner_airports', snapshot_id
+      FROM radial_producer.planner_airports
+    ) AS children
+    WHERE snapshot_id IS NULL OR NOT EXISTS (
+      SELECT 1
+      FROM radial_producer.navaid_snapshots AS snapshots
+      WHERE snapshots.snapshot_id = children.snapshot_id
+    )
+    GROUP BY table_name
+    ORDER BY table_name
+  `);
+  const orphan = orphanReader.getRowObjectsJS()[0];
+  if (orphan !== undefined) {
+    return `Producer Schema table ${requiredString(orphan, 'table_name')} contains orphan Navaid Snapshot rows.`;
+  }
+
+  const identityDiagnostic = await inspectCrossSnapshotIdentities(connection);
+  return identityDiagnostic;
+}
+
+async function inspectCrossSnapshotIdentities(
+  connection: DuckDBConnection
+): Promise<string | null> {
+  const relationships = [
+    {
+      child: 'planner_navaids',
+      parent: 'raw_navaids',
+      diagnostic:
+        'A planner-ready Navaid does not identify a raw Navaid in the same Snapshot.',
+    },
+    {
+      child: 'navaid_exclusions',
+      parent: 'raw_navaids',
+      diagnostic:
+        'A Navaid exclusion does not identify a raw Navaid in the same Snapshot.',
+    },
+    {
+      child: 'facility_variation_audits',
+      parent: 'planner_navaids',
+      diagnostic:
+        'A Facility Variation audit does not identify a planner-ready Navaid in the same Snapshot.',
+    },
+  ] as const;
+  for (const relationship of relationships) {
+    const reader = await connection.runAndReadAll(`
+      SELECT count(*) AS invalid_count
+      FROM radial_producer.${relationship.child} AS child
+      WHERE child.source_record_id IS NULL OR NOT EXISTS (
+        SELECT 1
+        FROM radial_producer.${relationship.parent} AS parent
+        WHERE parent.snapshot_id = child.snapshot_id
+          AND parent.source_record_id = child.source_record_id
+      )
+    `);
+    if (Number(reader.getRowObjectsJS()[0]?.['invalid_count']) > 0) {
+      return relationship.diagnostic;
+    }
+  }
+
+  const conflictingIdentityReader = await connection.runAndReadAll(`
+    SELECT count(*) AS invalid_count
+    FROM radial_producer.planner_navaids AS planner
+    JOIN radial_producer.navaid_exclusions AS exclusion
+      USING (snapshot_id, source_record_id)
+  `);
+  if (Number(conflictingIdentityReader.getRowObjectsJS()[0]?.['invalid_count']) > 0) {
+    return 'A raw Navaid identity is both planner-ready and excluded in the same Snapshot.';
+  }
+
+  return null;
+}
+
+function invalidInspection(diagnostic: string): ProducerSchemaInspection {
+  return {kind: 'invalid', diagnostic};
+}
+
+function requiredString(row: Record<string, unknown>, field: string): string {
+  const value = row[field];
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new InvalidProducerSchemaError(`Committed ${field} is unavailable.`);
+  }
+
+  return value;
+}
+
+class InvalidProducerSchemaError extends Error {}
 
 async function readStoredVersion(
   connection: Awaited<ReturnType<DuckDBInstance['connect']>>
@@ -430,7 +699,7 @@ async function migrateProducerSchema(
   await connection.run('COMMIT');
 }
 
-async function initializeProducerSchema(instance: DuckDBInstance): Promise<void> {
+async function prepareProducerSchema(instance: DuckDBInstance): Promise<void> {
   const connection = await instance.connect();
   try {
     const schemas = await connection.runAndReadAll(`
@@ -479,48 +748,8 @@ async function initializeProducerSchema(instance: DuckDBInstance): Promise<void>
   }
 }
 
-async function producerSchemaExists(instance: DuckDBInstance): Promise<boolean> {
-  const connection = await instance.connect();
-  try {
-    const schemas = await connection.runAndReadAll(`
-      SELECT schema_name
-      FROM information_schema.schemata
-      WHERE schema_name = 'radial_producer'
-    `);
-    return schemas.getRowObjectsJS().length > 0;
-  } finally {
-    connection.closeSync();
-  }
-}
-
-async function readActiveNavaidSnapshotId(
-  instance: DuckDBInstance
-): Promise<string | null> {
-  const connection = await instance.connect();
-  try {
-    const state = await connection.runAndReadAll(`
-      SELECT CAST(active_navaid_snapshot_id AS VARCHAR) AS active_navaid_snapshot_id
-      FROM radial_producer.producer_state
-      WHERE singleton
-    `);
-    const rows = state.getRowObjectsJS();
-    if (rows.length !== 1) {
-      throw new Error('Producer Schema state must contain exactly one singleton row.');
-    }
-
-    const activeSnapshotId = rows[0]?.['active_navaid_snapshot_id'];
-    if (activeSnapshotId !== null && typeof activeSnapshotId !== 'string') {
-      throw new Error('Producer Schema active Navaid Snapshot marker is invalid.');
-    }
-
-    return activeSnapshotId;
-  } finally {
-    connection.closeSync();
-  }
-}
-
-export default Object.assign(initializeProducerSchema, {
+export default {
+  prepare: prepareProducerSchema,
   inspect: inspectProducerSchema,
-  producerSchemaExists,
-  readActiveNavaidSnapshotId,
-});
+  publishNavaidSnapshot,
+};

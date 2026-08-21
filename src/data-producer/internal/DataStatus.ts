@@ -2,14 +2,12 @@ import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import dataStatusResult from '#radial/data-producer/internal/DataStatusResult.js';
-import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import producerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import isDuckDBBusyError from '#radial/db/duckdb/isDuckDBBusyError.js';
-import plannerDatabaseContract from '#radial/planner-database/PlannerDatabaseContract.js';
 
 type DataStatusResult = RadialApplicationTypes['DataStatusResult'];
 type DataStatusSuccess = RadialApplicationTypes['DataStatusSuccess'];
-type DataStatusCachedAirport = RadialApplicationTypes['DataStatusCachedAirport'];
-type DataStatusExclusionCount = Readonly<{reason: string; count: number}>;
+type ProducerSchemaInspection = Awaited<ReturnType<typeof producerSchema.inspect>>;
 
 const LEGACY_TABLE_NAMES = [
   'airports',
@@ -47,7 +45,10 @@ async function readDataStatus(
 
   try {
     try {
-      return dataStatusResult.success(await inspectStatus(connection, databasePath));
+      const schema = await producerSchema.inspect(instance);
+      return dataStatusResult.success(
+        await inspectStatus(connection, databasePath, schema)
+      );
     } catch (error) {
       if (error instanceof InvalidDataStatusError) {
         return dataStatusResult.failure(
@@ -81,373 +82,31 @@ async function readDataStatus(
 
 async function inspectStatus(
   connection: DuckDBConnection,
-  databasePath: string
+  databasePath: string,
+  schema: ProducerSchemaInspection
 ): Promise<DataStatusSuccess> {
-  const schema = await initializeProducerSchema.inspect(connection);
   const legacyObjects = await readLegacyObjects(connection);
 
   if (schema.kind === 'absent') {
-    if (await plannerDatabaseContract.hasAnyReservedRelation(connection)) {
-      throw new InvalidDataStatusError(
-        'The Producer Schema is absent while a planner view name is already in use.'
-      );
-    }
-
     return dataStatusResult.uninitializedValue(databasePath, legacyObjects);
   }
 
   if (schema.kind === 'invalid') {
-    throw new InvalidDataStatusError('The Producer Schema is incomplete or invalid.');
+    throw new InvalidDataStatusError(schema.diagnostic);
   }
 
-  const state = await readProducerState(connection);
-  const cachedAirports = await readCachedAirports(connection);
-  const producerSchema = {
-    producerSchemaVersion: schema.producerSchemaVersion,
-    plannerContractVersion: schema.plannerContractVersion,
-    checksumManifestVersion: schema.checksumManifestVersion,
-  } as const;
-
-  if (state.activeSnapshotId === null) {
-    return {
-      databasePath,
-      status: 'uninitialized',
-      legacyObjects,
-      producerSchema,
-      snapshot: null,
-      cachedAirports,
-    };
-  }
-
-  const snapshot = await readSnapshot(connection, state.activeSnapshotId);
   return {
     databasePath,
-    status: 'ready',
+    status: schema.snapshot === null ? 'uninitialized' : 'ready',
     legacyObjects,
-    producerSchema,
-    snapshot,
-    cachedAirports,
-  };
-}
-
-async function readProducerState(
-  connection: DuckDBConnection
-): Promise<Readonly<{activeSnapshotId: string | null}>> {
-  const result = await connection.runAndReadAll(`
-    SELECT
-      singleton,
-      CAST(active_navaid_snapshot_id AS VARCHAR) AS active_snapshot_id
-    FROM radial_producer.producer_state
-  `);
-  const rows = result.getRowObjectsJS();
-  if (rows.length !== 1 || rows[0]?.['singleton'] !== true) {
-    throw new InvalidDataStatusError(
-      'The Producer Schema state must contain exactly one singleton row.'
-    );
-  }
-
-  const activeSnapshotId = rows[0]?.['active_snapshot_id'];
-  if (activeSnapshotId !== null && typeof activeSnapshotId !== 'string') {
-    throw new InvalidDataStatusError('The active Navaid Snapshot marker is invalid.');
-  }
-
-  return {activeSnapshotId};
-}
-
-async function readSnapshot(
-  connection: DuckDBConnection,
-  snapshotId: string
-): Promise<NonNullable<DataStatusSuccess['snapshot']>> {
-  const metadata = await connection.runAndReadAll(
-    `SELECT
-       CAST(snapshot_id AS VARCHAR) AS snapshot_id,
-       snapshot_checksum,
-       raw_navaids_checksum,
-       planner_navaids_checksum,
-       exclusions_checksum,
-       facility_variation_audits_checksum,
-       CAST(retrieved_at AS VARCHAR) AS retrieved_at,
-       CAST(retrieval_completed_at AS VARCHAR) AS retrieval_completed_at,
-       CAST(published_at AS VARCHAR) AS published_at,
-       source_identity,
-       derivation_policy_identity,
-       matching_policy_identity,
-       nasr_source_url,
-       CAST(nasr_retrieved_at AS VARCHAR) AS nasr_retrieved_at,
-       nasr_archive_identity,
-       nasr_archive_checksum,
-       nasr_content_checksum,
-       nasr_cycle_id,
-       CAST(nasr_effective_date AS VARCHAR) AS nasr_effective_date,
-       raw_navaid_count,
-       planner_navaid_count,
-       exclusion_count,
-       magnetic_model,
-       magnetic_model_version,
-       magnetic_model_epoch_year,
-       CAST(magnetic_reference_date AS VARCHAR) AS magnetic_reference_date,
-       magnetic_model_source,
-       magnetic_model_checksum
-     FROM radial_producer.navaid_snapshots
-     WHERE snapshot_id = CAST(? AS UUID)`,
-    [snapshotId]
-  );
-  const rows = metadata.getRowObjectsJS();
-  if (rows.length !== 1) {
-    throw new InvalidDataStatusError(
-      'The active Navaid Snapshot marker does not identify exactly one snapshot.'
-    );
-  }
-
-  const row = rows[0]!;
-  const rawNavaidCount = nonNegativeInteger(row['raw_navaid_count'], 'raw Navaid count');
-  const plannerNavaidCount = nonNegativeInteger(
-    row['planner_navaid_count'],
-    'planner Navaid count'
-  );
-  const exclusionCount = nonNegativeInteger(row['exclusion_count'], 'exclusion count');
-  const snapshotMetadata = {
-    snapshotId: requiredString(row, 'snapshot_id'),
-    snapshotChecksum: requiredString(row, 'snapshot_checksum'),
-    componentChecksums: {
-      rawNavaids: requiredString(row, 'raw_navaids_checksum'),
-      plannerNavaids: requiredString(row, 'planner_navaids_checksum'),
-      exclusions: requiredString(row, 'exclusions_checksum'),
-      facilityVariationAudits: requiredString(row, 'facility_variation_audits_checksum'),
+    producerSchema: {
+      producerSchemaVersion: schema.producerSchemaVersion,
+      plannerContractVersion: schema.plannerContractVersion,
+      checksumManifestVersion: schema.checksumManifestVersion,
     },
-    retrievedAt: canonicalTimestamp(row, 'retrieved_at'),
-    retrievalCompletedAt: canonicalTimestamp(row, 'retrieval_completed_at'),
-    publishedAt: canonicalTimestamp(row, 'published_at'),
-    sourceIdentity: requiredString(row, 'source_identity'),
-    derivationPolicyIdentity: requiredString(row, 'derivation_policy_identity'),
-    matchingPolicyIdentity: requiredString(row, 'matching_policy_identity'),
-    nasr: {
-      sourceUrl: requiredString(row, 'nasr_source_url'),
-      retrievedAt: canonicalTimestamp(row, 'nasr_retrieved_at'),
-      archiveIdentity: requiredString(row, 'nasr_archive_identity'),
-      archiveChecksum: requiredString(row, 'nasr_archive_checksum'),
-      contentChecksum: requiredString(row, 'nasr_content_checksum'),
-      cycleId: requiredString(row, 'nasr_cycle_id'),
-      effectiveDate: requiredString(row, 'nasr_effective_date'),
-    },
-    magneticModel: {
-      model: requiredString(row, 'magnetic_model'),
-      version: requiredString(row, 'magnetic_model_version'),
-      epochYear: finiteNumber(row['magnetic_model_epoch_year'], 'magnetic model epoch'),
-      referenceDate: requiredString(row, 'magnetic_reference_date'),
-      source: requiredString(row, 'magnetic_model_source'),
-      coefficientChecksum: requiredString(row, 'magnetic_model_checksum'),
-    },
-    rawNavaidCount,
-    plannerNavaidCount,
-    vorFamilyNavaidCount: 0,
-    fallbackNavaidCount: 0,
-    exclusionCount,
-    exclusionCounts: [],
-    facilityVariationPresentCount: 0,
-    facilityVariationMissingCount: 0,
-    facilityVariationMissingReasons: [],
-    facilityVariationEpochYearMissingCount: 0,
+    snapshot: schema.snapshot,
+    cachedAirports: schema.cachedAirports,
   };
-
-  const counts = await readSnapshotCounts(connection, snapshotId);
-  if (
-    counts.rawNavaidCount !== rawNavaidCount ||
-    counts.plannerNavaidCount !== plannerNavaidCount ||
-    counts.exclusionCount !== exclusionCount ||
-    counts.plannerNavaidCount + counts.exclusionCount !== counts.rawNavaidCount
-  ) {
-    throw new InvalidDataStatusError(
-      'The active Navaid Snapshot counts do not reconcile with committed records.'
-    );
-  }
-
-  const exclusionCounts = await readGroupedCounts(
-    connection,
-    `SELECT reason, count(*) AS count
-     FROM radial_producer.navaid_exclusions
-     WHERE snapshot_id = CAST(? AS UUID)
-     GROUP BY reason ORDER BY reason`,
-    snapshotId
-  );
-  const facilityVariation = await readFacilityVariationCounts(connection, snapshotId);
-  if (facilityVariation.auditCount !== counts.vorFamilyNavaidCount) {
-    throw new InvalidDataStatusError(
-      'Facility Variation audits do not reconcile with VOR-family Navaids.'
-    );
-  }
-
-  return {
-    ...snapshotMetadata,
-    vorFamilyNavaidCount: counts.vorFamilyNavaidCount,
-    fallbackNavaidCount: counts.fallbackNavaidCount,
-    exclusionCounts,
-    facilityVariationPresentCount: facilityVariation.presentCount,
-    facilityVariationMissingCount: facilityVariation.missingCount,
-    facilityVariationMissingReasons: facilityVariation.missingReasons,
-    facilityVariationEpochYearMissingCount: facilityVariation.epochYearMissingCount,
-  };
-}
-
-async function readSnapshotCounts(
-  connection: DuckDBConnection,
-  snapshotId: string
-): Promise<
-  Readonly<{
-    rawNavaidCount: number;
-    plannerNavaidCount: number;
-    vorFamilyNavaidCount: number;
-    fallbackNavaidCount: number;
-    exclusionCount: number;
-  }>
-> {
-  const result = await connection.runAndReadAll(
-    `SELECT
-       (SELECT count(*) FROM radial_producer.raw_navaids
-        WHERE snapshot_id = CAST(? AS UUID)) AS raw_count,
-       (SELECT count(*) FROM radial_producer.planner_navaids
-        WHERE snapshot_id = CAST(? AS UUID)) AS planner_count,
-       (SELECT count(*) FROM radial_producer.planner_navaids
-        WHERE snapshot_id = CAST(? AS UUID) AND family <> 'NDB') AS vor_family_count,
-       (SELECT count(*) FROM radial_producer.planner_navaids
-        WHERE snapshot_id = CAST(? AS UUID) AND family = 'NDB') AS fallback_count,
-       (SELECT count(*) FROM radial_producer.navaid_exclusions
-        WHERE snapshot_id = CAST(? AS UUID)) AS exclusion_count`,
-    [snapshotId, snapshotId, snapshotId, snapshotId, snapshotId]
-  );
-  const row = result.getRowObjectsJS()[0];
-  if (row === undefined) {
-    throw new InvalidDataStatusError('Committed Navaid Snapshot counts are unavailable.');
-  }
-
-  return {
-    rawNavaidCount: nonNegativeInteger(row['raw_count'], 'raw Navaid count'),
-    plannerNavaidCount: nonNegativeInteger(row['planner_count'], 'planner Navaid count'),
-    vorFamilyNavaidCount: nonNegativeInteger(
-      row['vor_family_count'],
-      'VOR-family Navaid count'
-    ),
-    fallbackNavaidCount: nonNegativeInteger(
-      row['fallback_count'],
-      'Fallback Navaid count'
-    ),
-    exclusionCount: nonNegativeInteger(row['exclusion_count'], 'exclusion count'),
-  };
-}
-
-async function readFacilityVariationCounts(
-  connection: DuckDBConnection,
-  snapshotId: string
-): Promise<
-  Readonly<{
-    auditCount: number;
-    presentCount: number;
-    missingCount: number;
-    missingReasons: readonly DataStatusExclusionCount[];
-    epochYearMissingCount: number;
-  }>
-> {
-  const result = await connection.runAndReadAll(
-    `SELECT outcome, CAST(audit_record AS VARCHAR) AS audit_record
-     FROM radial_producer.facility_variation_audits
-     WHERE snapshot_id = CAST(? AS UUID)
-     ORDER BY source_record_id`,
-    [snapshotId]
-  );
-  const rows = result.getRowObjectsJS();
-  const missingReasons = new Map<string, number>();
-  let presentCount = 0;
-  let epochYearMissingCount = 0;
-  for (const row of rows) {
-    const outcome = requiredString(row, 'outcome');
-    if (outcome === 'matched') {
-      presentCount += 1;
-    } else {
-      missingReasons.set(outcome, (missingReasons.get(outcome) ?? 0) + 1);
-    }
-
-    const auditRecord = requiredString(row, 'audit_record');
-    let parsedAudit: unknown;
-    try {
-      parsedAudit = JSON.parse(auditRecord) as unknown;
-    } catch {
-      throw new InvalidDataStatusError('A Facility Variation audit record is invalid.');
-    }
-
-    if (!isJsonObject(parsedAudit) || parsedAudit['outcome'] !== outcome) {
-      throw new InvalidDataStatusError(
-        'A Facility Variation audit record does not match its committed outcome.'
-      );
-    }
-
-    if (
-      outcome === 'matched' &&
-      (parsedAudit['facilityVariationEpochYear'] === null ||
-        parsedAudit['facilityVariationEpochYear'] === undefined)
-    ) {
-      epochYearMissingCount += 1;
-    }
-  }
-
-  return {
-    auditCount: rows.length,
-    presentCount,
-    missingCount: rows.length - presentCount,
-    missingReasons: [...missingReasons]
-      .toSorted(([left], [right]) => compareStrings(left, right))
-      .map(([reason, count]) => ({reason, count})),
-    epochYearMissingCount,
-  };
-}
-
-async function readGroupedCounts(
-  connection: DuckDBConnection,
-  query: string,
-  value: string
-): Promise<readonly DataStatusExclusionCount[]> {
-  const result = await connection.runAndReadAll(query, [value]);
-  return result.getRowObjectsJS().map(row => ({
-    reason: requiredString(row, 'reason'),
-    count: nonNegativeInteger(row['count'], 'grouped count'),
-  }));
-}
-
-async function readCachedAirports(
-  connection: DuckDBConnection
-): Promise<readonly DataStatusCachedAirport[]> {
-  const result = await connection.runAndReadAll(`
-    SELECT
-      icao,
-      database_id,
-      name,
-      longitude,
-      latitude,
-      record_checksum,
-      source_identity,
-      CAST(retrieved_at AS VARCHAR) AS retrieved_at,
-      CAST(published_at AS VARCHAR) AS published_at
-    FROM radial_producer.cached_airports
-    ORDER BY icao
-  `);
-  return result.getRowObjectsJS().map(row => {
-    const longitude = finiteNumber(row['longitude'], 'Cached Airport longitude');
-    const latitude = finiteNumber(row['latitude'], 'Cached Airport latitude');
-    if (longitude < -180 || longitude > 180 || latitude < -90 || latitude > 90) {
-      throw new InvalidDataStatusError('A Cached Airport has invalid coordinates.');
-    }
-
-    return {
-      icao: requiredString(row, 'icao'),
-      sourceId: requiredString(row, 'database_id'),
-      name: requiredString(row, 'name'),
-      longitude,
-      latitude,
-      recordChecksum: requiredString(row, 'record_checksum'),
-      sourceIdentity: requiredString(row, 'source_identity'),
-      retrievedAt: canonicalTimestamp(row, 'retrieved_at'),
-      publishedAt: canonicalTimestamp(row, 'published_at'),
-    };
-  });
 }
 
 async function readLegacyObjects(
@@ -474,41 +133,6 @@ function requiredString(row: Record<string, unknown>, field: string): string {
   }
 
   return value;
-}
-
-function finiteNumber(value: unknown, field: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new InvalidDataStatusError(`Committed ${field} is invalid.`);
-  }
-
-  return value;
-}
-
-function nonNegativeInteger(value: unknown, field: string): number {
-  const number = typeof value === 'number' ? value : Number(value);
-  if (!Number.isSafeInteger(number) || number < 0) {
-    throw new InvalidDataStatusError(`Committed ${field} is invalid.`);
-  }
-
-  return number;
-}
-
-function canonicalTimestamp(row: Record<string, unknown>, field: string): string {
-  const value = requiredString(row, field);
-  const timestamp = new Date(value);
-  if (Number.isNaN(timestamp.getTime())) {
-    throw new InvalidDataStatusError(`Committed ${field} is invalid.`);
-  }
-
-  return timestamp.toISOString();
-}
-
-function compareStrings(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 class InvalidDataStatusError extends Error {}
