@@ -2,7 +2,7 @@ import {expect, test} from 'vitest';
 
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import type CliInputTypes from '#radial/cli/CliInput.js';
-import runReloadNavaids from '#radial/cli/commands/runReloadNavaids.js';
+import runAirportReload from '#radial/cli/commands/runAirportReload.js';
 import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
 
 test('rejects missing configuration before opening the application with database precedence', async () => {
@@ -12,7 +12,7 @@ test('rejects missing configuration before opening the application with database
   controller.abort();
 
   await expect(
-    runReloadNavaids(
+    runAirportReload(
       admittedInput({
         env: {},
         signal: controller.signal,
@@ -22,14 +22,14 @@ test('rejects missing configuration before opening the application with database
           throw new Error('Invalid configuration must not open the application.');
         },
       }),
-      {}
+      {icao: 'CYYZ'}
     )
   ).resolves.toBe(1);
   expect(applicationOpenCount).toBe(0);
   expect(stderr).toEqual([
     'error [DATA_DATABASE_PATH_MISSING]: Database path is missing.\n' +
       'Cause: RADIAL_DATABASE_PATH is required.\n' +
-      'Action: Set RADIAL_DATABASE_PATH to the DuckDB database file and retry.\n' +
+      'Action: Set RADIAL_DATABASE_PATH to the DuckDB database file and retry the Airport reload.\n' +
       'Active data remains unchanged.\n',
   ]);
 });
@@ -39,7 +39,7 @@ test('rejects missing OpenAIP credentials before opening the application', async
   let applicationOpenCount = 0;
 
   await expect(
-    runReloadNavaids(
+    runAirportReload(
       admittedInput({
         env: {RADIAL_DATABASE_PATH: ':synthetic:'},
         writeStderr: text => stderr.push(text),
@@ -48,24 +48,28 @@ test('rejects missing OpenAIP credentials before opening the application', async
           throw new Error('Missing credentials must not open the application.');
         },
       }),
-      {}
+      {icao: 'CYYZ'}
     )
   ).resolves.toBe(1);
   expect(applicationOpenCount).toBe(0);
   expect(stderr).toEqual([
     'error [DATA_CREDENTIALS_MISSING]: OpenAIP credentials are missing.\n' +
-      'Cause: OPENAIP_API_KEY is required for an explicit Navaid reload.\n' +
-      'Action: Set OPENAIP_API_KEY and retry the Navaid reload.\n' +
+      'Cause: OPENAIP_API_KEY is required for an explicit Airport reload.\n' +
+      'Action: Set OPENAIP_API_KEY and retry the Airport reload.\n' +
       'Active data remains unchanged.\n',
   ]);
 });
 
-test('streams progress before reporting an operational failure', async () => {
+test('uses one normalized ICAO for metadata, request, progress, and reported success', async () => {
   const writes: Array<Readonly<{channel: 'stderr' | 'stdout'; text: string}>> = [];
+  const metadata: CliTelemetryTypes['CommandMetadata'][] = [];
 
-  const status = await runReloadNavaids(
+  const status = await runAirportReload(
     admittedInput({
       env: configuredEnvironment(),
+      async loadTelemetry() {
+        return recordingTelemetry(metadata);
+      },
       writeStderr: text => writes.push({channel: 'stderr', text}),
       writeStdout: text => writes.push({channel: 'stdout', text}),
       async openApplication(config) {
@@ -73,18 +77,59 @@ test('streams progress before reporting an operational failure', async () => {
         return {
           ok: true,
           value: syntheticApplication(async request => {
+            expect(request.icao).toBe('CYYZ');
             expect(request.openAipApiKey).toBe('secret-api-key');
             request.onProgress?.({
               stage: 'openaip',
-              message: 'Acquiring OpenAIP Navaids.',
+              message: `Looking up Airport ${request.icao}.`,
             });
+            return {ok: true, value: airportReloadSuccess('CYYZ')};
+          }),
+        };
+      },
+    }),
+    {icao: 'CYYZ'}
+  );
+
+  expect(status).toBe(0);
+  expect(metadata).toEqual([
+    {
+      id: 'reload-airport',
+      attributes: {'radial.airport.icao': 'CYYZ'},
+    },
+  ]);
+  expect(writes).toEqual([
+    {channel: 'stderr', text: 'progress: Looking up Airport CYYZ.\n'},
+    {
+      channel: 'stdout',
+      text:
+        'Cached Airport replaced\n' +
+        '  ICAO: CYYZ\n' +
+        '  OpenAIP ID: airport-cyyz\n' +
+        '  Retrieved: 2026-07-10T00:00:00.000Z\n',
+    },
+  ]);
+});
+
+test('maps invalid operational results to status 2 after streaming progress', async () => {
+  const writes: string[] = [];
+
+  const status = await runAirportReload(
+    admittedInput({
+      env: configuredEnvironment(),
+      writeStderr: text => writes.push(text),
+      async openApplication() {
+        return {
+          ok: true,
+          value: syntheticApplication(async request => {
+            request.onProgress?.({stage: 'openaip', message: 'Looking up Airport.'});
             return {
               ok: false,
               failure: {
-                code: 'DATA_OPENAIP_UNAVAILABLE',
-                summary: 'OpenAIP Navaid acquisition failed.',
-                cause: 'OpenAIP Navaid acquisition did not complete.',
-                action: 'Check OpenAIP availability and credentials, then retry.',
+                code: 'DATA_INVALID_ICAO',
+                summary: 'The Airport ICAO is invalid.',
+                cause: 'The application rejected the admitted ICAO.',
+                action: 'Provide a valid ICAO and retry the Airport reload.',
                 activeDataPreserved: true,
               },
             };
@@ -92,20 +137,16 @@ test('streams progress before reporting an operational failure', async () => {
         };
       },
     }),
-    {}
+    {icao: 'CYYZ'}
   );
 
-  expect(status).toBe(1);
+  expect(status).toBe(2);
   expect(writes).toEqual([
-    {channel: 'stderr', text: 'progress: Acquiring OpenAIP Navaids.\n'},
-    {
-      channel: 'stderr',
-      text:
-        'error [DATA_OPENAIP_UNAVAILABLE]: OpenAIP Navaid acquisition failed.\n' +
-        'Cause: OpenAIP Navaid acquisition did not complete.\n' +
-        'Action: Check OpenAIP availability and credentials, then retry.\n' +
-        'Active data remains unchanged.\n',
-    },
+    'progress: Looking up Airport.\n',
+    'error [DATA_INVALID_ICAO]: The Airport ICAO is invalid.\n' +
+      'Cause: The application rejected the admitted ICAO.\n' +
+      'Action: Provide a valid ICAO and retry the Airport reload.\n' +
+      'Active data remains unchanged.\n',
   ]);
 });
 
@@ -113,7 +154,7 @@ test('returns silent status 130 for cancellation before publication', async () =
   const controller = new AbortController();
   const started = Promise.withResolvers<void>();
   const writes: string[] = [];
-  const result = runReloadNavaids(
+  const result = runAirportReload(
     admittedInput({
       env: configuredEnvironment(),
       signal: controller.signal,
@@ -136,7 +177,7 @@ test('returns silent status 130 for cancellation before publication', async () =
         };
       },
     }),
-    {}
+    {icao: 'CYYZ'}
   );
 
   await started.promise;
@@ -146,76 +187,64 @@ test('returns silent status 130 for cancellation before publication', async () =
   expect(writes).toEqual([]);
 });
 
-test('reports committed publication success despite late cancellation', async () => {
+test('reports committed Cached Airport success despite late cancellation', async () => {
   const controller = new AbortController();
-  const reload = Promise.withResolvers<ApplicationTypes['NavaidReloadResult']>();
+  const reload = Promise.withResolvers<ApplicationTypes['AirportReloadResult']>();
   const started = Promise.withResolvers<void>();
-  const writes: Array<Readonly<{channel: 'stderr' | 'stdout'; text: string}>> = [];
-  const result = runReloadNavaids(
+  const stdout: string[] = [];
+  const result = runAirportReload(
     admittedInput({
       env: configuredEnvironment(),
       signal: controller.signal,
-      writeStderr: text => writes.push({channel: 'stderr', text}),
-      writeStdout: text => writes.push({channel: 'stdout', text}),
+      writeStdout: text => stdout.push(text),
       async openApplication() {
         return {
           ok: true,
-          value: syntheticApplication(async request => {
+          value: syntheticApplication(async () => {
             started.resolve();
-            request.onProgress?.({
-              stage: 'publish',
-              message: 'Publishing Navaid Snapshot.',
-            });
             return reload.promise;
           }),
         };
       },
     }),
-    {}
+    {icao: 'CYYZ'}
   );
 
   await started.promise;
   controller.abort();
-  reload.resolve({ok: true, value: syntheticNavaidReloadSuccess()});
+  reload.resolve({ok: true, value: airportReloadSuccess('CYYZ')});
 
   await expect(result).resolves.toBe(0);
-  expect(writes[0]).toEqual({
-    channel: 'stderr',
-    text: 'progress: Publishing Navaid Snapshot.\n',
-  });
-  expect(writes[1]).toMatchObject({
-    channel: 'stdout',
-    text: expect.stringContaining('Navaid Snapshot replaced\n'),
-  });
+  expect(stdout[0]).toContain('Cached Airport replaced\n  ICAO: CYYZ\n');
 });
 
-test('owns metadata and disposes exactly once inside its admitted span', async () => {
+test('disposes exactly once inside the admitted span', async () => {
   const events: string[] = [];
 
   await expect(
-    runReloadNavaids(
+    runAirportReload(
       admittedInput({
         env: configuredEnvironment(),
         async loadTelemetry() {
-          return recordingTelemetry(events);
+          return lifecycleTelemetry(events);
         },
         async openApplication() {
           events.push('application opened');
           return {
             ok: true,
             value: syntheticApplication(
-              async () => ({ok: true, value: syntheticNavaidReloadSuccess()}),
+              async () => ({ok: true, value: airportReloadSuccess('CYYZ')}),
               () => events.push('application disposed')
             ),
           };
         },
       }),
-      {}
+      {icao: 'CYYZ'}
     )
   ).resolves.toBe(0);
 
   expect(events).toEqual([
-    'span started reload-navaids',
+    'span started reload-airport CYYZ',
     'application opened',
     'application disposed',
     'result recorded 0',
@@ -229,7 +258,7 @@ test('lets cleanup defects replace an interrupted outcome', async () => {
   const controller = new AbortController();
 
   await expect(
-    runReloadNavaids(
+    runAirportReload(
       admittedInput({
         env: configuredEnvironment(),
         signal: controller.signal,
@@ -248,7 +277,7 @@ test('lets cleanup defects replace an interrupted outcome', async () => {
           };
         },
       }),
-      {}
+      {icao: 'CYYZ'}
     )
   ).rejects.toBe(cleanupDefect);
 });
@@ -294,10 +323,27 @@ async function inertTelemetry(): Promise<CliTelemetryTypes['Session']> {
   };
 }
 
-function recordingTelemetry(events: string[]): CliTelemetryTypes['Session'] {
+function recordingTelemetry(
+  metadata: CliTelemetryTypes['CommandMetadata'][]
+): CliTelemetryTypes['Session'] {
+  return {
+    async execute(actualMetadata, operation) {
+      metadata.push(actualMetadata);
+      return operation();
+    },
+    recordOperation() {},
+    async close() {},
+  };
+}
+
+function lifecycleTelemetry(events: string[]): CliTelemetryTypes['Session'] {
   return {
     async execute(metadata, operation) {
-      events.push(`span started ${metadata.id}`);
+      const icao =
+        metadata.id === 'reload-airport'
+          ? metadata.attributes['radial.airport.icao']
+          : '';
+      events.push(`span started ${metadata.id} ${icao}`);
       try {
         const result = await operation();
         events.push(`result recorded ${result.status}`);
@@ -314,18 +360,18 @@ function recordingTelemetry(events: string[]): CliTelemetryTypes['Session'] {
 }
 
 function syntheticApplication(
-  reloadNavaids: ApplicationTypes['DataManagementCapability']['reloadNavaids'],
+  reloadAirport: ApplicationTypes['DataManagementCapability']['reloadAirport'],
   onDispose: () => void = () => {}
 ): ApplicationTypes['Application'] {
   return {
     databasePath: ':synthetic:',
     dataManagement: {
+      reloadAirport,
+      async reloadNavaids() {
+        throw new Error('Navaid reload is not used by this test.');
+      },
       async status() {
         throw new Error('Data status is not used by this test.');
-      },
-      reloadNavaids,
-      async reloadAirport() {
-        throw new Error('Airport reload is not used by this test.');
       },
     },
     planning: {
@@ -339,44 +385,11 @@ function syntheticApplication(
   };
 }
 
-function syntheticNavaidReloadSuccess(): ApplicationTypes['NavaidReloadSuccess'] {
+function airportReloadSuccess(icao: string): ApplicationTypes['AirportReloadSuccess'] {
   return {
-    snapshotId: '11111111-1111-4111-8111-111111111111',
-    snapshotChecksum: `sha256:${'1'.repeat(64)}`,
-    rawNavaidCount: 3,
-    plannerNavaidCount: 2,
-    vorFamilyNavaidCount: 1,
-    fallbackNavaidCount: 1,
-    exclusionCount: 1,
-    exclusionCounts: [{reason: 'unsupported-navaid-type', count: 1}],
-    facilityVariationPresentCount: 1,
-    facilityVariationMissingCount: 0,
-    facilityVariationEpochYearMissingCount: 0,
+    status: 'replaced',
+    icao,
+    sourceId: `airport-${icao.toLowerCase()}`,
     retrievedAt: '2026-07-10T00:00:00.000Z',
-    retrievalCompletedAt: '2026-07-10T00:00:02.000Z',
-    provenance: {
-      sourceIdentity: 'openaip:navaids:v1',
-      derivationPolicyIdentity: 'radial:navaid-derivation:v1',
-      matchingPolicyIdentity: 'radial:faa-nasr-match:v1',
-      magneticModel: {
-        model: 'WMM',
-        version: 'WMM2025',
-        epochYear: 2025,
-        referenceDate: '2026-07-10',
-        source: 'NOAA',
-        coefficientChecksum: `sha256:${'4'.repeat(64)}`,
-      },
-      faaNasr: {
-        archiveChecksum: `sha256:${'2'.repeat(64)}`,
-        archiveIdentity: '09_Jul_2026_NAV_CSV.zip',
-        contentChecksum: `sha256:${'3'.repeat(64)}`,
-        cycleId: '2607',
-        effectiveDate: '2026-07-09',
-        publishedAt: '2026-06-25T12:00:00.000Z',
-        retrievedAt: '2026-07-10T00:00:01.000Z',
-        sourceUrl:
-          'https://nfdc.faa.gov/webContent/28DaySub/extra/09_Jul_2026_NAV_CSV.zip',
-      },
-    },
   };
 }

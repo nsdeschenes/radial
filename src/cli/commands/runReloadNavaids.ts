@@ -1,15 +1,26 @@
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
-import type CliCommandResultTypes from '#radial/cli/commands/CliCommandResult.js';
+import type CliInputTypes from '#radial/cli/CliInput.js';
 import navaidReloadOutput from '#radial/cli/formatNavaidReload.js';
+import runAdmittedCliCommand from '#radial/cli/runAdmittedCliCommand.js';
 import cliInterruption from '#radial/cli/runtime/CliInterruption.js';
 import type CliRuntimeTypes from '#radial/cli/runtime/CliRuntimeContext.js';
 
 type ReloadNavaidsInput = Readonly<Record<string, never>>;
+type CommandStatus = 0 | 1 | 2 | 130;
 
 async function runReloadNavaids(
-  _input: ReloadNavaidsInput,
+  admitted: CliInputTypes['Admitted'],
+  _input: ReloadNavaidsInput
+): Promise<CommandStatus> {
+  return runAdmittedCliCommand(admitted, {
+    metadata: {id: 'reload-navaids'},
+    execute: reloadNavaids,
+  });
+}
+
+async function reloadNavaids(
   runtime: CliRuntimeTypes['Context']
-): Promise<CliCommandResultTypes['Result']> {
+): Promise<CommandStatus> {
   if ((runtime.env['RADIAL_DATABASE_PATH'] ?? '').trim() === '') {
     runtime.io.writeStderr(
       navaidReloadOutput.formatFailure({
@@ -20,7 +31,7 @@ async function runReloadNavaids(
         activeDataPreserved: true,
       })
     );
-    return {kind: 'expected-failure', status: 1};
+    return 1;
   }
 
   if ((runtime.env['OPENAIP_API_KEY'] ?? '').trim() === '') {
@@ -33,21 +44,17 @@ async function runReloadNavaids(
         activeDataPreserved: true,
       })
     );
-    return {kind: 'expected-failure', status: 1};
+    return 1;
   }
 
-  try {
-    return await reloadNavaidsWithApplication(runtime);
-  } finally {
-    await runtime.disposeApplication();
-  }
+  return reloadNavaidsWithApplication(runtime);
 }
 
 async function reloadNavaidsWithApplication(
   runtime: CliRuntimeTypes['Context']
-): Promise<CliCommandResultTypes['Result']> {
+): Promise<CommandStatus> {
   let applicationResult:
-    | Readonly<{ok: true; value: CliCommandResultTypes['Result']}>
+    | Readonly<{ok: true; value: CommandStatus}>
     | Readonly<{
         ok: false;
         failure: ApplicationTypes['ApplicationOpenFailure'];
@@ -67,7 +74,7 @@ async function reloadNavaidsWithApplication(
           });
         } catch (error) {
           if (cliInterruption.isCancellation(error, runtime.signal)) {
-            return {kind: 'interrupted', status: 130};
+            return 130;
           }
 
           throw error;
@@ -75,16 +82,16 @@ async function reloadNavaidsWithApplication(
 
         if (!result.ok) {
           runtime.io.writeStderr(navaidReloadOutput.formatFailure(result.failure));
-          return {kind: 'expected-failure', status: 1};
+          return 1;
         }
 
         runtime.io.writeStdout(navaidReloadOutput.formatSuccess(result.value));
-        return {kind: 'success', status: 0};
+        return 0;
       }
     );
   } catch (error) {
     if (cliInterruption.is(error)) {
-      return {kind: 'interrupted', status: 130};
+      return 130;
     }
 
     throw error;
@@ -100,7 +107,7 @@ async function reloadNavaidsWithApplication(
         activeDataPreserved: true,
       })
     );
-    return {kind: 'expected-failure', status: 1};
+    return 1;
   }
 
   return applicationResult.value;

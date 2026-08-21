@@ -3,7 +3,6 @@ import {join} from 'node:path';
 
 import {expect, expectTypeOf, test} from 'vitest';
 
-import type runCli from '#radial/cli/runCli.js';
 import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
 
 const MANUAL_DISPATCH_PREDICATE = /function is(?:AirportReload|DataStatus|NavaidReload)/;
@@ -11,8 +10,8 @@ const OPERATIONAL_STATIC_IMPORT =
   /^import (?!type\b).*from ['"](?:@duckdb|@sentry|#radial\/(?:application|data-producer|instrument(?:\.js)?))/mu;
 const BUILD_COMMAND = /buildCommand</g;
 const BUILD_ROUTE_MAP = /buildRouteMap\(/g;
-const BUILD_CLI_APPLICATION = /= buildCliApplication\(/g;
-const STRICLI_RUN = /\brun\(application,/g;
+const BUILD_CLI_APPLICATION = /function buildCliApplication\(/g;
+const STRICLI_RUN = /\brun\(cliApplication\.application,/g;
 const RAW_INVOCATION_ADMISSION =
   /\bparseRoutePlanInvocation\b|\bthis\.invocation\b|\binvocation:\s*input\.args\b/u;
 const PRE_ADMISSION_ARGUMENT_TRANSFORMATION =
@@ -22,15 +21,25 @@ const DISPATCH_CAPABLE_RETRY =
 const MANUAL_ROUTE_HIERARCHY =
   /\brouteToken\(|const\s+(?:data|reload|root)\s*=\s*buildRouteMap\(/u;
 const RAW_ARGUMENT_TELEMETRY = /\b(?:args|invocation)\b/u;
+const RAW_ARGUMENT_ACCESS = /\b(?:input\.args|\.args\b)|\{args,\s*\.\.\.admitted\}/u;
 const INDEX_MODULE = /(?:^|\/)index\.ts$/u;
 const INDEX_IMPORT = /from ['"][^'"]*\/index\.js['"]/u;
 const FORWARDING_EXPORT = /^export (?:\*|\{[^}]+\}) from /mu;
 const LEGACY_LIFECYCLE = /\b(?:cliLogAttributes|createInterruptSignal|logCliResult)\b/u;
+const LEGACY_COMMAND_SEAM =
+  /\b(?:loadCommand|CommandExecution|selectCommand|commandTypes)\b/u;
 const STRICLI_RUNTIME_IMPORT = /^import(?! type\b)(?:.|\n)*?from '@stricli\/core'/mu;
 const OBSOLETE_MODULES = [
-  'src/cli/buildCliApplication.ts',
   'src/cli/CliStricliContext.ts',
+  'src/cli/CliCommandMetadata.ts',
+  'src/cli/commands/CliCommandResult.ts',
   'src/cli/formatCliCompatibilityDiagnostic.ts',
+] as const;
+const COMMAND_ENTRIES = [
+  'runAirportReload',
+  'runDataStatus',
+  'runPlanRoute',
+  'runReloadNavaids',
 ] as const;
 
 type ExpectedCommandMetadata =
@@ -47,53 +56,80 @@ type ExpectedCommandMetadata =
       id: 'reload-airport';
       attributes: Readonly<{'radial.airport.icao': string}>;
     }>;
-type CliCommandTypes = NonNullable<(typeof runCli)['commandTypes']>;
 
 test('pins one private Stricli parser authority with import-light eager modules', async () => {
   const packageJson = JSON.parse(await readFile('package.json', 'utf8'));
-  const [adapterSource, executableSource, lifecycleSource, runtimeSource] =
-    await Promise.all([
-      readFile('src/cli/runCli.ts', 'utf8'),
-      readFile('src/cli/runCliExecutable.ts', 'utf8'),
-      readFile('src/cli/runAdmittedCliCommand.ts', 'utf8'),
-      readFile('src/cli/runtime/createCliRuntimeContext.ts', 'utf8'),
-    ]);
-  const eagerSources = [adapterSource, executableSource, lifecycleSource, runtimeSource];
+  const [
+    adapterSource,
+    airportReloadSource,
+    builderSource,
+    dataStatusSource,
+    executableSource,
+    lifecycleSource,
+    navaidReloadSource,
+    routePlanSource,
+    runtimeSource,
+  ] = await Promise.all([
+    readFile('src/cli/runCli.ts', 'utf8'),
+    readFile('src/cli/commands/runAirportReload.ts', 'utf8'),
+    readFile('src/cli/buildCliApplication.ts', 'utf8'),
+    readFile('src/cli/commands/runDataStatus.ts', 'utf8'),
+    readFile('src/cli/runCliExecutable.ts', 'utf8'),
+    readFile('src/cli/runAdmittedCliCommand.ts', 'utf8'),
+    readFile('src/cli/commands/runReloadNavaids.ts', 'utf8'),
+    readFile('src/cli/commands/runPlanRoute.ts', 'utf8'),
+    readFile('src/cli/runtime/createCliRuntimeContext.ts', 'utf8'),
+  ]);
+  const eagerSources = [
+    adapterSource,
+    airportReloadSource,
+    builderSource,
+    dataStatusSource,
+    executableSource,
+    lifecycleSource,
+    navaidReloadSource,
+    routePlanSource,
+    runtimeSource,
+  ];
 
   expect(packageJson.dependencies['@stricli/core']).toBe('1.3.0');
-  expect(adapterSource.match(BUILD_COMMAND)).toHaveLength(1);
-  expect(adapterSource.match(BUILD_ROUTE_MAP)).toHaveLength(1);
-  expect(adapterSource.match(BUILD_CLI_APPLICATION)).toHaveLength(1);
+  expect(builderSource.match(BUILD_COMMAND)).toHaveLength(1);
+  expect(builderSource.match(BUILD_ROUTE_MAP)).toHaveLength(1);
+  expect(builderSource.match(BUILD_CLI_APPLICATION)).toHaveLength(1);
   expect(adapterSource.match(STRICLI_RUN)).toHaveLength(1);
-  expect(adapterSource).not.toMatch(MANUAL_DISPATCH_PREDICATE);
-  expect(adapterSource).not.toMatch(MANUAL_ROUTE_HIERARCHY);
-  expect(adapterSource).not.toMatch(RAW_INVOCATION_ADMISSION);
-  expect(adapterSource).not.toMatch(PRE_ADMISSION_ARGUMENT_TRANSFORMATION);
-  expect(adapterSource).not.toMatch(DISPATCH_CAPABLE_RETRY);
-  expect(adapterSource).toContain(
+  expect(builderSource).not.toMatch(MANUAL_DISPATCH_PREDICATE);
+  expect(builderSource).not.toMatch(MANUAL_ROUTE_HIERARCHY);
+  expect(builderSource).not.toMatch(RAW_INVOCATION_ADMISSION);
+  expect(builderSource).not.toMatch(PRE_ADMISSION_ARGUMENT_TRANSFORMATION);
+  expect(builderSource).not.toMatch(DISPATCH_CAPABLE_RETRY);
+  expect(builderSource).toContain('const {args, ...admitted} = input;');
+  expect(builderSource).not.toContain('runAdmitted(this.input');
+  expect(builderSource).toContain(
     'buildCatalogRouteMap(commandDescriptions, commandFor)'
   );
-  expect(adapterSource).toContain('await run(application, input.args, context)');
-  expect(adapterSource).toContain('inferEmpty: true');
-  expect(adapterSource).toContain('parse: parseTerminalWarnings');
-  expect(adapterSource).not.toContain("aliases: ['h']");
+  expect(adapterSource).toContain(
+    'await run(cliApplication.application, input.args, context)'
+  );
+  expect(builderSource).toContain('inferEmpty: true');
+  expect(builderSource).toContain('parse: parseTerminalWarnings');
+  expect(builderSource).not.toContain("aliases: ['h']");
   expect(lifecycleSource).not.toMatch(RAW_ARGUMENT_TELEMETRY);
+  expect(dataStatusSource).not.toContain('#radial/data-producer/internal/DataStatus.js');
+  expect(dataStatusSource).toContain('application.dataManagement.status()');
+  expect(dataStatusSource).toContain("CliRuntimeTypes['Context']");
 
   for (const source of eagerSources) {
     expect(source).not.toMatch(OPERATIONAL_STATIC_IMPORT);
   }
 });
 
-test('keeps catalog-derived identities and admitted metadata exact', () => {
-  expectTypeOf<CliCommandTypes['id']>().toEqualTypeOf<
-    'plan-route' | 'data-status' | 'reload-navaids' | 'reload-airport'
-  >();
+test('keeps command-owned admitted metadata exact', () => {
   expectTypeOf<
     CliTelemetryTypes['CommandMetadata']
   >().toEqualTypeOf<ExpectedCommandMetadata>();
 });
 
-test('has one direct command-surface module without obsolete or forwarding paths', async () => {
+test('has one private generated builder without obsolete or forwarding paths', async () => {
   const relativePaths = (await readdir('src/cli', {recursive: true})).filter(
     path => path.endsWith('.ts') && !path.endsWith('.test.ts')
   );
@@ -104,6 +140,9 @@ test('has one direct command-surface module without obsolete or forwarding paths
     }))
   );
   const allSources = modules.map(module => module.source).join('\n');
+  const builderSource = modules.find(
+    module => module.path === 'buildCliApplication.ts'
+  )?.source;
 
   await Promise.all(
     OBSOLETE_MODULES.map(async path => {
@@ -115,10 +154,28 @@ test('has one direct command-surface module without obsolete or forwarding paths
   expect(allSources).not.toMatch(FORWARDING_EXPORT);
   expect(allSources).not.toMatch(MANUAL_DISPATCH_PREDICATE);
   expect(allSources).not.toMatch(LEGACY_LIFECYCLE);
+  expect(allSources).not.toMatch(LEGACY_COMMAND_SEAM);
+  expect(
+    modules.find(module => module.path === 'runtime/CliRuntimeContext.ts')?.source
+  ).not.toContain('disposeApplication');
+
+  const rawArgumentOwners = modules
+    .filter(module => RAW_ARGUMENT_ACCESS.test(module.source))
+    .map(module => module.path);
+  expect(rawArgumentOwners).toEqual(['buildCliApplication.ts', 'runCli.ts']);
+
+  for (const commandEntry of COMMAND_ENTRIES) {
+    const directImport =
+      `import ${commandEntry} from ` + `'#radial/cli/commands/${commandEntry}.js';`;
+    expect(builderSource).toContain(directImport);
+    await expect(
+      readFile(`src/cli/commands/${commandEntry}.test.ts`, 'utf8')
+    ).resolves.toContain(directImport);
+  }
 
   expect(
     modules
       .filter(module => STRICLI_RUNTIME_IMPORT.test(module.source))
       .map(module => module.path)
-  ).toEqual(['runCli.ts']);
+  ).toEqual(['buildCliApplication.ts', 'runCli.ts']);
 });

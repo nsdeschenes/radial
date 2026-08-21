@@ -17,18 +17,14 @@ type RuntimeInput = Readonly<{
 
 type RuntimeScope = Readonly<{
   context: CliRuntimeTypes['Context'];
-  selectCommand(commandId: CliRuntimeTypes['CommandId']): void;
+  lifecycleContext: CliRuntimeTypes['LifecycleContext'];
   [Symbol.asyncDispose](): Promise<void>;
 }>;
 
 function createCliRuntimeContext(input: RuntimeInput): RuntimeScope {
-  const environmentSnapshot = Object.freeze({...input.env});
-  let selectedCommand: CliRuntimeTypes['CommandId'] | undefined;
-  const command = Object.freeze({
-    get id() {
-      return selectedCommand;
-    },
-  });
+  const environmentSnapshot = Object.isFrozen(input.env)
+    ? input.env
+    : Object.freeze({...input.env});
   let applicationConfig: ApplicationConfig | undefined;
   let applicationOpener: Promise<CliRuntimeTypes['ApplicationOpener']> | undefined;
   let applicationOpen: Promise<ApplicationOpenResult> | undefined;
@@ -49,12 +45,13 @@ function createCliRuntimeContext(input: RuntimeInput): RuntimeScope {
     return applicationDisposal;
   };
 
-  const context: CliRuntimeTypes['Context'] = Object.freeze({
-    command,
-    disposeApplication,
+  const lifecycleContext: CliRuntimeTypes['LifecycleContext'] = Object.freeze({
     env: environmentSnapshot,
     io: input.io,
     signal: input.signal,
+  });
+  const context: CliRuntimeTypes['Context'] = Object.freeze({
+    ...lifecycleContext,
     async withApplication<Value>(
       config: ApplicationConfig,
       use: (application: ApplicationTypes['Application']) => Promise<Value>
@@ -106,13 +103,7 @@ function createCliRuntimeContext(input: RuntimeInput): RuntimeScope {
 
   return Object.freeze({
     context,
-    selectCommand(commandId: CliRuntimeTypes['CommandId']) {
-      if (selectedCommand !== undefined && selectedCommand !== commandId) {
-        throw new Error('Cannot select more than one command in one CLI invocation.');
-      }
-
-      selectedCommand = commandId;
-    },
+    lifecycleContext,
     async [Symbol.asyncDispose]() {
       disposed = true;
       await disposeApplication();

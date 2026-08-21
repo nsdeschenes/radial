@@ -5,9 +5,8 @@ import {join} from 'node:path';
 import {expect, test, vi} from 'vitest';
 
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
+import type CliInputTypes from '#radial/cli/CliInput.js';
 import runDataStatus from '#radial/cli/commands/runDataStatus.js';
-import type CliRuntimeTypes from '#radial/cli/runtime/CliRuntimeContext.js';
-import createCliRuntimeContext from '#radial/cli/runtime/createCliRuntimeContext.js';
 import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
 
 const DATABASE_PATH = '/synthetic.duckdb';
@@ -15,28 +14,31 @@ const DATABASE_PATH = '/synthetic.duckdb';
 test('dispatches status once, preserves output and telemetry, and disposes before resolving', async () => {
   const capture = captureOutput();
   const events: CliTelemetryTypes['OperationEvent'][] = [];
+  const metadata: CliTelemetryTypes['CommandMetadata'][] = [];
   const status = vi.fn(async () => ({ok: true, value: uninitializedStatus()}) as const);
   let disposed = false;
-  const scope = createCliRuntimeContext({
-    env: {RADIAL_DATABASE_PATH: DATABASE_PATH},
-    io: capture.io,
-    signal: new AbortController().signal,
-    async loadApplication() {
-      return async config => {
-        expect(config).toEqual({databasePath: DATABASE_PATH});
-        return {ok: true, value: syntheticApplication(status, () => (disposed = true))};
-      };
-    },
-  });
 
-  await expect(runDataStatus({}, scope.context, telemetry(events))).resolves.toEqual({
-    kind: 'success',
-    status: 0,
-    success: uninitializedStatus(),
-  });
+  await expect(
+    runDataStatus(
+      admittedInput({
+        capture,
+        env: {RADIAL_DATABASE_PATH: DATABASE_PATH},
+        loadTelemetry: async () => telemetry(events, metadata),
+        async openApplication(config) {
+          expect(config).toEqual({databasePath: DATABASE_PATH});
+          return {
+            ok: true,
+            value: syntheticApplication(status, () => (disposed = true)),
+          };
+        },
+      }),
+      {}
+    )
+  ).resolves.toBe(0);
   expect(status).toHaveBeenCalledTimes(1);
   expect(disposed).toBe(true);
   expect(capture.output()).toEqual({stdout: formattedSuccess(), stderr: ''});
+  expect(metadata).toEqual([{id: 'data-status'}]);
   expect(events).toEqual([
     {
       kind: 'data-status-completed',
@@ -52,28 +54,26 @@ test('preserves an injected expected failure and disposes the application', asyn
   const events: CliTelemetryTypes['OperationEvent'][] = [];
   const failure = dataFailure('DATA_DATABASE_INVALID');
   let disposed = false;
-  const scope = createCliRuntimeContext({
-    env: {RADIAL_DATABASE_PATH: DATABASE_PATH},
-    io: capture.io,
-    signal: new AbortController().signal,
-    async loadApplication() {
-      return async () => ({
-        ok: true,
-        value: syntheticApplication(
-          async () => ({ok: false, failure}),
-          () => {
-            disposed = true;
-          }
-        ),
-      });
-    },
-  });
 
-  await expect(runDataStatus({}, scope.context, telemetry(events))).resolves.toEqual({
-    kind: 'expected-failure',
-    status: 1,
-    failure,
-  });
+  await expect(
+    runDataStatus(
+      admittedInput({
+        capture,
+        env: {RADIAL_DATABASE_PATH: DATABASE_PATH},
+        loadTelemetry: async () => telemetry(events),
+        async openApplication() {
+          return {
+            ok: true,
+            value: syntheticApplication(
+              async () => ({ok: false, failure}),
+              () => (disposed = true)
+            ),
+          };
+        },
+      }),
+      {}
+    )
+  ).resolves.toBe(1);
   expect(disposed).toBe(true);
   expect(capture.output()).toEqual({stdout: '', stderr: formattedFailure(failure)});
   expect(events).toEqual([
@@ -89,26 +89,22 @@ test('rejects a blank path before opening the application', async () => {
   const capture = captureOutput();
   const events: CliTelemetryTypes['OperationEvent'][] = [];
   let opened = false;
-  let disposed = false;
-  const runtime = runtimeContext({
-    capture,
-    env: {RADIAL_DATABASE_PATH: '  '},
-    async withApplication() {
-      opened = true;
-      throw new Error('Application must not open for a blank path.');
-    },
-    async disposeApplication() {
-      disposed = true;
-    },
-  });
 
-  await expect(runDataStatus({}, runtime, telemetry(events))).resolves.toMatchObject({
-    kind: 'expected-failure',
-    status: 1,
-    failure: {code: 'DATA_DATABASE_PATH_MISSING', activeDataPreserved: true},
-  });
+  await expect(
+    runDataStatus(
+      admittedInput({
+        capture,
+        env: {RADIAL_DATABASE_PATH: '  '},
+        loadTelemetry: async () => telemetry(events),
+        async openApplication() {
+          opened = true;
+          throw new Error('Application must not open for a blank path.');
+        },
+      }),
+      {}
+    )
+  ).resolves.toBe(1);
   expect(opened).toBe(false);
-  expect(disposed).toBe(true);
   expect(capture.output()).toEqual({stdout: '', stderr: formattedMissingPath()});
   expect(events).toEqual([
     {
@@ -125,25 +121,23 @@ test('returns a silent interruption before inspection without opening the applic
   controller.abort(new Error('Interrupted.'));
   const events: CliTelemetryTypes['OperationEvent'][] = [];
   let opened = false;
-  let disposed = false;
-  const runtime = runtimeContext({
-    capture,
-    signal: controller.signal,
-    async withApplication() {
-      opened = true;
-      throw new Error('Application must not open after interruption.');
-    },
-    async disposeApplication() {
-      disposed = true;
-    },
-  });
 
-  await expect(runDataStatus({}, runtime, telemetry(events))).resolves.toEqual({
-    kind: 'interrupted',
-    status: 130,
-  });
+  await expect(
+    runDataStatus(
+      admittedInput({
+        capture,
+        env: {RADIAL_DATABASE_PATH: DATABASE_PATH},
+        loadTelemetry: async () => telemetry(events),
+        signal: controller.signal,
+        async openApplication() {
+          opened = true;
+          throw new Error('Application must not open after interruption.');
+        },
+      }),
+      {}
+    )
+  ).resolves.toBe(130);
   expect(opened).toBe(false);
-  expect(disposed).toBe(true);
   expect(capture.output()).toEqual({stdout: '', stderr: ''});
   expect(events).toEqual([]);
 });
@@ -155,30 +149,33 @@ test('returns a silent interruption after inspection and disposes before resolvi
   const started = Promise.withResolvers<void>();
   const events: CliTelemetryTypes['OperationEvent'][] = [];
   let disposed = false;
-  const scope = createCliRuntimeContext({
-    env: {RADIAL_DATABASE_PATH: DATABASE_PATH},
-    io: capture.io,
-    signal: controller.signal,
-    async loadApplication() {
-      return async () => ({
-        ok: true,
-        value: syntheticApplication(
-          () => {
-            started.resolve();
-            return status.promise;
-          },
-          () => (disposed = true)
-        ),
-      });
-    },
-  });
+  const running = runDataStatus(
+    admittedInput({
+      capture,
+      env: {RADIAL_DATABASE_PATH: DATABASE_PATH},
+      loadTelemetry: async () => telemetry(events),
+      signal: controller.signal,
+      async openApplication() {
+        return {
+          ok: true,
+          value: syntheticApplication(
+            () => {
+              started.resolve();
+              return status.promise;
+            },
+            () => (disposed = true)
+          ),
+        };
+      },
+    }),
+    {}
+  );
 
-  const running = runDataStatus({}, scope.context, telemetry(events));
   await started.promise;
   controller.abort();
   status.resolve({ok: true, value: uninitializedStatus()});
 
-  await expect(running).resolves.toEqual({kind: 'interrupted', status: 130});
+  await expect(running).resolves.toBe(130);
   expect(disposed).toBe(true);
   expect(capture.output()).toEqual({stdout: '', stderr: ''});
   expect(events).toEqual([]);
@@ -187,23 +184,26 @@ test('returns a silent interruption after inspection and disposes before resolvi
 test('disposes and rethrows a status defect unchanged', async () => {
   const defect = new Error('Synthetic status defect.');
   let disposed = false;
-  const runtime = runtimeContext({
-    async withApplication(_config, use) {
-      return {
-        ok: true,
-        value: await use(
-          syntheticApplication(async () => {
-            throw defect;
-          })
-        ),
-      };
-    },
-    async disposeApplication() {
-      disposed = true;
-    },
-  });
 
-  await expect(runDataStatus({}, runtime, telemetry([]))).rejects.toBe(defect);
+  await expect(
+    runDataStatus(
+      admittedInput({
+        env: {RADIAL_DATABASE_PATH: DATABASE_PATH},
+        async openApplication() {
+          return {
+            ok: true,
+            value: syntheticApplication(
+              async () => {
+                throw defect;
+              },
+              () => (disposed = true)
+            ),
+          };
+        },
+      }),
+      {}
+    )
+  ).rejects.toBe(defect);
   expect(disposed).toBe(true);
 });
 
@@ -213,28 +213,38 @@ test.each(['success', 'expected-failure', 'interruption', 'thrown-failure'] as c
     const cleanupFailure = new Error('Synthetic cleanup defect.');
     const operationFailure = new Error('Synthetic operation defect.');
     const controller = new AbortController();
-    const runtime = runtimeContext({
-      signal: controller.signal,
-      async withApplication(_config, use) {
-        const result = await use(
-          syntheticApplication(async () => {
-            if (outcome === 'interruption') controller.abort();
-            if (outcome === 'thrown-failure') throw operationFailure;
-            if (outcome === 'expected-failure') {
-              return {ok: false, failure: dataFailure('DATA_DATABASE_INVALID')};
-            }
 
-            return {ok: true, value: uninitializedStatus()};
-          })
-        );
-        return {ok: true, value: result};
-      },
-      async disposeApplication() {
-        throw cleanupFailure;
-      },
-    });
+    await expect(
+      runDataStatus(
+        admittedInput({
+          env: {RADIAL_DATABASE_PATH: DATABASE_PATH},
+          signal: controller.signal,
+          async openApplication() {
+            return {
+              ok: true,
+              value: syntheticApplication(
+                async () => {
+                  if (outcome === 'interruption') controller.abort();
+                  if (outcome === 'thrown-failure') throw operationFailure;
+                  if (outcome === 'expected-failure') {
+                    return {
+                      ok: false,
+                      failure: dataFailure('DATA_DATABASE_INVALID'),
+                    };
+                  }
 
-    await expect(runDataStatus({}, runtime, telemetry([]))).rejects.toBe(cleanupFailure);
+                  return {ok: true, value: uninitializedStatus()};
+                },
+                () => {
+                  throw cleanupFailure;
+                }
+              ),
+            };
+          },
+        }),
+        {}
+      )
+    ).rejects.toBe(cleanupFailure);
   }
 );
 
@@ -245,24 +255,18 @@ test('preserves the path inspection diagnostic when application acquisition fail
   await writeFile(invalidParentPath, 'not a directory');
   const capture = captureOutput();
   const events: CliTelemetryTypes['OperationEvent'][] = [];
-  const scope = createCliRuntimeContext({
-    env: {RADIAL_DATABASE_PATH: databasePath},
-    io: capture.io,
-    signal: new AbortController().signal,
-  });
 
   try {
-    await expect(runDataStatus({}, scope.context, telemetry(events))).resolves.toEqual({
-      kind: 'expected-failure',
-      status: 1,
-      failure: {
-        code: 'DATA_DATABASE_UNAVAILABLE',
-        summary: 'The configured database is unavailable.',
-        cause: 'The configured database path could not be inspected.',
-        action: 'Check RADIAL_DATABASE_PATH and retry.',
-        activeDataPreserved: true,
-      },
-    });
+    await expect(
+      runDataStatus(
+        admittedInput({
+          capture,
+          env: {RADIAL_DATABASE_PATH: databasePath},
+          loadTelemetry: async () => telemetry(events),
+        }),
+        {}
+      )
+    ).resolves.toBe(1);
     expect(capture.output()).toEqual({
       stdout: '',
       stderr: formattedUninspectablePath(),
@@ -275,10 +279,30 @@ test('preserves the path inspection diagnostic when application acquisition fail
       },
     ]);
   } finally {
-    await scope[Symbol.asyncDispose]();
     await rm(temporaryDirectory, {recursive: true});
   }
 });
+
+function admittedInput(
+  overrides: Readonly<{
+    capture?: ReturnType<typeof captureOutput>;
+    env?: Readonly<Record<string, string | undefined>>;
+    loadTelemetry?: CliTelemetryTypes['Loader'];
+    openApplication?: NonNullable<CliInputTypes['Admitted']['openApplication']>;
+    signal?: AbortSignal;
+  }>
+): CliInputTypes['Admitted'] {
+  const capture = overrides.capture ?? captureOutput();
+  return {
+    env: overrides.env ?? {},
+    io: capture.io,
+    loadTelemetry: overrides.loadTelemetry ?? inertTelemetry,
+    ...(overrides.openApplication === undefined
+      ? {}
+      : {openApplication: overrides.openApplication}),
+    ...(overrides.signal === undefined ? {} : {signal: overrides.signal}),
+  };
+}
 
 function captureOutput() {
   let stdout = '';
@@ -295,29 +319,6 @@ function captureOutput() {
     output() {
       return {stdout, stderr};
     },
-  };
-}
-
-function runtimeContext({
-  capture = captureOutput(),
-  disposeApplication = async () => {},
-  env = {RADIAL_DATABASE_PATH: DATABASE_PATH},
-  signal = new AbortController().signal,
-  withApplication,
-}: Readonly<{
-  capture?: ReturnType<typeof captureOutput>;
-  disposeApplication?: () => Promise<void>;
-  env?: Readonly<Record<string, string | undefined>>;
-  signal?: AbortSignal;
-  withApplication: CliRuntimeTypes['Context']['withApplication'];
-}>): CliRuntimeTypes['Context'] {
-  return {
-    command: {id: 'data-status'},
-    disposeApplication,
-    env,
-    io: capture.io,
-    signal,
-    withApplication,
   };
 }
 
@@ -414,11 +415,17 @@ function formattedUninspectablePath(): string {
   );
 }
 
+async function inertTelemetry(): Promise<CliTelemetryTypes['Session']> {
+  return telemetry([]);
+}
+
 function telemetry(
-  events: CliTelemetryTypes['OperationEvent'][]
+  events: CliTelemetryTypes['OperationEvent'][],
+  metadata: CliTelemetryTypes['CommandMetadata'][] = []
 ): CliTelemetryTypes['Session'] {
   return {
-    async execute(_metadata, operation) {
+    async execute(commandMetadata, operation) {
+      metadata.push(commandMetadata);
       return operation();
     },
     recordOperation(event) {
