@@ -11,13 +11,14 @@ async function runDataStatus(
   _input: DataStatusInput
 ): Promise<number> {
   return runAdmittedCliCommand(capabilities, {
+    applicationAccess: false,
     metadata: {id: 'data-status'},
     execute: executeDataStatus,
   });
 }
 
 async function executeDataStatus(
-  runtime: CliRuntimeTypes['Context'],
+  runtime: CliRuntimeTypes['LifecycleContext'],
   telemetry: CliTelemetryTypes['Session']
 ): Promise<0 | 1 | 130> {
   if (runtime.signal.aborted) {

@@ -25,7 +25,7 @@ import validation from '#radial/route-planner/internal/validation.js';
 
 type CliStricliContext = CommandContext &
   Readonly<{
-    input: CliInputTypes['Input'];
+    admitted: CliInputTypes['Admitted'];
     process: StricliProcess;
     routePlanDepartureIcao: {value: string | undefined};
     selectedDescription: {value: object | undefined};
@@ -360,9 +360,10 @@ function buildCliApplication(): BuiltCliApplication {
   return {
     application,
     contextFor(input, process) {
-      compatibilityInvocations.set(process, input.args);
+      const {args, ...admitted} = input;
+      compatibilityInvocations.set(process, args);
       return {
-        input,
+        admitted,
         process,
         routePlanDepartureIcao: {value: undefined},
         selectedDescription: {value: undefined},
@@ -440,7 +441,11 @@ function admittedLoader<Flags extends BaseFlags, Args extends BaseArgs>(
         throw new Error('Stricli did not select the expected registered Radial command.');
       }
 
-      this.process.exitCode = await description.runAdmitted(this.input, flags, ...args);
+      this.process.exitCode = await description.runAdmitted(
+        this.admitted,
+        flags,
+        ...args
+      );
     };
 }
 

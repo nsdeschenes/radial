@@ -3,13 +3,23 @@ import type CliRuntimeTypes from '#radial/cli/runtime/CliRuntimeContext.js';
 import createCliRuntimeContext from '#radial/cli/runtime/createCliRuntimeContext.js';
 import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
 
-type AdmittedCommand = Readonly<{
-  metadata: CliTelemetryTypes['CommandMetadata'];
-  execute: (
-    runtime: CliRuntimeTypes['Context'],
-    telemetry: CliTelemetryTypes['Session']
-  ) => Promise<CommandStatus>;
-}>;
+type AdmittedCommand =
+  | Readonly<{
+      applicationAccess: false;
+      metadata: CliTelemetryTypes['CommandMetadata'];
+      execute: (
+        runtime: CliRuntimeTypes['LifecycleContext'],
+        telemetry: CliTelemetryTypes['Session']
+      ) => Promise<CommandStatus>;
+    }>
+  | Readonly<{
+      applicationAccess?: true;
+      metadata: CliTelemetryTypes['CommandMetadata'];
+      execute: (
+        runtime: CliRuntimeTypes['Context'],
+        telemetry: CliTelemetryTypes['Session']
+      ) => Promise<CommandStatus>;
+    }>;
 
 type CommandStatus = 0 | 1 | 2 | 130;
 type CommandResult =
@@ -35,7 +45,10 @@ async function runAdmittedCliCommand(
           : {loadApplication: async () => input.openApplication!}),
       });
       try {
-        const status = await command.execute(runtime.context, telemetry);
+        const status =
+          command.applicationAccess === false
+            ? await command.execute(runtime.lifecycleContext, telemetry)
+            : await command.execute(runtime.context, telemetry);
         return commandResultFor(status);
       } finally {
         await runtime[Symbol.asyncDispose]();
