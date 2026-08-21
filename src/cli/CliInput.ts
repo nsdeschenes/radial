@@ -7,20 +7,25 @@ type CommandExecution = (
   telemetry: CliTelemetryTypes['Session']
 ) => Promise<CliCommandResultTypes['Result']>;
 
-type CliInput = Readonly<{
-  args: readonly string[];
+type AdmittedCliInput = Readonly<{
   env: Readonly<Record<string, string | undefined>>;
   io: CliRuntimeTypes['Io'];
-  loadCommand?: (
-    commandId: CliRuntimeTypes['CommandId'],
-    loadDefault: () => Promise<CommandExecution>
-  ) => Promise<CommandExecution>;
   loadTelemetry?: CliTelemetryTypes['Loader'];
   openApplication?: CliRuntimeTypes['ApplicationOpener'];
   signal?: AbortSignal;
 }>;
 
+type CliInput = AdmittedCliInput &
+  Readonly<{
+    args: readonly string[];
+    loadCommand?: (
+      commandId: CliRuntimeTypes['CommandId'],
+      loadDefault: () => Promise<CommandExecution>
+    ) => Promise<CommandExecution>;
+  }>;
+
 export default interface CliInputTypes {
+  Admitted: AdmittedCliInput;
   Input: CliInput;
   CommandExecution: CommandExecution;
 }
