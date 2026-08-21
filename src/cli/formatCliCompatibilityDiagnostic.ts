@@ -1,5 +1,5 @@
+import commandCatalog from '#radial/cli/CliCommandCatalog.js';
 import airportReloadOutput from '#radial/cli/formatAirportReload.js';
-import diagnostics from '#radial/cli/formatDiagnostics.js';
 import validation from '#radial/route-planner/internal/validation.js';
 
 const DATA_STATUS_USAGE =
@@ -36,19 +36,11 @@ function formatCliCompatibilityDiagnostic(invocation: readonly string[]): string
     return NAVAID_RELOAD_USAGE;
   }
 
-  const routeArguments =
-    invocation.at(-1) === '--warnings' ? invocation.slice(0, -1) : invocation;
-  if (routeArguments.length !== 2) {
-    return diagnostics.formatArgumentCountDiagnostic(routeArguments.length);
+  if (commandCatalog.routePlan.rejection.owns(invocation)) {
+    return commandCatalog.routePlan.rejection.format(invocation);
   }
 
-  const validated = validation.validateRoutePlanningRequest({
-    arrivalIcao: routeArguments[1] ?? '',
-    departureIcao: routeArguments[0] ?? '',
-  });
-  return validated.ok
-    ? diagnostics.formatArgumentCountDiagnostic(routeArguments.length)
-    : diagnostics.formatInvalidRequestDiagnostic(validated.failure);
+  throw new Error('No Radial command description owns the rejected invocation.');
 }
 
 function formatInvalidAirportIcao(value: string): string {

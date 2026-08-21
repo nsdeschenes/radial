@@ -6,15 +6,18 @@ import type {
   BaseArgs,
   BaseFlags,
   Command,
+  CommandBuilderArguments,
   CommandFunction,
   StricliIntegration,
 } from '@stricli/core';
 
+import commandCatalog from '#radial/cli/CliCommandCatalog.js';
 import type CliInputTypes from '#radial/cli/CliInput.js';
 import type CliStricliTypes from '#radial/cli/CliStricliContext.js';
 import formatCliCompatibilityDiagnostic from '#radial/cli/formatCliCompatibilityDiagnostic.js';
 import runAdmittedCliCommand from '#radial/cli/runAdmittedCliCommand.js';
 import type CliRuntimeTypes from '#radial/cli/runtime/CliRuntimeContext.js';
+import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
 import validation from '#radial/route-planner/internal/validation.js';
 
 type CommandSelection = CliStricliTypes['CommandSelection'];
@@ -28,7 +31,7 @@ type CliApplicationContext = ApplicationContext &
 const INTERNAL_PLAN_ROUTE = '__radial_internal_plan_route__';
 const ROOT_HELP =
   'Usage:\n' +
-  '  radial <departure-icao> <arrival-icao> [--warnings]\n' +
+  commandCatalog.routePlan.help.rootUsageLine +
   '  radial data status\n' +
   '  radial data reload navaids\n' +
   '  radial data reload airport <ICAO>\n';
@@ -78,50 +81,7 @@ function buildCliApplication(): Application<CliStricliContext> {
       },
     })
   );
-  const planRoute = registerCommand(
-    {id: 'plan-route'},
-    buildCommand<
-      Readonly<{warnings?: boolean}>,
-      [departureIcao: string, arrivalIcao: string],
-      CliStricliContext
-    >({
-      docs: {brief: 'Plan a Route'},
-      loader: admittedLoader(async (flags, departureIcao, arrivalIcao) => {
-        const commandModule = await import('#radial/cli/commands/runPlanRoute.js');
-        const request = {arrivalIcao, departureIcao};
-        return (runtime, telemetry) =>
-          commandModule.default(
-            {request, warningDetailsRequested: flags.warnings === true},
-            runtime,
-            telemetry
-          );
-      }),
-      parameters: {
-        flags: {
-          warnings: {
-            brief: 'Show Route Plan warning details',
-            kind: 'boolean',
-            optional: true,
-          },
-        },
-        positional: {
-          kind: 'tuple',
-          parameters: [
-            {
-              brief: 'Departure Airport ICAO',
-              parse: parseRouteIcao,
-              placeholder: 'departure-icao',
-            },
-            {
-              brief: 'Arrival Airport ICAO',
-              parse: parseRouteIcao,
-              placeholder: 'arrival-icao',
-            },
-          ],
-        },
-      },
-    })
-  );
+  const planRoute = buildDescribedCommand(commandCatalog.routePlan);
   const reload = buildRouteMap({
     docs: {brief: 'Reload local data'},
     routes: {airport: reloadAirport, navaids: reloadNavaids},
@@ -161,11 +121,34 @@ function registerCommand(
   return command;
 }
 
+function buildDescribedCommand<Flags extends BaseFlags, Args extends BaseArgs>(
+  description: Readonly<{
+    id: CliRuntimeTypes['CommandId'];
+    docs: CommandBuilderArguments<Flags, Args, CliStricliContext>['docs'];
+    parameters: CommandBuilderArguments<Flags, Args, CliStricliContext>['parameters'];
+    metadata(flags: Flags, ...args: Args): CliTelemetryTypes['CommandMetadata'];
+    loadExecution(
+      flags: Flags,
+      ...args: Args
+    ): Promise<CliInputTypes['CommandExecution']>;
+  }>
+): Command<CliStricliContext> {
+  return registerCommand(
+    {id: description.id},
+    buildCommand<Flags, Args, CliStricliContext>({
+      docs: description.docs,
+      loader: admittedLoader(description.loadExecution, description.metadata),
+      parameters: description.parameters,
+    })
+  );
+}
+
 function admittedLoader<Flags extends BaseFlags, Args extends BaseArgs>(
   loadExecution: (
     flags: Flags,
     ...args: Args
-  ) => Promise<CliInputTypes['CommandExecution']>
+  ) => Promise<CliInputTypes['CommandExecution']>,
+  describeMetadata?: (flags: Flags, ...args: Args) => CliTelemetryTypes['CommandMetadata']
 ): () => Promise<CommandFunction<Flags, Args, CliStricliContext>> {
   return async () =>
     async function (flags, ...args) {
@@ -174,30 +157,27 @@ function admittedLoader<Flags extends BaseFlags, Args extends BaseArgs>(
         throw new Error('Stricli did not select a registered Radial command.');
       }
 
-      const attributes = commandAttributes(selection.id, args);
+      const metadata =
+        describeMetadata?.(flags, ...args) ?? legacyCommandMetadata(selection.id, args);
       this.process.exitCode = await runAdmittedCliCommand(this.input, {
-        metadata: {id: selection.id, ...(attributes === undefined ? {} : {attributes})},
+        metadata,
         loadDefault: () => loadExecution(flags, ...args),
       });
     };
 }
 
-function commandAttributes(
+function legacyCommandMetadata(
   commandId: CliRuntimeTypes['CommandId'],
   args: readonly unknown[]
-): Readonly<Record<string, string>> | undefined {
-  if (commandId === 'plan-route') {
+): CliTelemetryTypes['CommandMetadata'] {
+  if (commandId === 'reload-airport') {
     return {
-      'radial.route.arrival_icao': String(args[1]),
-      'radial.route.departure_icao': String(args[0]),
+      id: commandId,
+      attributes: {'radial.airport.icao': String(args[0])},
     };
   }
 
-  if (commandId === 'reload-airport') {
-    return {'radial.airport.icao': String(args[0])};
-  }
-
-  return undefined;
+  return {id: commandId};
 }
 
 function commandSelectionIntegration(): StricliIntegration<CliStricliContext> {
@@ -276,26 +256,6 @@ function helpForInvocation(invocation: readonly string[]): string | undefined {
   }
 
   return undefined;
-}
-
-function parseRouteIcao(this: CliStricliContext, input: string): string {
-  const routeArguments =
-    this.invocation.at(-1) === '--warnings'
-      ? this.invocation.slice(0, -1)
-      : this.invocation;
-  const validated = validation.validateRoutePlanningRequest({
-    arrivalIcao: routeArguments[1] ?? '',
-    departureIcao: routeArguments[0] ?? '',
-  });
-  if (
-    routeArguments.length !== 2 ||
-    this.invocation[0] === INTERNAL_PLAN_ROUTE ||
-    !validated.ok
-  ) {
-    throw new Error('Radial rejected the Route Plan invocation.');
-  }
-
-  return input.trim().toUpperCase();
 }
 
 function parseAirportIcao(input: string): string {
