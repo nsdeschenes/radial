@@ -1,8 +1,9 @@
-import {mkdtemp, rm, stat} from 'node:fs/promises';
+import {mkdir, mkdtemp, rm, stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
-import {expect, test} from 'vitest';
+import {DuckDBInstance} from '@duckdb/node-api';
+import {expect, test, vi} from 'vitest';
 
 import sharedDuckDBRuntime from '#radial/application/internal/SharedDuckDBRuntime.js';
 import createSyntheticFAANasrCycle from '#radial/test/createSyntheticFAANasrCycle.js';
@@ -36,8 +37,131 @@ test('acquires a lazy operation-shaped lease and creates a fresh core after disp
       ok: true,
       value: {status: 'uninitialized'},
     });
+    await expect(stat(databasePath)).rejects.toMatchObject({code: 'ENOENT'});
     await reopened[Symbol.asyncDispose]();
   } finally {
+    await rm(temporaryDirectory, {recursive: true});
+  }
+});
+
+test('keeps fresh in-memory status lazy and reuses the persistent instance once created', async () => {
+  const createInstance = vi.spyOn(DuckDBInstance, 'create');
+  const lease = await sharedDuckDBRuntime.acquire(
+    runtimeConfig(':memory:'),
+    producerDependencies(async request => airportPage(request.page, 0, []))
+  );
+
+  try {
+    await expect(lease.status()).resolves.toMatchObject({
+      ok: true,
+      value: {status: 'uninitialized'},
+    });
+    expect(createInstance).not.toHaveBeenCalled();
+
+    await expect(lease.reloadNavaids({openAipApiKey: 'test-key'})).resolves.toMatchObject(
+      {ok: true}
+    );
+    expect(createInstance).toHaveBeenCalledTimes(1);
+
+    await expect(lease.status()).resolves.toMatchObject({
+      ok: true,
+      value: {status: 'ready'},
+    });
+    expect(createInstance).toHaveBeenCalledTimes(1);
+  } finally {
+    await lease[Symbol.asyncDispose]();
+    createInstance.mockRestore();
+  }
+});
+
+test('orders temporary read-only inspection with first persistent creation in either order', async () => {
+  for (const firstOperation of ['status', 'reload'] as const) {
+    const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-runtime-open-'));
+    const databasePath = join(temporaryDirectory, 'radial.duckdb');
+    const preparationInstance = await DuckDBInstance.create(databasePath);
+    preparationInstance.closeSync();
+    const originalCreate = DuckDBInstance.create.bind(DuckDBInstance);
+    const firstCreationStarted = Promise.withResolvers<void>();
+    const releaseFirstCreation = Promise.withResolvers<void>();
+    const accessModes: string[] = [];
+    const createInstance = vi
+      .spyOn(DuckDBInstance, 'create')
+      .mockImplementation(async (path, options) => {
+        accessModes.push(options?.['access_mode'] ?? 'READ_WRITE');
+        if (accessModes.length === 1) {
+          firstCreationStarted.resolve();
+          await releaseFirstCreation.promise;
+        }
+
+        return originalCreate(path, options);
+      });
+    const lease = await sharedDuckDBRuntime.acquire(
+      runtimeConfig(databasePath),
+      producerDependencies(async request => airportPage(request.page, 0, []))
+    );
+
+    try {
+      const status =
+        firstOperation === 'status' ? lease.status() : Promise.resolve(undefined);
+      const reload =
+        firstOperation === 'reload'
+          ? lease.reloadNavaids({openAipApiKey: 'test-key'})
+          : Promise.resolve(undefined);
+      await firstCreationStarted.promise;
+      const secondOperation =
+        firstOperation === 'status'
+          ? lease.reloadNavaids({openAipApiKey: 'test-key'})
+          : lease.status();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(accessModes).toEqual([
+        firstOperation === 'status' ? 'READ_ONLY' : 'READ_WRITE',
+      ]);
+
+      releaseFirstCreation.resolve();
+      const [statusResult, reloadResult, secondResult] = await Promise.all([
+        status,
+        reload,
+        secondOperation,
+      ]);
+      const completedStatus = firstOperation === 'status' ? statusResult : secondResult;
+      const completedReload = firstOperation === 'reload' ? reloadResult : secondResult;
+      expect(completedStatus).toMatchObject({ok: true});
+      expect(completedReload).toMatchObject({ok: true});
+      expect(accessModes).toEqual(
+        firstOperation === 'status' ? ['READ_ONLY', 'READ_WRITE'] : ['READ_WRITE']
+      );
+    } finally {
+      releaseFirstCreation.resolve();
+      await lease[Symbol.asyncDispose]();
+      createInstance.mockRestore();
+      await rm(temporaryDirectory, {recursive: true});
+    }
+  }
+});
+
+test('retries persistent instance creation after an open failure', async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-runtime-retry-'));
+  const databaseDirectory = join(temporaryDirectory, 'missing');
+  const databasePath = join(databaseDirectory, 'radial.duckdb');
+  const lease = await sharedDuckDBRuntime.acquire(
+    runtimeConfig(databasePath),
+    producerDependencies(async request => airportPage(request.page, 0, []))
+  );
+
+  try {
+    await expect(lease.openPlanning()).resolves.toMatchObject({
+      ok: false,
+      failure: {code: 'database-unavailable'},
+    });
+    await mkdir(databaseDirectory);
+
+    const retried = await lease.openPlanning();
+    expect(retried).toMatchObject({ok: true});
+    if (retried.ok) {
+      await retried.value[Symbol.asyncDispose]();
+    }
+  } finally {
+    await lease[Symbol.asyncDispose]();
     await rm(temporaryDirectory, {recursive: true});
   }
 });
