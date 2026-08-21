@@ -9,6 +9,7 @@ import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
 test.each([
   {
     args: [' cyyz ', 'cyow'],
+    status: 0,
     metadata: {
       id: 'plan-route',
       attributes: {
@@ -17,10 +18,15 @@ test.each([
       },
     },
   },
-  {args: ['data', 'status'], metadata: {id: 'data-status'}},
-  {args: ['data', 'reload', 'navaids'], metadata: {id: 'reload-navaids'}},
+  {args: ['data', 'status'], metadata: {id: 'data-status'}, status: 1},
+  {
+    args: ['data', 'reload', 'navaids'],
+    metadata: {id: 'reload-navaids'},
+    status: 0,
+  },
   {
     args: ['data', 'reload', 'airport', ' cyyz '],
+    status: 0,
     metadata: {
       id: 'reload-airport',
       attributes: {'radial.airport.icao': 'CYYZ'},
@@ -28,7 +34,7 @@ test.each([
   },
 ] as const)(
   'normalizes and dispatches $metadata.id through the generated catalog',
-  async ({args, metadata}) => {
+  async ({args, metadata, status}) => {
     const admittedMetadata: CliTelemetryTypes['CommandMetadata'][] = [];
     const input: CliInputTypes['Input'] = {
       args,
@@ -51,7 +57,7 @@ test.each([
 
     const process = await runBuiltApplication(input);
 
-    expect(process.exitCode).toBe(0);
+    expect(process.exitCode).toBe(status);
     expect(admittedMetadata).toEqual([metadata]);
   }
 );

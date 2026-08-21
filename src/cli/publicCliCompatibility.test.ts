@@ -14,6 +14,7 @@ type CompatibilityCase = Readonly<{
   stdout?: string;
   stderr?: string;
   admitted?: boolean;
+  commandLoad?: boolean;
   applicationOpens?: number;
   routeRequest?: Readonly<{arrivalIcao: string; departureIcao: string}>;
   airportReloadIcao?: string;
@@ -133,6 +134,7 @@ const compatibilityCases: readonly CompatibilityCase[] = [
     env: {RADIAL_DATABASE_PATH: 'missing-public-cli-compatibility.duckdb'},
     exitCode: 0,
     admitted: true,
+    commandLoad: false,
     stdout:
       'Radial data status\n' +
       'Database\n' +
@@ -401,7 +403,9 @@ test.each(compatibilityCases)('$name preserves the Public CLI contract', async s
     sample.airportReloadIcao === undefined ? [] : [sample.airportReloadIcao]
   );
   expect(application.evidence.navaidReloads).toBe(sample.navaidReload === true ? 1 : 0);
-  expect(application.evidence.commandLoads).toBe(sample.admitted === true ? 1 : 0);
+  expect(application.evidence.commandLoads).toBe(
+    (sample.commandLoad ?? sample.admitted) === true ? 1 : 0
+  );
   expect(application.evidence.telemetryLoads).toBe(sample.admitted === true ? 1 : 0);
 });
 

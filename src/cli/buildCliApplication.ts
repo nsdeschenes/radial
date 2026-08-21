@@ -15,6 +15,7 @@ import type {
 } from '@stricli/core';
 
 import type CliInputTypes from '#radial/cli/CliInput.js';
+import runDataStatus from '#radial/cli/commands/runDataStatus.js';
 import airportReloadOutput from '#radial/cli/formatAirportReload.js';
 import diagnostics from '#radial/cli/formatDiagnostics.js';
 import runAdmittedCliCommand from '#radial/cli/runAdmittedCliCommand.js';
@@ -44,11 +45,16 @@ type CommandDescription<
     owns(invocation: readonly string[]): boolean;
     format(invocation: readonly string[]): string | undefined;
   }>;
-  metadata(flags: Flags, ...args: Args): Metadata;
-  loadCompatibilityExecution(
+  metadata?: (flags: Flags, ...args: Args) => Metadata;
+  loadCompatibilityExecution?: (
     flags: Flags,
     ...args: Args
-  ): Promise<CliInputTypes['CommandExecution']>;
+  ) => Promise<CliInputTypes['CommandExecution']>;
+  runAdmitted?: (
+    input: CliInputTypes['Admitted'],
+    flags: Flags,
+    ...args: Args
+  ) => Promise<number>;
 }>;
 
 type RoutePlanFlags = Readonly<{warnings?: boolean}>;
@@ -170,12 +176,8 @@ const dataStatus = describeCommand<NoFlags, NoArgs>()({
       );
     },
   },
-  metadata() {
-    return {id: 'data-status'} as const;
-  },
-  async loadCompatibilityExecution() {
-    const commandModule = await import('#radial/cli/commands/runDataStatus.js');
-    return (runtime, telemetry) => commandModule.default({}, runtime, telemetry);
+  runAdmitted(input) {
+    return runDataStatus(input, {});
   },
 });
 
@@ -289,7 +291,9 @@ const commandDescriptions = [
 ] as const;
 type CatalogCommandDescription = (typeof commandDescriptions)[number];
 type CatalogCommandId = CatalogCommandDescription['id'];
-type CatalogCommandMetadata = ReturnType<CatalogCommandDescription['metadata']>;
+type CatalogCommandMetadata =
+  | ReturnType<NonNullable<CatalogCommandDescription['metadata']>>
+  | Readonly<{id: 'data-status'}>;
 
 interface BuiltCliApplication {
   readonly application: Application<CliStricliContext>;
@@ -497,10 +501,22 @@ function admittedLoader<
         throw new Error('Stricli did not select the expected registered Radial command.');
       }
 
-      const metadata = description.metadata(flags, ...args);
+      if (description.runAdmitted !== undefined) {
+        this.process.exitCode = await description.runAdmitted(this.input, flags, ...args);
+        return;
+      }
+
+      const metadata = description.metadata?.(flags, ...args);
+      const loadCompatibilityExecution = description.loadCompatibilityExecution;
+      if (metadata === undefined || loadCompatibilityExecution === undefined) {
+        throw new Error(
+          `Radial command ${JSON.stringify(description.id)} has no admitted workflow.`
+        );
+      }
+
       this.process.exitCode = await runAdmittedCliCommand(this.input, {
         metadata,
-        loadDefault: () => description.loadCompatibilityExecution(flags, ...args),
+        loadDefault: () => loadCompatibilityExecution(flags, ...args),
       });
     };
 }

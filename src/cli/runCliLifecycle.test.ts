@@ -36,15 +36,15 @@ test.each(['loader', 'handler'] as const)(
 
     const result = runCli({
       ...input,
-      args: ['data', 'status'],
+      args: ['data', 'reload', 'navaids'],
       async loadCommand() {
-        events.push('handler loaded data-status');
+        events.push('handler loaded reload-navaids');
         if (defectSource === 'loader') {
           throw defect;
         }
 
         return async () => {
-          events.push('handler executed data-status');
+          events.push('handler executed reload-navaids');
           throw defect;
         };
       },
@@ -53,9 +53,9 @@ test.each(['loader', 'handler'] as const)(
     await expect(result).rejects.toBe(defect);
     expect(events).toEqual([
       'telemetry initialized',
-      'span started data-status',
-      'handler loaded data-status',
-      ...(defectSource === 'handler' ? ['handler executed data-status'] : []),
+      'span started reload-navaids',
+      'handler loaded reload-navaids',
+      ...(defectSource === 'handler' ? ['handler executed reload-navaids'] : []),
       'defect captured',
       'span ended',
       'telemetry closed',
@@ -105,8 +105,6 @@ test('runs every admitted command through one ordered lifecycle', async () => {
   expect(events).toEqual([
     'telemetry initialized',
     'span started data-status',
-    'handler loaded data-status',
-    'handler executed data-status',
     'operation recorded data-status-failed',
     'result recorded 1',
     'span ended',
@@ -117,6 +115,7 @@ test('runs every admitted command through one ordered lifecycle', async () => {
 test.each([
   {
     args: [' cyyz ', 'cyow'],
+    status: 0,
     metadata: {
       id: 'plan-route',
       attributes: {
@@ -125,10 +124,15 @@ test.each([
       },
     },
   },
-  {args: ['data', 'status'], metadata: {id: 'data-status'}},
-  {args: ['data', 'reload', 'navaids'], metadata: {id: 'reload-navaids'}},
+  {args: ['data', 'status'], metadata: {id: 'data-status'}, status: 1},
+  {
+    args: ['data', 'reload', 'navaids'],
+    metadata: {id: 'reload-navaids'},
+    status: 0,
+  },
   {
     args: ['data', 'reload', 'airport', ' cyyz '],
+    status: 0,
     metadata: {
       id: 'reload-airport',
       attributes: {'radial.airport.icao': 'CYYZ'},
@@ -136,7 +140,7 @@ test.each([
   },
 ] as const)(
   'admits $metadata.id with stable normalized metadata',
-  async ({args, metadata}) => {
+  async ({args, metadata, status}) => {
     const admittedMetadata: CliTelemetryTypes['CommandMetadata'][] = [];
 
     await expect(
@@ -158,7 +162,7 @@ test.each([
           };
         },
       })
-    ).resolves.toBe(0);
+    ).resolves.toBe(status);
     expect(admittedMetadata).toEqual([metadata]);
   }
 );
@@ -205,7 +209,7 @@ test('does not let telemetry close failure replace a command result or exception
 
   await expect(
     runCli({
-      args: ['data', 'status'],
+      args: ['data', 'reload', 'navaids'],
       env: {},
       io: {writeStderr() {}, writeStdout() {}},
       async loadCommand() {
@@ -217,7 +221,7 @@ test('does not let telemetry close failure replace a command result or exception
 
   await expect(
     runCli({
-      args: ['data', 'status'],
+      args: ['data', 'reload', 'navaids'],
       env: {},
       io: {writeStderr() {}, writeStdout() {}},
       async loadCommand() {

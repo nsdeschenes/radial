@@ -50,17 +50,25 @@ type CliCommandTypes = NonNullable<(typeof runCli)['commandTypes']>;
 
 test('pins one private Stricli parser authority with import-light eager modules', async () => {
   const packageJson = JSON.parse(await readFile('package.json', 'utf8'));
-  const [adapterSource, builderSource, executableSource, lifecycleSource, runtimeSource] =
-    await Promise.all([
-      readFile('src/cli/runCli.ts', 'utf8'),
-      readFile('src/cli/buildCliApplication.ts', 'utf8'),
-      readFile('src/cli/runCliExecutable.ts', 'utf8'),
-      readFile('src/cli/runAdmittedCliCommand.ts', 'utf8'),
-      readFile('src/cli/runtime/createCliRuntimeContext.ts', 'utf8'),
-    ]);
+  const [
+    adapterSource,
+    builderSource,
+    dataStatusSource,
+    executableSource,
+    lifecycleSource,
+    runtimeSource,
+  ] = await Promise.all([
+    readFile('src/cli/runCli.ts', 'utf8'),
+    readFile('src/cli/buildCliApplication.ts', 'utf8'),
+    readFile('src/cli/commands/runDataStatus.ts', 'utf8'),
+    readFile('src/cli/runCliExecutable.ts', 'utf8'),
+    readFile('src/cli/runAdmittedCliCommand.ts', 'utf8'),
+    readFile('src/cli/runtime/createCliRuntimeContext.ts', 'utf8'),
+  ]);
   const eagerSources = [
     adapterSource,
     builderSource,
+    dataStatusSource,
     executableSource,
     lifecycleSource,
     runtimeSource,
@@ -86,6 +94,9 @@ test('pins one private Stricli parser authority with import-light eager modules'
   expect(builderSource).toContain('parse: parseTerminalWarnings');
   expect(builderSource).not.toContain("aliases: ['h']");
   expect(lifecycleSource).not.toMatch(RAW_ARGUMENT_TELEMETRY);
+  expect(dataStatusSource).toContain(
+    "await import('#radial/data-producer/internal/DataStatus.js')"
+  );
 
   for (const source of eagerSources) {
     expect(source).not.toMatch(OPERATIONAL_STATIC_IMPORT);
