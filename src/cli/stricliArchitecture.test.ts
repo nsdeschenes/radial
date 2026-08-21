@@ -14,6 +14,8 @@ const BUILD_ROUTE_MAP = /buildRouteMap\(/g;
 const STRICLI_RUN = /\brun\(application,/g;
 const RAW_INVOCATION_ADMISSION =
   /\bparseRoutePlanInvocation\b|\bthis\.invocation\b|\binvocation:\s*input\.args\b/u;
+const PRE_ADMISSION_ARGUMENT_TRANSFORMATION =
+  /\binput\.args\.(?:filter|flatMap|map|reduce|slice)\b|\badaptStricliToken\b/u;
 const MANUAL_ROUTE_HIERARCHY =
   /\brouteToken\(|const\s+(?:data|reload|root)\s*=\s*buildRouteMap\(/u;
 const RAW_ARGUMENT_TELEMETRY = /\b(?:args|invocation)\b/u;
@@ -62,10 +64,11 @@ test('pins one private Stricli parser authority with import-light eager modules'
   expect(adapterSource).not.toMatch(MANUAL_DISPATCH_PREDICATE);
   expect(adapterSource).not.toMatch(MANUAL_ROUTE_HIERARCHY);
   expect(adapterSource).not.toMatch(RAW_INVOCATION_ADMISSION);
+  expect(adapterSource).not.toMatch(PRE_ADMISSION_ARGUMENT_TRANSFORMATION);
   expect(adapterSource).toContain(
     'buildCatalogRouteMap(commandDescriptions, commandFor)'
   );
-  expect(adapterSource).toContain('input.args.map(adaptStricliToken)');
+  expect(adapterSource).toContain('await run(application, input.args, context)');
   expect(adapterSource).not.toContain("aliases: ['h']");
   expect(lifecycleSource).not.toMatch(RAW_ARGUMENT_TELEMETRY);
 
