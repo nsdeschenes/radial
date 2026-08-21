@@ -188,12 +188,17 @@ test('independently rejects a corrupt candidate and rolls back a publication fai
 });
 
 const INJECTED_FAILURE_BOUNDARIES = [
-  'before-transaction',
+  'gate-acquired',
+  'before-connection-acquisition',
+  'connection-acquired',
   'before-transaction-start',
   'transaction-started',
-  'candidate-write',
+  'before-candidate-write',
+  'candidate-written',
   'candidate-verified',
-  'active-marker-changed',
+  'active-marker-replaced',
+  'before-old-snapshot-removal',
+  'old-snapshot-removed',
   'before-commit',
 ] as const;
 
@@ -292,6 +297,219 @@ test('does not mutate when publication gate acquisition fails', async () => {
       airportSnapshotIds: [],
     });
   } finally {
+    instance.closeSync();
+    await rm(temporaryDirectory, {recursive: true});
+  }
+});
+
+test('cancels while waiting for the publication gate without acquiring storage', async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-publication-'));
+  const databasePath = join(temporaryDirectory, 'radial.duckdb');
+  const instance = await DuckDBInstance.create(databasePath);
+  const publicationGate = createPublicationGate();
+  const gateBlocker = deferred<void>();
+  const gateAcquired = deferred<void>();
+
+  try {
+    await producerSchema.prepare(instance);
+    await producerSchema.publishNavaidSnapshot(
+      instance,
+      createSyntheticNavaidSnapshotCandidate('2026-08-17T12:00:00.000Z'),
+      publicationGate,
+      {
+        snapshotId: FIRST_SNAPSHOT_ID,
+        publishedAt: () => '2026-08-17T12:00:02.000Z',
+      }
+    );
+    const blockingOperation = publicationGate.run(async () => {
+      gateAcquired.resolve();
+      await gateBlocker.promise;
+    });
+    await gateAcquired.promise;
+    const abortController = new AbortController();
+    let publicationStarted = false;
+    const publication = producerSchema.publishNavaidSnapshot(
+      instance,
+      createSyntheticNavaidSnapshotCandidate('2026-08-18T12:00:00.000Z'),
+      publicationGate,
+      {
+        snapshotId: SECOND_SNAPSHOT_ID,
+        signal: abortController.signal,
+        onBoundary: () => {
+          publicationStarted = true;
+        },
+      }
+    );
+    abortController.abort(new Error('cancel queued publication'));
+
+    await expect(publication).rejects.toThrow('cancel queued publication');
+    expect(publicationStarted).toBe(false);
+    await expect(activeState(instance)).resolves.toEqual({
+      activeSnapshotId: FIRST_SNAPSHOT_ID,
+      snapshotIds: [FIRST_SNAPSHOT_ID],
+      rawSnapshotIds: [FIRST_SNAPSHOT_ID],
+      airportSnapshotIds: [],
+    });
+    gateBlocker.resolve();
+    await blockingOperation;
+  } finally {
+    gateBlocker.resolve();
+    publicationGate.close();
+    instance.closeSync();
+    await rm(temporaryDirectory, {recursive: true});
+  }
+});
+
+test('reports an injected commit-start ambiguity conservatively', async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-publication-'));
+  const databasePath = join(temporaryDirectory, 'radial.duckdb');
+  const instance = await DuckDBInstance.create(databasePath);
+  const publicationGate = createPublicationGate();
+
+  try {
+    await producerSchema.prepare(instance);
+    await producerSchema.publishNavaidSnapshot(
+      instance,
+      createSyntheticNavaidSnapshotCandidate('2026-08-17T12:00:00.000Z'),
+      publicationGate,
+      {
+        snapshotId: FIRST_SNAPSHOT_ID,
+        publishedAt: () => '2026-08-17T12:00:02.000Z',
+      }
+    );
+
+    await expect(
+      producerSchema.publishNavaidSnapshot(
+        instance,
+        createSyntheticNavaidSnapshotCandidate('2026-08-18T12:00:00.000Z'),
+        publicationGate,
+        {
+          snapshotId: SECOND_SNAPSHOT_ID,
+          publishedAt: () => '2026-08-18T12:00:02.000Z',
+          onBoundary(boundary) {
+            if (boundary === 'commit-started') {
+              throw new Error('ambiguous commit result');
+            }
+          },
+        }
+      )
+    ).rejects.toMatchObject({
+      activeDataPreserved: false,
+      message: 'ambiguous commit result',
+    });
+    await expect(activeState(instance)).resolves.toEqual({
+      activeSnapshotId: FIRST_SNAPSHOT_ID,
+      snapshotIds: [FIRST_SNAPSHOT_ID],
+      rawSnapshotIds: [FIRST_SNAPSHOT_ID],
+      airportSnapshotIds: [],
+    });
+  } finally {
+    instance.closeSync();
+    await rm(temporaryDirectory, {recursive: true});
+  }
+});
+
+test('does not claim preservation when rollback itself fails', async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-publication-'));
+  const databasePath = join(temporaryDirectory, 'radial.duckdb');
+  const instance = await DuckDBInstance.create(databasePath);
+  const publicationGate = createPublicationGate();
+
+  try {
+    await producerSchema.prepare(instance);
+    await producerSchema.publishNavaidSnapshot(
+      instance,
+      createSyntheticNavaidSnapshotCandidate('2026-08-17T12:00:00.000Z'),
+      publicationGate,
+      {snapshotId: FIRST_SNAPSHOT_ID}
+    );
+
+    await expect(
+      producerSchema.publishNavaidSnapshot(
+        instance,
+        createSyntheticNavaidSnapshotCandidate('2026-08-18T12:00:00.000Z'),
+        publicationGate,
+        {
+          snapshotId: SECOND_SNAPSHOT_ID,
+          beforeCommit: () => {
+            throw new Error('publication failure');
+          },
+          onBoundary(boundary) {
+            if (boundary === 'rollback-started') {
+              throw new Error('rollback failure');
+            }
+          },
+        }
+      )
+    ).rejects.toMatchObject({activeDataPreserved: false});
+    await expect(activeState(instance)).resolves.toEqual({
+      activeSnapshotId: FIRST_SNAPSHOT_ID,
+      snapshotIds: [FIRST_SNAPSHOT_ID],
+      rawSnapshotIds: [FIRST_SNAPSHOT_ID],
+      airportSnapshotIds: [],
+    });
+  } finally {
+    instance.closeSync();
+    await rm(temporaryDirectory, {recursive: true});
+  }
+});
+
+test('concurrent inspection observes a complete old or new snapshot', async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-publication-'));
+  const databasePath = join(temporaryDirectory, 'radial.duckdb');
+  const instance = await DuckDBInstance.create(databasePath);
+  const publicationGate = createPublicationGate();
+  const beforeCommit = deferred<void>();
+  const continueCommit = deferred<void>();
+
+  try {
+    await producerSchema.prepare(instance);
+    await producerSchema.publishNavaidSnapshot(
+      instance,
+      createSyntheticNavaidSnapshotCandidate('2026-08-17T12:00:00.000Z'),
+      publicationGate,
+      {snapshotId: FIRST_SNAPSHOT_ID}
+    );
+    const publication = producerSchema.publishNavaidSnapshot(
+      instance,
+      createSyntheticNavaidSnapshotCandidate('2026-08-18T12:00:00.000Z'),
+      publicationGate,
+      {
+        snapshotId: SECOND_SNAPSHOT_ID,
+        onBoundary: async boundary => {
+          if (boundary === 'before-commit') {
+            beforeCommit.resolve();
+            await continueCommit.promise;
+          }
+        },
+      }
+    );
+    await beforeCommit.promise;
+
+    await expect(producerSchema.inspect(instance)).resolves.toMatchObject({
+      kind: 'current',
+      activeNavaidSnapshotId: FIRST_SNAPSHOT_ID,
+      snapshot: {
+        snapshotId: FIRST_SNAPSHOT_ID,
+        rawNavaidCount: 2,
+        plannerNavaidCount: 1,
+        exclusionCount: 1,
+      },
+    });
+    continueCommit.resolve();
+    await publication;
+    await expect(producerSchema.inspect(instance)).resolves.toMatchObject({
+      kind: 'current',
+      activeNavaidSnapshotId: SECOND_SNAPSHOT_ID,
+      snapshot: {
+        snapshotId: SECOND_SNAPSHOT_ID,
+        rawNavaidCount: 2,
+        plannerNavaidCount: 1,
+        exclusionCount: 1,
+      },
+    });
+  } finally {
+    continueCommit.resolve();
     instance.closeSync();
     await rm(temporaryDirectory, {recursive: true});
   }
@@ -410,4 +628,20 @@ async function activeState(instance: DuckDBInstance) {
   } finally {
     connection.closeSync();
   }
+}
+
+function deferred<Value>(): {
+  promise: Promise<Value>;
+  resolve: (value?: Value) => void;
+} {
+  let resolvePromise: ((value: Value) => void) | undefined;
+  const promise = new Promise<Value>(resolve => {
+    resolvePromise = resolve;
+  });
+  return {
+    promise,
+    resolve(value) {
+      resolvePromise?.(value as Value);
+    },
+  };
 }

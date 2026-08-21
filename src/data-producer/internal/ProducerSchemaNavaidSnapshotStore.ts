@@ -22,13 +22,20 @@ type SnapshotMetadataStorageRow = ReturnType<
 >;
 
 type NavaidPublicationBoundary =
-  | 'before-transaction'
+  | 'gate-acquired'
+  | 'before-connection-acquisition'
+  | 'connection-acquired'
   | 'before-transaction-start'
   | 'transaction-started'
-  | 'candidate-write'
+  | 'before-candidate-write'
+  | 'candidate-written'
   | 'candidate-verified'
-  | 'active-marker-changed'
-  | 'before-commit';
+  | 'active-marker-replaced'
+  | 'before-old-snapshot-removal'
+  | 'old-snapshot-removed'
+  | 'before-commit'
+  | 'commit-started'
+  | 'rollback-started';
 
 type PublicationOptions = Readonly<{
   snapshotId?: string;
@@ -97,9 +104,11 @@ async function publishNavaidSnapshotWithinGate(
   abortableOperation.throwIfAborted(options.signal);
   let connection: DuckDBConnection | undefined;
   try {
-    await options.onBoundary?.('before-transaction');
+    await options.onBoundary?.('gate-acquired');
+    await options.onBoundary?.('before-connection-acquisition');
     connection = await instance.connect();
     await connection.run('LOAD spatial');
+    await options.onBoundary?.('connection-acquired');
   } catch (error) {
     connection?.closeSync();
     if (abortableOperation.isAbortError(error)) {
@@ -143,18 +152,15 @@ async function publishNavaidSnapshotWithinGate(
         snapshotId
       );
       const previousSnapshotId = await activeSnapshotId(connection);
-      await insertCandidateRows(
-        connection,
-        storageRows,
-        options.signal,
-        options.onBoundary
-      );
+      await options.onBoundary?.('before-candidate-write');
+      await insertCandidateRows(connection, storageRows, options.signal);
       await regenerateAirportProjections(
         connection,
         snapshotId,
         candidate.provenance.magneticModel.referenceDate,
         options.signal
       );
+      await options.onBoundary?.('candidate-written');
       abortableOperation.throwIfAborted(options.signal);
       await verifyStoredCandidate(connection, snapshotId, candidate, storageRows);
       await options.onBoundary?.('candidate-verified');
@@ -174,11 +180,13 @@ async function publishNavaidSnapshotWithinGate(
          WHERE singleton`,
         [snapshotId]
       );
-      await options.onBoundary?.('active-marker-changed');
+      await options.onBoundary?.('active-marker-replaced');
       abortableOperation.throwIfAborted(options.signal);
       await verifyActiveJoins(connection, snapshotId, candidate);
       if (previousSnapshotId !== null) {
+        await options.onBoundary?.('before-old-snapshot-removal');
         await removeSnapshot(connection, previousSnapshotId, options.signal);
+        await options.onBoundary?.('old-snapshot-removed');
       }
 
       await verifyNoCrossSnapshotReferences(connection);
@@ -196,6 +204,7 @@ async function publishNavaidSnapshotWithinGate(
       await options.onBoundary?.('before-commit');
       abortableOperation.throwIfAborted(options.signal);
       commitStarted = true;
+      await options.onBoundary?.('commit-started');
       await connection.run('COMMIT');
     } catch (publicationError) {
       if (!transactionStarted) {
@@ -208,6 +217,7 @@ async function publishNavaidSnapshotWithinGate(
       }
 
       try {
+        await options.onBoundary?.('rollback-started');
         await connection.run('ROLLBACK');
         throw new NavaidSnapshotPublicationError(
           !commitStarted,
@@ -311,8 +321,7 @@ async function insertSnapshotMetadata(
 async function insertCandidateRows(
   connection: DuckDBConnection,
   storage: NavaidSnapshotStorageRows,
-  signal?: AbortSignal,
-  onBoundary?: PublicationOptions['onBoundary']
+  signal?: AbortSignal
 ): Promise<void> {
   for (const raw of storage.rawNavaids) {
     abortableOperation.throwIfAborted(signal);
@@ -321,7 +330,6 @@ async function insertCandidateRows(
        VALUES (CAST(? AS UUID), ?, CAST(? AS JSON), ?)`,
       [raw.snapshotId, raw.sourceRecordId, raw.canonicalRecord, raw.recordChecksum]
     );
-    await onBoundary?.('candidate-write');
   }
 
   for (const navaid of storage.plannerNavaids) {
@@ -348,7 +356,6 @@ async function insertCandidateRows(
         navaid.facilityVariationEffectiveDate,
       ]
     );
-    await onBoundary?.('candidate-write');
   }
 
   for (const exclusion of storage.exclusions) {
@@ -357,7 +364,6 @@ async function insertCandidateRows(
       `INSERT INTO radial_producer.navaid_exclusions VALUES (CAST(? AS UUID), ?, ?)`,
       [exclusion.snapshotId, exclusion.sourceRecordId, exclusion.reason]
     );
-    await onBoundary?.('candidate-write');
   }
 
   for (const audit of storage.facilityVariationAudits) {
@@ -373,7 +379,6 @@ async function insertCandidateRows(
         audit.auditRecord,
       ]
     );
-    await onBoundary?.('candidate-write');
   }
 }
 

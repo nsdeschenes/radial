@@ -73,13 +73,13 @@ try {
 function boundaryForPhase(phaseName: string): string {
   switch (phaseName) {
     case 'before-mutation':
-      return 'before-transaction';
+      return 'before-connection-acquisition';
     case 'during-writes':
-      return 'candidate-write';
+      return 'candidate-written';
     case 'after-candidate-verification':
       return 'candidate-verified';
     case 'after-active-marker':
-      return 'active-marker-changed';
+      return 'active-marker-replaced';
     case 'before-commit':
       return 'before-commit';
     default:
