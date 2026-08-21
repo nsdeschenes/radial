@@ -2,6 +2,7 @@ import {createHash} from 'node:crypto';
 
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
 import faaNasrFacilityVariation from '#radial/data-producer/internal/FAANasrFacilityVariation.js';
+import type NavaidSnapshotCandidate from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotCandidate.js';
 import Wmm2025 from '#radial/data-producer/internal/Wmm2025.js';
 
 const {localMagneticDeclinationFromWmm2025, wmm2025Provenance} = Wmm2025;
@@ -10,16 +11,8 @@ const FREQUENCY_VALUE_PATTERN = /^\d{3}\.\d{3}$/;
 type FAANasrCycleArtifact = Parameters<
   typeof faaNasrFacilityVariation.selectApplicableCycle
 >[0][number];
-type FacilityVariationAudit = ReturnType<typeof faaNasrFacilityVariation.match>['audit'];
-
-type NavaidFamily =
-  | 'NDB'
-  | 'VOR'
-  | 'VOR-DME'
-  | 'VORTAC'
-  | 'DVOR'
-  | 'DVOR-DME'
-  | 'DVORTAC';
+type FacilityVariationAudit = NavaidSnapshotCandidate['facilityVariationAudits'][number];
+type NavaidFamily = NavaidSnapshotCandidate['plannerNavaids'][number]['family'];
 
 const FAMILY_BY_TYPE = new Map<number, NavaidFamily>([
   [2, 'NDB'],
@@ -34,90 +27,15 @@ const DEFAULT_PUBLISHED_RANGE_NM = 90;
 
 type JsonObject = Readonly<Record<string, unknown>>;
 
-type MagneticModelProvenance = Readonly<{
-  model: string;
-  version: string;
-  epochYear: number;
-  referenceDate: string;
-  source: string;
-  coefficientChecksum: string;
-}>;
-
 type CandidateInputProvenance = Readonly<{
   sourceIdentity: string;
   derivationPolicyIdentity: string;
   matchingPolicyIdentity: string;
 }>;
 
-type CandidateProvenance = CandidateInputProvenance &
-  Readonly<{
-    magneticModel: MagneticModelProvenance;
-    faaNasr: Readonly<{
-      archiveChecksum: string;
-      archiveIdentity: string;
-      contentChecksum: string;
-      cycleId: string;
-      effectiveDate: string;
-      publishedAt: string;
-      retrievedAt: string;
-      sourceUrl: string;
-    }>;
-  }>;
-
-type RawNavaid = Readonly<{
-  sourceRecordId: string;
-  canonicalRecord: string;
-  recordChecksum: string;
-}>;
-
-type PlannerNavaid = Readonly<{
-  sourceRecordId: string;
-  databaseId: string;
-  identifier: string;
-  name: string;
-  family: NavaidFamily;
-  longitude: number;
-  latitude: number;
-  frequencyValue: number;
-  frequencyUnit: 'kHz' | 'MHz';
-  publishedRangeNm: number;
-  magneticDeclinationDegEast: number | null;
-  facilityVariationDegEast: number | null;
-  facilityVariationSource: string | null;
-  facilityVariationEffectiveDate: string | null;
-}>;
-
-type NavaidExclusionReason =
-  | 'missing-stable-identity'
-  | 'unsupported-navaid-type'
-  | 'invalid-coordinates'
-  | 'missing-identifier'
-  | 'invalid-frequency'
-  | 'invalid-published-range';
-
-type NavaidExclusion = Readonly<{
-  sourceRecordId: string;
-  reason: NavaidExclusionReason;
-}>;
-
-type ComponentChecksums = Readonly<{
-  rawNavaids: string;
-  plannerNavaids: string;
-  exclusions: string;
-  facilityVariationAudits: string;
-}>;
-
-type NavaidSnapshotCandidate = Readonly<{
-  retrievedAt: string;
-  retrievalCompletedAt: string;
-  provenance: CandidateProvenance;
-  rawNavaids: readonly RawNavaid[];
-  plannerNavaids: readonly PlannerNavaid[];
-  exclusions: readonly NavaidExclusion[];
-  facilityVariationAudits: readonly FacilityVariationAudit[];
-  componentChecksums: ComponentChecksums;
-  snapshotChecksum: string;
-}>;
+type CandidateProvenance = NavaidSnapshotCandidate['provenance'];
+type PlannerNavaid = NavaidSnapshotCandidate['plannerNavaids'][number];
+type NavaidExclusion = NavaidSnapshotCandidate['exclusions'][number];
 
 type BuildCandidateRequest = Readonly<{
   faaNasrCycles: readonly FAANasrCycleArtifact[];

@@ -6,6 +6,7 @@ import {DuckDBInstance} from '@duckdb/node-api';
 import {expect, test} from 'vitest';
 
 import FifoOperationCoordinator from '#radial/application/internal/FifoOperationCoordinator.js';
+import validateNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidateValidation.js';
 import publishNavaidSnapshot from '#radial/data-producer/internal/NavaidSnapshotPublication.js';
 import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
@@ -139,12 +140,9 @@ test('independently rejects a corrupt candidate and rolls back a publication fai
       },
     };
 
-    await expect(
-      publishNavaidSnapshot(instance, corruptCandidate, publicationGate, {
-        snapshotId: SECOND_SNAPSHOT_ID,
-        publishedAt: () => '2026-08-18T12:00:02.000Z',
-      })
-    ).rejects.toThrow('candidate raw Navaid checksum does not reconcile');
+    expect(() => validateNavaidSnapshotCandidate(corruptCandidate)).toThrow(
+      'candidate raw Navaid checksum does not reconcile'
+    );
     await expect(
       publishNavaidSnapshot(
         instance,

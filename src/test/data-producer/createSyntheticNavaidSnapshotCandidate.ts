@@ -1,9 +1,10 @@
 import buildNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidate.js';
+import validateNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidateValidation.js';
 import createSyntheticFAANasrCycle from '#radial/test/createSyntheticFAANasrCycle.js';
 
 function createSyntheticNavaidSnapshotCandidate(retrievedAt: string) {
   const retrievalCompletedAt = new Date(Date.parse(retrievedAt) + 1_000).toISOString();
-  return buildNavaidSnapshotCandidate({
+  const candidate = buildNavaidSnapshotCandidate({
     faaNasrCycles: [
       createSyntheticFAANasrCycle(
         [
@@ -43,6 +44,7 @@ function createSyntheticNavaidSnapshotCandidate(retrievedAt: string) {
     retrievedAt,
     retrievalCompletedAt,
   });
+  return validateNavaidSnapshotCandidate(candidate);
 }
 
 export default createSyntheticNavaidSnapshotCandidate;

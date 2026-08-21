@@ -8,6 +8,7 @@ import {expect, test} from 'vitest';
 import FifoOperationCoordinator from '#radial/application/internal/FifoOperationCoordinator.js';
 import readDataStatus from '#radial/data-producer/internal/DataStatus.js';
 import buildNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidate.js';
+import validateNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidateValidation.js';
 import publishNavaidSnapshot from '#radial/data-producer/internal/NavaidSnapshotPublication.js';
 import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
@@ -170,7 +171,7 @@ test('reports the active snapshot provenance, counts, and Facility Variation rea
     });
     await publishNavaidSnapshot(
       instance,
-      candidate,
+      validateNavaidSnapshotCandidate(candidate),
       new PublicationGate(new FifoOperationCoordinator()),
       {
         snapshotId: '11111111-1111-4111-8111-111111111111',

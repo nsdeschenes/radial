@@ -6,6 +6,7 @@ import type RadialApplicationTypes from '#radial/application/RadialApplicationTy
 import FAANasrCycleSourceError from '#radial/data-producer/internal/FAANasrCycleSourceError.js';
 import faaNasrFacilityVariation from '#radial/data-producer/internal/FAANasrFacilityVariation.js';
 import buildNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidate.js';
+import validateNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidateValidation.js';
 import publishNavaidSnapshot from '#radial/data-producer/internal/NavaidSnapshotPublication.js';
 import NavaidSnapshotPublicationError from '#radial/data-producer/internal/NavaidSnapshotPublicationError.js';
 import NavaidSnapshotValidationError from '#radial/data-producer/internal/NavaidSnapshotValidationError.js';
@@ -13,6 +14,7 @@ import captureOpenAIPNavaids from '#radial/data-producer/internal/OpenAIPNavaidC
 import OpenAIPNavaidCaptureError from '#radial/data-producer/internal/OpenAIPNavaidCaptureError.js';
 import type OpenAIPNavaidTransport from '#radial/data-producer/internal/OpenAIPNavaidTransport.js';
 import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import type NavaidSnapshotCandidate from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotCandidate.js';
 import acquireProductionFAANasrCycle from '#radial/data-producer/internal/ProductionFAANasrCycleSource.js';
 import createProductionOpenAIPNavaidTransport from '#radial/data-producer/internal/ProductionOpenAIPNavaidTransport.js';
 import type PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
@@ -213,7 +215,7 @@ async function reloadNavaids(
   request.onProgress?.({stage: 'derive', message: 'validating raw records'});
   request.onProgress?.({stage: 'derive', message: 'deriving planner-ready data'});
   request.onProgress?.({stage: 'derive', message: 'calculating magnetic data'});
-  let candidate: ReturnType<typeof buildNavaidSnapshotCandidate>;
+  let candidate: NavaidSnapshotCandidate;
   try {
     candidate = Sentry.startSpan(
       {name: 'Derive Navaid Snapshot candidate', op: 'function'},
@@ -266,6 +268,7 @@ async function reloadNavaids(
   abortableOperation.throwIfAborted(request.signal);
   request.onProgress?.({stage: 'publish', message: 'publishing Navaid Snapshot'});
   try {
+    const validatedCandidate = validateNavaidSnapshotCandidate(candidate);
     const published = await Sentry.startSpan(
       {
         name: 'Publish Navaid Snapshot',
@@ -277,7 +280,7 @@ async function reloadNavaids(
         },
       },
       () =>
-        publishNavaidSnapshot(instance, candidate, publicationGate, {
+        publishNavaidSnapshot(instance, validatedCandidate, publicationGate, {
           ...(dependencies.beforeNavaidCommit === undefined
             ? {}
             : {beforeCommit: dependencies.beforeNavaidCommit}),
@@ -286,14 +289,14 @@ async function reloadNavaids(
     );
     request.onProgress?.({stage: 'complete', message: 'Navaid Snapshot committed.'});
     Sentry.logger.info('Navaid Snapshot published', {
-      'radial.navaid.exclusion_count': candidate.exclusions.length,
-      'radial.navaid.planner_count': candidate.plannerNavaids.length,
+      'radial.navaid.exclusion_count': validatedCandidate.exclusions.length,
+      'radial.navaid.planner_count': validatedCandidate.plannerNavaids.length,
       'radial.navaid.snapshot_id': published.snapshotId,
     });
     for (const [kind, count] of [
-      ['excluded', candidate.exclusions.length],
-      ['planner', candidate.plannerNavaids.length],
-      ['raw', candidate.rawNavaids.length],
+      ['excluded', validatedCandidate.exclusions.length],
+      ['planner', validatedCandidate.plannerNavaids.length],
+      ['raw', validatedCandidate.rawNavaids.length],
     ] as const) {
       Sentry.metrics.gauge('radial.product.navaid_records', count, {
         attributes: {kind},
@@ -304,10 +307,10 @@ async function reloadNavaids(
       ok: true,
       value: {
         ...published,
-        ...committedCounts(candidate),
-        retrievedAt: candidate.retrievedAt,
-        retrievalCompletedAt: candidate.retrievalCompletedAt,
-        provenance: candidate.provenance,
+        ...committedCounts(validatedCandidate),
+        retrievedAt: validatedCandidate.retrievedAt,
+        retrievalCompletedAt: validatedCandidate.retrievalCompletedAt,
+        provenance: validatedCandidate.provenance,
       },
     };
   } catch (error) {
@@ -347,7 +350,7 @@ async function reloadNavaids(
   }
 }
 
-function committedCounts(candidate: ReturnType<typeof buildNavaidSnapshotCandidate>) {
+function committedCounts(candidate: NavaidSnapshotCandidate) {
   const exclusionCounts = new Map<string, number>();
   for (const exclusion of candidate.exclusions) {
     exclusionCounts.set(
