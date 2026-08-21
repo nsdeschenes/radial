@@ -43,25 +43,7 @@ function buildCliApplication(): Application<CliStricliContext> {
       docs: {brief: 'Read local data status'},
       loader: admittedLoader(async () => {
         const commandModule = await import('#radial/cli/commands/runDataStatus.js');
-        return async (runtime, telemetry) => {
-          const result = await commandModule.default({}, runtime);
-          if (result.kind === 'expected-failure') {
-            telemetry.recordOperation({
-              kind: 'data-status-failed',
-              activeDataPreserved: result.failure.activeDataPreserved,
-              failureCode: result.failure.code,
-            });
-          } else if (result.kind === 'success') {
-            telemetry.recordOperation({
-              kind: 'data-status-completed',
-              cachedAirportCount: result.success.cachedAirports.length,
-              snapshotPresent: result.success.snapshot !== null,
-              status: result.success.status,
-            });
-          }
-
-          return result;
-        };
+        return (runtime, telemetry) => commandModule.default({}, runtime, telemetry);
       }),
       parameters: {flags: noFlags, positional: noPositionals},
     })
@@ -107,24 +89,12 @@ function buildCliApplication(): Application<CliStricliContext> {
       loader: admittedLoader(async (flags, departureIcao, arrivalIcao) => {
         const commandModule = await import('#radial/cli/commands/runPlanRoute.js');
         const request = {arrivalIcao, departureIcao};
-        return async (runtime, telemetry) => {
-          const result = await commandModule.default(
+        return (runtime, telemetry) =>
+          commandModule.default(
             {request, warningDetailsRequested: flags.warnings === true},
-            runtime
+            runtime,
+            telemetry
           );
-          if (result.kind === 'success') {
-            telemetry.recordOperation({
-              kind: 'route-plan-completed',
-              arrivalIcao: result.request.arrivalIcao,
-              departureIcao: result.request.departureIcao,
-              routeDistanceNm: result.success.plan.totalDistanceNm,
-              routeLegCount: result.success.plan.routeLegs.length,
-              warningCodes: result.success.warnings.map(warning => warning.code),
-            });
-          }
-
-          return result;
-        };
       }),
       parameters: {
         flags: {

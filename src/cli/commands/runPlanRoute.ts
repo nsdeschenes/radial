@@ -6,6 +6,7 @@ import formatRoutePlanningWarnings from '#radial/cli/formatRoutePlanningWarnings
 import formatRoutePlanningWarningSummary from '#radial/cli/formatRoutePlanningWarningSummary.js';
 import cliInterruption from '#radial/cli/runtime/CliInterruption.js';
 import type CliRuntimeTypes from '#radial/cli/runtime/CliRuntimeContext.js';
+import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
 
 type PlanRouteInput = Readonly<{
   request: ApplicationTypes['RoutePlanningRequest'];
@@ -26,7 +27,8 @@ type PlanRouteResult =
 
 async function runPlanRoute(
   input: PlanRouteInput,
-  runtime: CliRuntimeTypes['Context']
+  runtime: CliRuntimeTypes['Context'],
+  telemetry: CliTelemetryTypes['Session']
 ): Promise<PlanRouteResult> {
   const configuredFactor = runtime.env['RADIAL_MAX_ROUTE_FACTOR'];
   let applicationResult:
@@ -108,6 +110,17 @@ async function runPlanRoute(
       diagnostics.formatPlannerOpenDiagnostic(applicationResult.failure)
     );
     return {kind: 'expected-failure', status: 1};
+  }
+
+  if (applicationResult.value.kind === 'success') {
+    telemetry.recordOperation({
+      kind: 'route-plan-completed',
+      arrivalIcao: applicationResult.value.request.arrivalIcao,
+      departureIcao: applicationResult.value.request.departureIcao,
+      routeDistanceNm: applicationResult.value.success.plan.totalDistanceNm,
+      routeLegCount: applicationResult.value.success.plan.routeLegs.length,
+      warningCodes: applicationResult.value.success.warnings.map(warning => warning.code),
+    });
   }
 
   return applicationResult.value;
