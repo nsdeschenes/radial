@@ -36,6 +36,35 @@ test('fails when Stricli returns an unexpected framework status', async () => {
   ).rejects.toThrow('Unexpected Stricli framework exit code 17.');
 });
 
+test('does not retry or transform an invocation rejected by Stricli', async () => {
+  vi.resetModules();
+  const frameworkRun = vi.fn(
+    async (
+      _application: unknown,
+      _args: readonly string[],
+      context: FrameworkContext
+    ) => {
+      context.process.exitCode = -4;
+    }
+  );
+  vi.doMock('@stricli/core', async importOriginal => {
+    const actual = await importOriginal<typeof import('@stricli/core')>();
+    return {...actual, run: frameworkRun};
+  });
+  const invocation = ['CYYZ', 'CYOW', '--warnings'] as const;
+  const {default: runCli} = await import('#radial/cli/runCli.js');
+
+  await expect(
+    runCli({
+      args: invocation,
+      env: {},
+      io: {writeStderr() {}, writeStdout() {}},
+    })
+  ).rejects.toThrow('Stricli rejected an invocation');
+  expect(frameworkRun).toHaveBeenCalledOnce();
+  expect(frameworkRun.mock.calls[0]?.[1]).toBe(invocation);
+});
+
 async function mockFrameworkExitCode(exitCode: number): Promise<void> {
   vi.resetModules();
   vi.doMock('@stricli/core', async importOriginal => {

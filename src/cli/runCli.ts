@@ -55,17 +55,13 @@ type CommandDescription<
   loadExecution(flags: Flags, ...args: Args): Promise<CliInputTypes['CommandExecution']>;
 }>;
 
-type RoutePlanArgs = [
-  departureIcao: string,
-  arrivalIcao: string,
-  warningDetailsRequested?: boolean,
-];
+type RoutePlanFlags = Readonly<{warnings?: boolean}>;
+type RoutePlanArgs = [departureIcao: string, arrivalIcao: string];
 type AirportReloadArgs = [icao: string];
 type NoFlags = Readonly<Record<never, never>>;
 type NoArgs = [];
 
 const INTERNAL_PLAN_ROUTE = '\0radial-plan-route';
-const INTERNAL_WARNINGS_ARGUMENT = '\0radial-warnings';
 const airportReloadUsage =
   'error [DATA_USAGE]: Invalid data command.\n' +
   'Cause: The Airport reload accepts exactly one ICAO and no operational flags.\n' +
@@ -77,12 +73,20 @@ function describeCommand<Flags extends BaseFlags, Args extends BaseArgs>() {
   ) => description;
 }
 
-const routePlan = describeCommand<NoFlags, RoutePlanArgs>()({
+const routePlan = describeCommand<RoutePlanFlags, RoutePlanArgs>()({
   id: 'plan-route',
   route: [INTERNAL_PLAN_ROUTE],
   docs: {brief: 'Plan a Route'},
   parameters: {
-    flags: {},
+    flags: {
+      warnings: {
+        brief: 'Show Route Plan warning details',
+        inferEmpty: true,
+        kind: 'parsed',
+        optional: true,
+        parse: parseTerminalWarnings,
+      },
+    },
     positional: {
       kind: 'tuple',
       parameters: [
@@ -95,12 +99,6 @@ const routePlan = describeCommand<NoFlags, RoutePlanArgs>()({
           brief: 'Arrival Airport ICAO',
           parse: parseRoutePlanArrivalIcao,
           placeholder: 'arrival-icao',
-        },
-        {
-          brief: 'Show Route Plan warning details',
-          optional: true,
-          parse: parseTerminalWarnings,
-          placeholder: '--warnings',
         },
       ],
     },
@@ -136,12 +134,12 @@ const routePlan = describeCommand<NoFlags, RoutePlanArgs>()({
       },
     } as const;
   },
-  async loadExecution(_flags, departureIcao, arrivalIcao, warningDetailsRequested) {
+  async loadExecution(flags, departureIcao, arrivalIcao) {
     const commandModule = await import('#radial/cli/commands/runPlanRoute.js');
     const request = {arrivalIcao, departureIcao};
     return (runtime, telemetry) =>
       commandModule.default(
-        {request, warningDetailsRequested: warningDetailsRequested === true},
+        {request, warningDetailsRequested: flags.warnings === true},
         runtime,
         telemetry
       );
@@ -340,8 +338,8 @@ function parseRoutePlanArrivalIcao(this: CliStricliContext, input: string): stri
 }
 
 function parseTerminalWarnings(input: string): boolean {
-  if (input !== INTERNAL_WARNINGS_ARGUMENT) {
-    throw new Error('Radial rejected the Route Plan warning-details argument.');
+  if (input !== '') {
+    throw new Error('Radial accepts --warnings only as the terminal argument.');
   }
 
   return true;
@@ -626,18 +624,12 @@ const runCli: RunCli = async input => {
       },
     },
   };
-  const context: CliStricliContext = {
-    input,
-    process: processFacade,
-    routePlanDepartureIcao: {value: undefined},
-    selectedDescription: {value: undefined},
-  };
   compatibilityInvocations.set(processFacade, input.args);
 
-  await run(application, input.args.map(adaptStricliToken), context);
+  await runCliApplication(application, input, processFacade);
 
   const exitCode = processFacade.exitCode;
-  if (exitCode === ExitCode.InvalidArgument || exitCode === ExitCode.UnknownCommand) {
+  if (isFrameworkRejection(exitCode)) {
     input.io.writeStderr(rejectedInvocationDiagnostic(input.args));
   } else if (frameworkStderr !== '') {
     input.io.writeStderr(frameworkStderr);
@@ -646,12 +638,26 @@ const runCli: RunCli = async input => {
   return translateExitCode(exitCode);
 };
 
-function adaptStricliToken(argument: string): string {
-  return argument === '--warnings' ? INTERNAL_WARNINGS_ARGUMENT : argument;
+async function runCliApplication(
+  application: Application<CliStricliContext>,
+  input: CliInputTypes['Input'],
+  process: StricliProcess
+): Promise<void> {
+  const context: CliStricliContext = {
+    input,
+    process,
+    routePlanDepartureIcao: {value: undefined},
+    selectedDescription: {value: undefined},
+  };
+  await run(application, input.args, context);
+}
+
+function isFrameworkRejection(exitCode: number | string | null | undefined): boolean {
+  return exitCode === ExitCode.InvalidArgument || exitCode === ExitCode.UnknownCommand;
 }
 
 function translateExitCode(exitCode: number | string | null | undefined): number {
-  if (exitCode === ExitCode.InvalidArgument || exitCode === ExitCode.UnknownCommand) {
+  if (isFrameworkRejection(exitCode)) {
     return 2;
   }
 
