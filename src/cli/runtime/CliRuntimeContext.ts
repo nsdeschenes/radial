@@ -1,6 +1,8 @@
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
+import type runCli from '#radial/cli/runCli.js';
 
-type CliCommandId = 'plan-route' | 'data-status' | 'reload-navaids' | 'reload-airport';
+type CliCommandTypes = NonNullable<(typeof runCli)['commandTypes']>;
+type CliCommandId = CliCommandTypes['id'];
 
 type CliIo = Readonly<{
   writeStdout(text: string): void;

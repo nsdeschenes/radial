@@ -32,7 +32,7 @@ function createCliTelemetrySession(
   return {
     async execute(metadata, operation) {
       const commandAttributes = {
-        ...metadata.attributes,
+        ...('attributes' in metadata ? metadata.attributes : {}),
         'radial.cli.command': metadata.id,
       };
       return client.startSpan(
