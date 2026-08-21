@@ -1,5 +1,6 @@
 import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 
+import producerSchemaNavaidSnapshotCodec from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotCodec.js';
 import committedNavaidSnapshotInspection from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotInspection.js';
 import publishValidatedNavaidSnapshot from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotStore.js';
 import type PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
@@ -392,13 +393,14 @@ async function publishNavaidSnapshot(
   instance: DuckDBInstance,
   candidate: ValidatedNavaidSnapshotCandidate,
   publicationGate: PublicationGate,
-  options: Parameters<typeof publishValidatedNavaidSnapshot>[4] = {}
+  options: Parameters<typeof publishValidatedNavaidSnapshot>[5] = {}
 ) {
   return publishValidatedNavaidSnapshot(
     instance,
     candidate,
     publicationGate,
     inspectProducerSchemaTransaction,
+    producerSchemaNavaidSnapshotCodec,
     options
   );
 }
@@ -454,7 +456,8 @@ async function inspectProducerSchemaTransaction(
   try {
     committedNavaids = await committedNavaidSnapshotInspection.inspect(
       connection,
-      state.activeNavaidSnapshotId
+      state.activeNavaidSnapshotId,
+      producerSchemaNavaidSnapshotCodec
     );
   } catch (error) {
     if (committedNavaidSnapshotInspection.isInvalidError(error)) {

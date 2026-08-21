@@ -4,7 +4,7 @@ import type {DuckDBConnection} from '@duckdb/node-api';
 
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
 import type NavaidSnapshotCandidate from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotCandidate.js';
-import producerSchemaNavaidSnapshotCodec from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotCodec.js';
+import type producerSchemaNavaidSnapshotCodec from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotCodec.js';
 import Wmm2025 from '#radial/data-producer/internal/Wmm2025.js';
 
 const CHECKSUM_PATTERN = /^sha256:[0-9a-f]{64}$/;
@@ -33,6 +33,7 @@ const AUDIT_OUTCOMES = new Set([
   'unusable-source-value',
 ]);
 
+type ProducerSchemaNavaidSnapshotCodec = typeof producerSchemaNavaidSnapshotCodec;
 type CachedAirport = Readonly<{
   icao: string;
   sourceId: string;
@@ -89,7 +90,8 @@ type CommittedInspection = Readonly<{
 
 async function inspectCommittedNavaidSnapshot(
   connection: DuckDBConnection,
-  activeSnapshotId: string | null
+  activeSnapshotId: string | null,
+  codec: ProducerSchemaNavaidSnapshotCodec
 ): Promise<CommittedInspection> {
   const cachedStorage = await readCachedAirports(connection);
   validateCachedAirports(cachedStorage);
@@ -99,9 +101,9 @@ async function inspectCommittedNavaidSnapshot(
   }
 
   const storage = await readSnapshotStorage(connection, activeSnapshotId);
-  let decoded: ReturnType<typeof producerSchemaNavaidSnapshotCodec.decode>;
+  let decoded: ReturnType<ProducerSchemaNavaidSnapshotCodec['decode']>;
   try {
-    decoded = producerSchemaNavaidSnapshotCodec.decode(storage);
+    decoded = codec.decode(storage);
   } catch (error) {
     throw invalid(
       error instanceof Error
@@ -110,7 +112,7 @@ async function inspectCommittedNavaidSnapshot(
     );
   }
 
-  validateDecodedSnapshot(decoded);
+  validateDecodedSnapshot(decoded, codec);
   await validatePlannerAirports(connection, activeSnapshotId, cachedStorage, decoded);
   return {cachedAirports, snapshot: summarize(decoded)};
 }
@@ -253,7 +255,8 @@ async function readSnapshotStorage(connection: DuckDBConnection, snapshotId: str
 }
 
 function validateDecodedSnapshot(
-  snapshot: ReturnType<typeof producerSchemaNavaidSnapshotCodec.decode>
+  snapshot: ReturnType<ProducerSchemaNavaidSnapshotCodec['decode']>,
+  codec: ProducerSchemaNavaidSnapshotCodec
 ): void {
   const {metadata} = snapshot;
   if (
@@ -393,8 +396,7 @@ function validateDecodedSnapshot(
     throw invalid('Committed Navaid Snapshot counts do not reconcile.');
   }
 
-  const recomputed =
-    producerSchemaNavaidSnapshotCodec.recomputeComponentChecksums(snapshot);
+  const recomputed = codec.recomputeComponentChecksums(snapshot);
   if (
     Object.entries(recomputed).some(
       ([name, value]) =>
@@ -430,7 +432,7 @@ function validFacilityVariationColumns(
 function validAudit(
   audit: NavaidSnapshotCandidate['facilityVariationAudits'][number],
   navaid: NavaidSnapshotCandidate['plannerNavaids'][number],
-  metadata: ReturnType<typeof producerSchemaNavaidSnapshotCodec.decode>['metadata']
+  metadata: ReturnType<ProducerSchemaNavaidSnapshotCodec['decode']>['metadata']
 ): boolean {
   const nasr = metadata.faaNasr;
   if (
@@ -551,7 +553,7 @@ async function validatePlannerAirports(
   connection: DuckDBConnection,
   snapshotId: string,
   cachedAirports: readonly CachedAirportStorage[],
-  snapshot: ReturnType<typeof producerSchemaNavaidSnapshotCodec.decode>
+  snapshot: ReturnType<ProducerSchemaNavaidSnapshotCodec['decode']>
 ): Promise<void> {
   const projectionRows = await rows(
     connection,
@@ -593,7 +595,7 @@ async function validatePlannerAirports(
 }
 
 function summarize(
-  snapshot: ReturnType<typeof producerSchemaNavaidSnapshotCodec.decode>
+  snapshot: ReturnType<ProducerSchemaNavaidSnapshotCodec['decode']>
 ): SnapshotSummary {
   const {metadata} = snapshot;
   const exclusionCounts = grouped(snapshot.exclusions.map(row => row.reason));

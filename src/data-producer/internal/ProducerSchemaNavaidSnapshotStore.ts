@@ -5,7 +5,7 @@ import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 import abortableOperation from '#radial/application/internal/AbortableOperation.js';
 import NavaidSnapshotPublicationError from '#radial/data-producer/internal/NavaidSnapshotPublicationError.js';
 import type NavaidSnapshotCandidate from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotCandidate.js';
-import producerSchemaNavaidSnapshotCodec from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotCodec.js';
+import type producerSchemaNavaidSnapshotCodec from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotCodec.js';
 import type PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 import type ValidatedNavaidSnapshotCandidate from '#radial/data-producer/internal/ValidatedNavaidSnapshotCandidate.js';
 import Wmm2025 from '#radial/data-producer/internal/Wmm2025.js';
@@ -14,11 +14,12 @@ const {localMagneticDeclinationFromWmm2025} = Wmm2025;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+type ProducerSchemaNavaidSnapshotCodec = typeof producerSchemaNavaidSnapshotCodec;
 type NavaidSnapshotStorageRows = ReturnType<
-  typeof producerSchemaNavaidSnapshotCodec.encodeRows
+  ProducerSchemaNavaidSnapshotCodec['encodeRows']
 >;
 type SnapshotMetadataStorageRow = ReturnType<
-  typeof producerSchemaNavaidSnapshotCodec.encodeMetadata
+  ProducerSchemaNavaidSnapshotCodec['encodeMetadata']
 >;
 
 type NavaidPublicationBoundary =
@@ -76,6 +77,7 @@ async function publishNavaidSnapshot(
   candidate: ValidatedNavaidSnapshotCandidate,
   publicationGate: PublicationGate,
   inspectPrecondition: (connection: DuckDBConnection) => Promise<PublicationPrecondition>,
+  codec: ProducerSchemaNavaidSnapshotCodec,
   options: PublicationOptions = {}
 ): Promise<PublicationReceipt> {
   abortableOperation.throwIfAborted(options.signal);
@@ -88,6 +90,7 @@ async function publishNavaidSnapshot(
         candidate,
         snapshotId,
         inspectPrecondition,
+        codec,
         options
       ),
     options.signal
@@ -99,6 +102,7 @@ async function publishNavaidSnapshotWithinGate(
   candidate: NavaidSnapshotCandidate,
   snapshotId: string,
   inspectPrecondition: (connection: DuckDBConnection) => Promise<PublicationPrecondition>,
+  codec: ProducerSchemaNavaidSnapshotCodec,
   options: PublicationOptions
 ): Promise<PublicationReceipt> {
   abortableOperation.throwIfAborted(options.signal);
@@ -147,10 +151,7 @@ async function publishNavaidSnapshotWithinGate(
         );
       }
 
-      const storageRows = producerSchemaNavaidSnapshotCodec.encodeRows(
-        candidate,
-        snapshotId
-      );
+      const storageRows = codec.encodeRows(candidate, snapshotId);
       const previousSnapshotId = await activeSnapshotId(connection);
       await options.onBoundary?.('before-candidate-write');
       await insertCandidateRows(connection, storageRows, options.signal);
@@ -167,11 +168,7 @@ async function publishNavaidSnapshotWithinGate(
 
       const publishedAt = (options.publishedAt ?? (() => new Date().toISOString()))();
       validateTimestamp(publishedAt, 'publishedAt');
-      const metadata = producerSchemaNavaidSnapshotCodec.encodeMetadata(
-        candidate,
-        snapshotId,
-        publishedAt
-      );
+      const metadata = codec.encodeMetadata(candidate, snapshotId, publishedAt);
       await insertSnapshotMetadata(connection, metadata);
       await verifySnapshotMetadata(connection, snapshotId, candidate);
       await connection.run(
