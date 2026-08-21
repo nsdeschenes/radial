@@ -115,16 +115,6 @@ test('runs every admitted command through one ordered lifecycle', async () => {
 });
 
 test.each([
-  {
-    args: [' cyyz ', 'cyow'],
-    metadata: {
-      id: 'plan-route',
-      attributes: {
-        'radial.route.arrival_icao': 'CYOW',
-        'radial.route.departure_icao': 'CYYZ',
-      },
-    },
-  },
   {args: ['data', 'status'], metadata: {id: 'data-status'}},
   {args: ['data', 'reload', 'navaids'], metadata: {id: 'reload-navaids'}},
   {
@@ -181,8 +171,6 @@ test('captures an escaping defect once while the span is active and rethrows it 
   expect(events).toEqual([
     'telemetry initialized',
     'span started plan-route',
-    'handler loaded plan-route',
-    'handler executed plan-route',
     'application opened',
     'defect captured',
     'span ended',

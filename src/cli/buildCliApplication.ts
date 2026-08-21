@@ -15,6 +15,7 @@ import type {
 } from '@stricli/core';
 
 import type CliInputTypes from '#radial/cli/CliInput.js';
+import runPlanRoute from '#radial/cli/commands/runPlanRoute.js';
 import airportReloadOutput from '#radial/cli/formatAirportReload.js';
 import diagnostics from '#radial/cli/formatDiagnostics.js';
 import runAdmittedCliCommand from '#radial/cli/runAdmittedCliCommand.js';
@@ -44,6 +45,11 @@ type CommandDescription<
     owns(invocation: readonly string[]): boolean;
     format(invocation: readonly string[]): string | undefined;
   }>;
+  runAdmitted?(
+    input: CliInputTypes['Admitted'],
+    flags: Flags,
+    ...args: Args
+  ): Promise<number>;
   metadata(flags: Flags, ...args: Args): Metadata;
   loadCompatibilityExecution(
     flags: Flags,
@@ -121,6 +127,13 @@ const routePlan = describeCommand<RoutePlanFlags, RoutePlanArgs>()({
         : diagnostics.formatInvalidRequestDiagnostic(validated.failure);
     },
   },
+  runAdmitted(input, flags, departureIcao, arrivalIcao) {
+    return runPlanRoute(input, {
+      arrivalIcao,
+      departureIcao,
+      warningDetailsRequested: flags.warnings === true,
+    });
+  },
   metadata(_flags, departureIcao, arrivalIcao) {
     return {
       id: 'plan-route',
@@ -130,15 +143,8 @@ const routePlan = describeCommand<RoutePlanFlags, RoutePlanArgs>()({
       },
     } as const;
   },
-  async loadCompatibilityExecution(flags, departureIcao, arrivalIcao) {
-    const commandModule = await import('#radial/cli/commands/runPlanRoute.js');
-    const request = {arrivalIcao, departureIcao};
-    return (runtime, telemetry) =>
-      commandModule.default(
-        {request, warningDetailsRequested: flags.warnings === true},
-        runtime,
-        telemetry
-      );
+  async loadCompatibilityExecution() {
+    throw new Error('The Route Plan command does not use compatibility execution.');
   },
 });
 
@@ -495,6 +501,11 @@ function admittedLoader<
     async function (flags, ...args) {
       if (this.selectedDescription.value !== description) {
         throw new Error('Stricli did not select the expected registered Radial command.');
+      }
+
+      if (description.runAdmitted !== undefined) {
+        this.process.exitCode = await description.runAdmitted(this.input, flags, ...args);
+        return;
       }
 
       const metadata = description.metadata(flags, ...args);

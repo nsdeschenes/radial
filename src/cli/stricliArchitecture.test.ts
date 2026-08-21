@@ -50,19 +50,27 @@ type CliCommandTypes = NonNullable<(typeof runCli)['commandTypes']>;
 
 test('pins one private Stricli parser authority with import-light eager modules', async () => {
   const packageJson = JSON.parse(await readFile('package.json', 'utf8'));
-  const [adapterSource, builderSource, executableSource, lifecycleSource, runtimeSource] =
-    await Promise.all([
-      readFile('src/cli/runCli.ts', 'utf8'),
-      readFile('src/cli/buildCliApplication.ts', 'utf8'),
-      readFile('src/cli/runCliExecutable.ts', 'utf8'),
-      readFile('src/cli/runAdmittedCliCommand.ts', 'utf8'),
-      readFile('src/cli/runtime/createCliRuntimeContext.ts', 'utf8'),
-    ]);
+  const [
+    adapterSource,
+    builderSource,
+    executableSource,
+    lifecycleSource,
+    routePlanSource,
+    runtimeSource,
+  ] = await Promise.all([
+    readFile('src/cli/runCli.ts', 'utf8'),
+    readFile('src/cli/buildCliApplication.ts', 'utf8'),
+    readFile('src/cli/runCliExecutable.ts', 'utf8'),
+    readFile('src/cli/runAdmittedCliCommand.ts', 'utf8'),
+    readFile('src/cli/commands/runPlanRoute.ts', 'utf8'),
+    readFile('src/cli/runtime/createCliRuntimeContext.ts', 'utf8'),
+  ]);
   const eagerSources = [
     adapterSource,
     builderSource,
     executableSource,
     lifecycleSource,
+    routePlanSource,
     runtimeSource,
   ];
 

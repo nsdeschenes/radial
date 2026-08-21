@@ -1,8 +1,7 @@
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
-import type runCli from '#radial/cli/runCli.js';
+import type CliCommandMetadataTypes from '#radial/cli/CliCommandMetadata.js';
 
-type CliCommandTypes = NonNullable<(typeof runCli)['commandTypes']>;
-type CliCommandId = CliCommandTypes['id'];
+type CliCommandId = CliCommandMetadataTypes['Metadata']['id'];
 
 type CliIo = Readonly<{
   writeStdout(text: string): void;
