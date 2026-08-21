@@ -15,7 +15,7 @@ type CommandDescription<Flags extends BaseFlags, Args extends BaseArgs> = Readon
     Args,
     CliStricliTypes['Context']
   >['parameters'];
-  help: Readonly<{rootUsageLine: string}>;
+  help: Readonly<{leafUsage?: string; rootUsageLine: string}>;
   rejection: Readonly<{
     owns(invocation: readonly string[]): boolean;
     format(invocation: readonly string[]): string;
@@ -26,6 +26,8 @@ type CommandDescription<Flags extends BaseFlags, Args extends BaseArgs> = Readon
 
 type RoutePlanFlags = Readonly<{warnings?: boolean}>;
 type RoutePlanArgs = [departureIcao: string, arrivalIcao: string];
+type NoFlags = Readonly<Record<never, never>>;
+type NoArgs = [];
 
 const routePlan = {
   id: 'plan-route',
@@ -119,4 +121,41 @@ function routeArgumentsFromInvocation(invocation: readonly string[]) {
   return invocation.at(-1) === '--warnings' ? invocation.slice(0, -1) : invocation;
 }
 
-export default {routePlan};
+const reloadNavaids = {
+  id: 'reload-navaids',
+  route: ['data', 'reload', 'navaids'] as const,
+  docs: {brief: 'Reload the Navaid Snapshot'},
+  parameters: {
+    flags: {},
+    positional: {kind: 'tuple', parameters: []},
+  },
+  help: {
+    leafUsage: 'Usage: radial data reload navaids\n',
+    rootUsageLine: '  radial data reload navaids\n',
+  },
+  rejection: {
+    owns(invocation: readonly string[]) {
+      return (
+        invocation[0] === 'data' &&
+        invocation[1] !== 'status' &&
+        !(invocation[1] === 'reload' && invocation[2] === 'airport')
+      );
+    },
+    format(_invocation: readonly string[]) {
+      return (
+        'error [DATA_USAGE]: Invalid data command.\n' +
+        'Cause: The Navaid reload accepts no arguments or operational flags.\n' +
+        'Action: Run "radial data reload navaids".\n'
+      );
+    },
+  },
+  metadata() {
+    return {id: 'reload-navaids'};
+  },
+  async loadExecution() {
+    const commandModule = await import('#radial/cli/commands/runReloadNavaids.js');
+    return runtime => commandModule.default({}, runtime);
+  },
+} satisfies CommandDescription<NoFlags, NoArgs>;
+
+export default {reloadNavaids, routePlan};

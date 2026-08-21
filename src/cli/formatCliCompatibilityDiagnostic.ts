@@ -6,10 +6,6 @@ const DATA_STATUS_USAGE =
   'error [DATA_USAGE]: Invalid data command.\n' +
   'Cause: The data status command accepts no arguments or operational flags.\n' +
   'Action: Run "radial data status".\n';
-const NAVAID_RELOAD_USAGE =
-  'error [DATA_USAGE]: Invalid data command.\n' +
-  'Cause: The Navaid reload accepts no arguments or operational flags.\n' +
-  'Action: Run "radial data reload navaids".\n';
 const AIRPORT_RELOAD_USAGE =
   'error [DATA_USAGE]: Invalid data command.\n' +
   'Cause: The Airport reload accepts exactly one ICAO and no operational flags.\n' +
@@ -33,7 +29,9 @@ function formatCliCompatibilityDiagnostic(invocation: readonly string[]): string
       return AIRPORT_RELOAD_USAGE;
     }
 
-    return NAVAID_RELOAD_USAGE;
+    if (commandCatalog.reloadNavaids.rejection.owns(invocation)) {
+      return commandCatalog.reloadNavaids.rejection.format(invocation);
+    }
   }
 
   if (commandCatalog.routePlan.rejection.owns(invocation)) {
