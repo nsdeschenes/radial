@@ -13,6 +13,7 @@ type CompatibilityCase = Readonly<{
   exitCode: number;
   stdout?: string;
   stderr?: string;
+  admitted?: boolean;
   applicationOpens?: number;
   routeRequest?: Readonly<{arrivalIcao: string; departureIcao: string}>;
   airportReloadIcao?: string;
@@ -57,6 +58,7 @@ const compatibilityCases: readonly CompatibilityCase[] = [
     args: [' cyyz ', 'cyow'],
     env: DATA_ENV,
     exitCode: 1,
+    admitted: true,
     stderr: 'No route found from CYYZ to CYOW.\n',
     applicationOpens: 1,
     routeRequest: {arrivalIcao: 'CYOW', departureIcao: 'CYYZ'},
@@ -96,6 +98,7 @@ const compatibilityCases: readonly CompatibilityCase[] = [
     args: ['CYYZ', 'CYOW', '--warnings'],
     env: DATA_ENV,
     exitCode: 1,
+    admitted: true,
     stderr: 'No route found from CYYZ to CYOW.\n',
     applicationOpens: 1,
     routeRequest: {arrivalIcao: 'CYOW', departureIcao: 'CYYZ'},
@@ -129,6 +132,7 @@ const compatibilityCases: readonly CompatibilityCase[] = [
     args: ['data', 'status'],
     env: {RADIAL_DATABASE_PATH: 'missing-public-cli-compatibility.duckdb'},
     exitCode: 0,
+    admitted: true,
     stdout:
       'Radial data status\n' +
       'Database\n' +
@@ -148,6 +152,7 @@ const compatibilityCases: readonly CompatibilityCase[] = [
     args: ['data', 'reload', 'navaids'],
     env: DATA_ENV,
     exitCode: 1,
+    admitted: true,
     stderr:
       'error [DATA_OPENAIP_UNAVAILABLE]: OpenAIP Navaid acquisition failed.\n' +
       'Cause: The compatibility application returned an operational failure.\n' +
@@ -161,6 +166,7 @@ const compatibilityCases: readonly CompatibilityCase[] = [
     args: ['data', 'reload', 'airport', ' cyyz '],
     env: DATA_ENV,
     exitCode: 1,
+    admitted: true,
     stderr:
       'error [DATA_AIRPORT_NOT_FOUND]: The requested Airport was not found.\n' +
       'Cause: The compatibility application returned no Airport.\n' +
@@ -308,6 +314,52 @@ const compatibilityCases: readonly CompatibilityCase[] = [
       'Departure must be a four-letter ICAO airport code; received "__radial_internal_plan_route__".\n' +
       ROUTE_USAGE,
   },
+  {
+    name: 'rejected root short help',
+    args: ['-h'],
+    exitCode: 2,
+    stderr: `Expected exactly two ICAO airport codes; received 1.\n${ROUTE_USAGE}`,
+  },
+  {
+    name: 'rejected data short help',
+    args: ['data', '-h'],
+    exitCode: 2,
+    stderr: NAVAID_RELOAD_USAGE,
+  },
+  {
+    name: 'rejected reload short help',
+    args: ['data', 'reload', '-h'],
+    exitCode: 2,
+    stderr: NAVAID_RELOAD_USAGE,
+  },
+  {
+    name: 'rejected data status short help',
+    args: ['data', 'status', '-h'],
+    exitCode: 2,
+    stderr: DATA_STATUS_USAGE,
+  },
+  {
+    name: 'rejected Navaid reload short help',
+    args: ['data', 'reload', 'navaids', '-h'],
+    exitCode: 2,
+    stderr: NAVAID_RELOAD_USAGE,
+  },
+  {
+    name: 'rejected Airport reload short help',
+    args: ['data', 'reload', 'airport', '-h'],
+    exitCode: 2,
+    stderr:
+      'error [DATA_INVALID_ICAO]: The Airport ICAO is invalid.\n' +
+      'Cause: The requested Airport ICAO "-h" is not four ASCII letters.\n' +
+      'Action: Provide exactly one four-letter ICAO and retry the Airport reload.\n' +
+      'Active data remains unchanged.\n',
+  },
+  {
+    name: 'rejected Route Plan short help',
+    args: ['CYYZ', 'CYOW', '-h'],
+    exitCode: 2,
+    stderr: `Expected exactly two ICAO airport codes; received 3.\n${ROUTE_USAGE}`,
+  },
 ];
 
 test.each(compatibilityCases)('$name preserves the Public CLI contract', async sample => {
@@ -318,6 +370,20 @@ test.each(compatibilityCases)('$name preserves the Public CLI contract', async s
     args: sample.args,
     env: sample.env ?? {},
     io: capture.io,
+    async loadCommand(_commandId, loadDefault) {
+      application.evidence.commandLoads += 1;
+      return loadDefault();
+    },
+    async loadTelemetry() {
+      application.evidence.telemetryLoads += 1;
+      return {
+        async execute(_metadata, operation) {
+          return operation();
+        },
+        recordOperation() {},
+        async close() {},
+      };
+    },
     openApplication: application.open,
   });
 
@@ -335,6 +401,8 @@ test.each(compatibilityCases)('$name preserves the Public CLI contract', async s
     sample.airportReloadIcao === undefined ? [] : [sample.airportReloadIcao]
   );
   expect(application.evidence.navaidReloads).toBe(sample.navaidReload === true ? 1 : 0);
+  expect(application.evidence.commandLoads).toBe(sample.admitted === true ? 1 : 0);
+  expect(application.evidence.telemetryLoads).toBe(sample.admitted === true ? 1 : 0);
 });
 
 test('recognized interruption remains silent and exits 130 through the Public CLI seam', async () => {
@@ -412,8 +480,10 @@ function compatibilityApplication(
   const evidence = {
     airportReloadIcaos: [] as string[],
     applicationOpens: 0,
+    commandLoads: 0,
     navaidReloads: 0,
     routeRequests: [] as Array<{arrivalIcao: string; departureIcao: string}>,
+    telemetryLoads: 0,
   };
   const application: ApplicationTypes['Application'] = {
     databasePath: ':compatibility:',
