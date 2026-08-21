@@ -18,7 +18,6 @@ import formatCliCompatibilityDiagnostic from '#radial/cli/formatCliCompatibility
 import runAdmittedCliCommand from '#radial/cli/runAdmittedCliCommand.js';
 import type CliRuntimeTypes from '#radial/cli/runtime/CliRuntimeContext.js';
 import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
-import validation from '#radial/route-planner/internal/validation.js';
 
 type CommandSelection = CliStricliTypes['CommandSelection'];
 type CliStricliContext = CliStricliTypes['Context'];
@@ -34,7 +33,7 @@ const ROOT_HELP =
   commandCatalog.routePlan.help.rootUsageLine +
   '  radial data status\n' +
   '  radial data reload navaids\n' +
-  '  radial data reload airport <ICAO>\n';
+  commandCatalog.reloadAirport.help.rootUsageLine;
 const commandSelections = new WeakMap<object, CommandSelection>();
 
 function buildCliApplication(): Application<CliStricliContext> {
@@ -62,25 +61,7 @@ function buildCliApplication(): Application<CliStricliContext> {
       parameters: {flags: noFlags, positional: noPositionals},
     })
   );
-  const reloadAirport = registerCommand(
-    {id: 'reload-airport'},
-    buildCommand<Readonly<Record<never, never>>, [icao: string], CliStricliContext>({
-      docs: {brief: 'Reload one Cached Airport'},
-      loader: admittedLoader(async (_flags, icao) => {
-        const commandModule = await import('#radial/cli/commands/runAirportReload.js');
-        return runtime => commandModule.default({icao}, runtime);
-      }),
-      parameters: {
-        flags: noFlags,
-        positional: {
-          kind: 'tuple',
-          parameters: [
-            {brief: 'Airport ICAO', parse: parseAirportIcao, placeholder: 'ICAO'},
-          ],
-        },
-      },
-    })
-  );
+  const reloadAirport = buildDescribedCommand(commandCatalog.reloadAirport);
   const planRoute = buildDescribedCommand(commandCatalog.routePlan);
   const reload = buildRouteMap({
     docs: {brief: 'Reload local data'},
@@ -252,19 +233,10 @@ function helpForInvocation(invocation: readonly string[]): string | undefined {
   }
 
   if (key === 'data reload airport --help') {
-    return 'Usage: radial data reload airport <ICAO>\n';
+    return commandCatalog.reloadAirport.help.leafUsage;
   }
 
   return undefined;
-}
-
-function parseAirportIcao(input: string): string {
-  const validated = validation.validateAirportIcao(input);
-  if (!validated.ok) {
-    throw new Error('Radial rejected the Airport ICAO.');
-  }
-
-  return validated.value;
 }
 
 function loadCliApplicationText(locale: string): ApplicationText | undefined {
