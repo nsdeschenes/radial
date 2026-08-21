@@ -1,3 +1,7 @@
+import {mkdtemp, rm, writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+
 import {expect, test, vi} from 'vitest';
 
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
@@ -234,35 +238,46 @@ test.each(['success', 'expected-failure', 'interruption', 'thrown-failure'] as c
   }
 );
 
-test('maps an application-open failure to the Data Status unavailable diagnostic', async () => {
+test('preserves the path inspection diagnostic when application acquisition fails', async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-status-path-'));
+  const invalidParentPath = join(temporaryDirectory, 'not-a-directory');
+  const databasePath = join(invalidParentPath, 'database.duckdb');
+  await writeFile(invalidParentPath, 'not a directory');
   const capture = captureOutput();
   const events: CliTelemetryTypes['OperationEvent'][] = [];
-  const runtime = runtimeContext({
-    capture,
-    async withApplication() {
-      return {
-        ok: false,
-        failure: {
-          code: 'database-unavailable',
-          databasePath: DATABASE_PATH,
-        },
-      };
-    },
+  const scope = createCliRuntimeContext({
+    env: {RADIAL_DATABASE_PATH: databasePath},
+    io: capture.io,
+    signal: new AbortController().signal,
   });
 
-  await expect(runDataStatus({}, runtime, telemetry(events))).resolves.toMatchObject({
-    kind: 'expected-failure',
-    status: 1,
-    failure: {code: 'DATA_DATABASE_UNAVAILABLE', activeDataPreserved: true},
-  });
-  expect(capture.output()).toEqual({stdout: '', stderr: formattedUnavailable()});
-  expect(events).toEqual([
-    {
-      kind: 'data-status-failed',
-      activeDataPreserved: true,
-      failureCode: 'DATA_DATABASE_UNAVAILABLE',
-    },
-  ]);
+  try {
+    await expect(runDataStatus({}, scope.context, telemetry(events))).resolves.toEqual({
+      kind: 'expected-failure',
+      status: 1,
+      failure: {
+        code: 'DATA_DATABASE_UNAVAILABLE',
+        summary: 'The configured database is unavailable.',
+        cause: 'The configured database path could not be inspected.',
+        action: 'Check RADIAL_DATABASE_PATH and retry.',
+        activeDataPreserved: true,
+      },
+    });
+    expect(capture.output()).toEqual({
+      stdout: '',
+      stderr: formattedUninspectablePath(),
+    });
+    expect(events).toEqual([
+      {
+        kind: 'data-status-failed',
+        activeDataPreserved: true,
+        failureCode: 'DATA_DATABASE_UNAVAILABLE',
+      },
+    ]);
+  } finally {
+    await scope[Symbol.asyncDispose]();
+    await rm(temporaryDirectory, {recursive: true});
+  }
 });
 
 function captureOutput() {
@@ -390,11 +405,11 @@ function formattedMissingPath(): string {
   );
 }
 
-function formattedUnavailable(): string {
+function formattedUninspectablePath(): string {
   return (
     'error [DATA_DATABASE_UNAVAILABLE]: The configured database is unavailable.\n' +
-    'Cause: The configured database could not be opened.\n' +
-    'Action: Check RADIAL_DATABASE_PATH and retry data status.\n' +
+    'Cause: The configured database path could not be inspected.\n' +
+    'Action: Check RADIAL_DATABASE_PATH and retry.\n' +
     'Active data remains unchanged.\n'
   );
 }

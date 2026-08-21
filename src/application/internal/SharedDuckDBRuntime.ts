@@ -11,6 +11,7 @@ import type RadialApplicationTypes from '#radial/application/RadialApplicationTy
 import ensureCachedAirport from '#radial/data-producer/internal/AirportDataProducer.js';
 import ensureFirstNavaidSnapshot from '#radial/data-producer/internal/BootstrapNavaidSnapshot.js';
 import readDataStatus from '#radial/data-producer/internal/DataStatus.js';
+import dataStatusResult from '#radial/data-producer/internal/DataStatusResult.js';
 import reloadNavaids from '#radial/data-producer/internal/NavaidDataProducer.js';
 import PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 import isDuckDBBusyError from '#radial/db/duckdb/isDuckDBBusyError.js';
@@ -284,7 +285,9 @@ class SharedDuckDBRuntime {
     RadialApplicationTypes['DataStatusResult']
   > {
     if (this.databasePath === ':memory:') {
-      return uninitializedDataStatus(this.databasePath);
+      return dataStatusResult.success(
+        dataStatusResult.uninitializedValue(this.databasePath)
+      );
     }
 
     let databaseExists: boolean;
@@ -292,10 +295,12 @@ class SharedDuckDBRuntime {
       databaseExists = (await stat(this.databasePath)).isFile();
     } catch (error) {
       if (isMissingPathError(error)) {
-        return uninitializedDataStatus(this.databasePath);
+        return dataStatusResult.success(
+          dataStatusResult.uninitializedValue(this.databasePath)
+        );
       }
 
-      return dataStatusFailure(
+      return dataStatusResult.failure(
         'DATA_DATABASE_UNAVAILABLE',
         'The configured database is unavailable.',
         'The configured database path could not be inspected.',
@@ -304,7 +309,7 @@ class SharedDuckDBRuntime {
     }
 
     if (!databaseExists) {
-      return dataStatusFailure(
+      return dataStatusResult.failure(
         'DATA_DATABASE_UNAVAILABLE',
         'The configured database is unavailable.',
         'The configured database path is not a regular file.',
@@ -319,13 +324,13 @@ class SharedDuckDBRuntime {
       });
     } catch (error) {
       return isDuckDBBusyError(error)
-        ? dataStatusFailure(
+        ? dataStatusResult.failure(
             'DATA_DATABASE_BUSY',
             'The configured database is busy.',
             'Another process owns the native DuckDB database file.',
             'Route the operation through the owning process or obtain exclusive maintenance access.'
           )
-        : dataStatusFailure(
+        : dataStatusResult.failure(
             'DATA_DATABASE_UNAVAILABLE',
             'The configured database is unavailable.',
             'The existing database could not be opened for read-only inspection.',
@@ -725,34 +730,6 @@ function databaseFailure(
     cause: unavailableCause,
     action: unavailableAction,
     activeDataPreserved: true,
-  };
-}
-
-function uninitializedDataStatus(
-  databasePath: string
-): RadialApplicationTypes['DataStatusResult'] {
-  return {
-    ok: true,
-    value: {
-      databasePath,
-      status: 'uninitialized',
-      legacyObjects: [],
-      producerSchema: null,
-      snapshot: null,
-      cachedAirports: [],
-    },
-  };
-}
-
-function dataStatusFailure(
-  code: RadialApplicationTypes['DataFailure']['code'],
-  summary: string,
-  cause: string,
-  action: string
-): RadialApplicationTypes['DataStatusResult'] {
-  return {
-    ok: false,
-    failure: {code, summary, cause, action, activeDataPreserved: true},
   };
 }
 

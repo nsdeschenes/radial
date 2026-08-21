@@ -1,6 +1,7 @@
 import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
+import dataStatusResult from '#radial/data-producer/internal/DataStatusResult.js';
 import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import isDuckDBBusyError from '#radial/db/duckdb/isDuckDBBusyError.js';
 import plannerDatabaseContract from '#radial/planner-database/PlannerDatabaseContract.js';
@@ -28,7 +29,7 @@ async function readDataStatus(
     connection = await instance.connect();
   } catch (error) {
     if (isDuckDBBusyError(error)) {
-      return failure(
+      return dataStatusResult.failure(
         'DATA_DATABASE_BUSY',
         'The configured database is busy.',
         'Another process owns the native DuckDB database file.',
@@ -36,7 +37,7 @@ async function readDataStatus(
       );
     }
 
-    return failure(
+    return dataStatusResult.failure(
       'DATA_DATABASE_UNAVAILABLE',
       'The configured database is unavailable.',
       'A read-only status connection could not be opened.',
@@ -46,10 +47,10 @@ async function readDataStatus(
 
   try {
     try {
-      return success(await inspectStatus(connection, databasePath));
+      return dataStatusResult.success(await inspectStatus(connection, databasePath));
     } catch (error) {
       if (error instanceof InvalidDataStatusError) {
-        return failure(
+        return dataStatusResult.failure(
           'DATA_DATABASE_INVALID',
           'The configured database is invalid.',
           error.message,
@@ -58,7 +59,7 @@ async function readDataStatus(
       }
 
       if (isDuckDBBusyError(error)) {
-        return failure(
+        return dataStatusResult.failure(
           'DATA_DATABASE_BUSY',
           'The configured database is busy.',
           'Another process owns the native DuckDB database file.',
@@ -66,7 +67,7 @@ async function readDataStatus(
         );
       }
 
-      return failure(
+      return dataStatusResult.failure(
         'DATA_DATABASE_UNAVAILABLE',
         'The configured database is unavailable.',
         'The committed data status could not be read.',
@@ -92,7 +93,7 @@ async function inspectStatus(
       );
     }
 
-    return uninitializedStatus(databasePath, legacyObjects);
+    return dataStatusResult.uninitializedValue(databasePath, legacyObjects);
   }
 
   if (schema.kind === 'invalid') {
@@ -466,20 +467,6 @@ async function readLegacyObjects(
   });
 }
 
-function uninitializedStatus(
-  databasePath: string,
-  legacyObjects: readonly string[]
-): DataStatusSuccess {
-  return {
-    databasePath,
-    status: 'uninitialized',
-    legacyObjects,
-    producerSchema: null,
-    snapshot: null,
-    cachedAirports: [],
-  };
-}
-
 function requiredString(row: Record<string, unknown>, field: string): string {
   const value = row[field];
   if (typeof value !== 'string' || value.trim() === '') {
@@ -522,22 +509,6 @@ function compareStrings(left: string, right: string): number {
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function failure(
-  code: RadialApplicationTypes['DataFailure']['code'],
-  summary: string,
-  cause: string,
-  action: string
-): DataStatusResult {
-  return {
-    ok: false,
-    failure: {code, summary, cause, action, activeDataPreserved: true},
-  };
-}
-
-function success(value: DataStatusSuccess): DataStatusResult {
-  return {ok: true, value};
 }
 
 class InvalidDataStatusError extends Error {}

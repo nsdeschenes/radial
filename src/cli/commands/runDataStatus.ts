@@ -76,8 +76,8 @@ async function runDataStatus(
         {
           code: 'DATA_DATABASE_UNAVAILABLE',
           summary: 'The configured database is unavailable.',
-          cause: 'The configured database could not be opened.',
-          action: 'Check RADIAL_DATABASE_PATH and retry data status.',
+          cause: 'The configured database path could not be inspected.',
+          action: 'Check RADIAL_DATABASE_PATH and retry.',
           activeDataPreserved: true,
         },
         runtime,
