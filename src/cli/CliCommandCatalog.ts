@@ -2,6 +2,7 @@ import type {BaseArgs, BaseFlags, CommandBuilderArguments} from '@stricli/core';
 
 import type CliInputTypes from '#radial/cli/CliInput.js';
 import type CliStricliTypes from '#radial/cli/CliStricliContext.js';
+import airportReloadOutput from '#radial/cli/formatAirportReload.js';
 import diagnostics from '#radial/cli/formatDiagnostics.js';
 import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
 import validation from '#radial/route-planner/internal/validation.js';
@@ -15,7 +16,7 @@ type CommandDescription<Flags extends BaseFlags, Args extends BaseArgs> = Readon
     Args,
     CliStricliTypes['Context']
   >['parameters'];
-  help: Readonly<{rootUsageLine: string}>;
+  help: Readonly<{leafUsage?: string; rootUsageLine: string}>;
   rejection: Readonly<{
     owns(invocation: readonly string[]): boolean;
     format(invocation: readonly string[]): string;
@@ -26,6 +27,13 @@ type CommandDescription<Flags extends BaseFlags, Args extends BaseArgs> = Readon
 
 type RoutePlanFlags = Readonly<{warnings?: boolean}>;
 type RoutePlanArgs = [departureIcao: string, arrivalIcao: string];
+type AirportReloadFlags = Readonly<Record<never, never>>;
+type AirportReloadArgs = [icao: string];
+
+const airportReloadUsage =
+  'error [DATA_USAGE]: Invalid data command.\n' +
+  'Cause: The Airport reload accepts exactly one ICAO and no operational flags.\n' +
+  'Action: Run "radial data reload airport <ICAO>".\n';
 
 const routePlan = {
   id: 'plan-route',
@@ -119,4 +127,74 @@ function routeArgumentsFromInvocation(invocation: readonly string[]) {
   return invocation.at(-1) === '--warnings' ? invocation.slice(0, -1) : invocation;
 }
 
-export default {routePlan};
+const reloadAirport = {
+  id: 'reload-airport',
+  route: ['data', 'reload', 'airport'],
+  docs: {brief: 'Reload one Cached Airport'},
+  parameters: {
+    flags: {},
+    positional: {
+      kind: 'tuple',
+      parameters: [
+        {
+          brief: 'Airport ICAO',
+          parse: parseAirportReloadInvocation,
+          placeholder: 'ICAO',
+        },
+      ],
+    },
+  },
+  help: {
+    rootUsageLine: '  radial data reload airport <ICAO>\n',
+    leafUsage: 'Usage: radial data reload airport <ICAO>\n',
+  },
+  rejection: {
+    owns(invocation: readonly string[]) {
+      return (
+        invocation[0] === 'data' &&
+        invocation[1] === 'reload' &&
+        invocation[2] === 'airport'
+      );
+    },
+    format(invocation: readonly string[]) {
+      const value = invocation[3];
+      if (
+        invocation.length !== 4 ||
+        value === undefined ||
+        value.startsWith('--') ||
+        validation.validateAirportIcao(value).ok
+      ) {
+        return airportReloadUsage;
+      }
+
+      return airportReloadOutput.formatFailure({
+        code: 'DATA_INVALID_ICAO',
+        summary: 'The Airport ICAO is invalid.',
+        cause: `The requested Airport ICAO ${JSON.stringify(value)} is not four ASCII letters.`,
+        action: 'Provide exactly one four-letter ICAO and retry the Airport reload.',
+        activeDataPreserved: true,
+      });
+    },
+  },
+  metadata(_flags: AirportReloadFlags, icao: string) {
+    return {
+      id: 'reload-airport',
+      attributes: {'radial.airport.icao': icao},
+    };
+  },
+  async loadExecution(_flags: AirportReloadFlags, icao: string) {
+    const commandModule = await import('#radial/cli/commands/runAirportReload.js');
+    return runtime => commandModule.default({icao}, runtime);
+  },
+} satisfies CommandDescription<AirportReloadFlags, AirportReloadArgs>;
+
+function parseAirportReloadInvocation(input: string): string {
+  const validated = validation.validateAirportIcao(input);
+  if (!validated.ok) {
+    throw new Error('Radial rejected the Airport ICAO.');
+  }
+
+  return validated.value;
+}
+
+export default {reloadAirport, routePlan};
