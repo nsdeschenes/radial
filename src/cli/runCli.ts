@@ -81,8 +81,10 @@ const routePlan = describeCommand<RoutePlanFlags, RoutePlanArgs>()({
     flags: {
       warnings: {
         brief: 'Show Route Plan warning details',
-        kind: 'boolean',
+        inferEmpty: true,
+        kind: 'parsed',
         optional: true,
+        parse: parseTerminalWarnings,
       },
     },
     positional: {
@@ -306,8 +308,7 @@ const ROOT_HELP =
   commandDescriptions.map(description => description.help.rootUsageLine).join('');
 const commandSelections = new WeakMap<object, CatalogCommandDescription>();
 const compatibilityInvocations = new WeakMap<StricliProcess, readonly string[]>();
-const initialApplication = buildCliApplication(false);
-const operationalFlagApplication = buildCliApplication(true);
+const application = buildCliApplication();
 
 function parseRoutePlanDepartureIcao(this: CliStricliContext, input: string): string {
   const validated = validation.validateAirportIcao(input);
@@ -336,6 +337,14 @@ function parseRoutePlanArrivalIcao(this: CliStricliContext, input: string): stri
   return validated.value.arrivalIcao;
 }
 
+function parseTerminalWarnings(input: string): boolean {
+  if (input !== '') {
+    throw new Error('Radial accepts --warnings only as the terminal argument.');
+  }
+
+  return true;
+}
+
 function routeArgumentsFromInvocation(invocation: readonly string[]) {
   return invocation.at(-1) === '--warnings' ? invocation.slice(0, -1) : invocation;
 }
@@ -356,13 +365,11 @@ function matchesInvocation(actual: readonly string[], expected: readonly string[
   );
 }
 
-function buildCliApplication(
-  includeOperationalFlags: boolean
-): Application<CliStricliContext> {
+function buildCliApplication(): Application<CliStricliContext> {
   const compiledCommands = new Map<CatalogCommandDescription, Command<CliStricliContext>>(
     commandDescriptions.map(description => [
       description,
-      buildCatalogCommand(description, includeOperationalFlags),
+      buildCatalogCommand(description),
     ])
   );
   for (const [description, command] of compiledCommands) {
@@ -397,8 +404,7 @@ function buildCliApplication(
 }
 
 function buildCatalogCommand(
-  description: CatalogCommandDescription,
-  includeOperationalFlags: boolean
+  description: CatalogCommandDescription
 ): Command<CliStricliContext> {
   type ErasedCatalogDescription = CommandDescription<
     BaseFlags,
@@ -406,14 +412,7 @@ function buildCatalogCommand(
     CatalogCommandId,
     CatalogCommandMetadata
   >;
-  const erasedDescription = description as unknown as ErasedCatalogDescription;
-  const parameters = includeOperationalFlags
-    ? erasedDescription.parameters
-    : ({
-        ...erasedDescription.parameters,
-        flags: {},
-      } as typeof erasedDescription.parameters);
-  return buildDescribedCommand(erasedDescription, parameters);
+  return buildDescribedCommand(description as unknown as ErasedCatalogDescription);
 }
 
 function buildCatalogRouteMap(
@@ -463,17 +462,12 @@ function buildDescribedCommand<
   Id extends CatalogCommandId,
   Metadata extends Extract<CatalogCommandMetadata, Readonly<{id: Id}>>,
 >(
-  description: CommandDescription<Flags, Args, Id, Metadata>,
-  parameters: CommandBuilderArguments<
-    Flags,
-    Args,
-    CliStricliContext
-  >['parameters'] = description.parameters
+  description: CommandDescription<Flags, Args, Id, Metadata>
 ): Command<CliStricliContext> {
   const command = buildCommand<Flags, Args, CliStricliContext>({
     docs: description.docs,
     loader: admittedLoader(description),
-    parameters,
+    parameters: description.parameters,
   });
   return command;
 }
@@ -632,13 +626,7 @@ const runCli: RunCli = async input => {
   };
   compatibilityInvocations.set(processFacade, input.args);
 
-  await runCliApplication(initialApplication, input, processFacade);
-
-  if (isFrameworkRejection(processFacade.exitCode) && hasTerminalWarnings(input.args)) {
-    frameworkStderr = '';
-    processFacade.exitCode = null;
-    await runCliApplication(operationalFlagApplication, input, processFacade);
-  }
+  await runCliApplication(application, input, processFacade);
 
   const exitCode = processFacade.exitCode;
   if (isFrameworkRejection(exitCode)) {
@@ -662,10 +650,6 @@ async function runCliApplication(
     selectedDescription: {value: undefined},
   };
   await run(application, input.args, context);
-}
-
-function hasTerminalWarnings(invocation: readonly string[]): boolean {
-  return invocation.at(-1) === '--warnings';
 }
 
 function isFrameworkRejection(exitCode: number | string | null | undefined): boolean {
