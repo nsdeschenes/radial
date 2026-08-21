@@ -16,7 +16,7 @@ test.each([
   },
   {
     args: ['data', 'reload', 'airport', ' cyyz '],
-    status: 0,
+    status: 1,
     metadata: {
       id: 'reload-airport',
       attributes: {'radial.airport.icao': 'CYYZ'},

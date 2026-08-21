@@ -14,7 +14,6 @@ type CompatibilityCase = Readonly<{
   stdout?: string;
   stderr?: string;
   admitted?: boolean;
-  commandLoad?: boolean;
   applicationOpens?: number;
   routeRequest?: Readonly<{arrivalIcao: string; departureIcao: string}>;
   airportReloadIcao?: string;
@@ -134,7 +133,6 @@ const compatibilityCases: readonly CompatibilityCase[] = [
     env: {RADIAL_DATABASE_PATH: 'missing-public-cli-compatibility.duckdb'},
     exitCode: 0,
     admitted: true,
-    commandLoad: false,
     stdout:
       'Radial data status\n' +
       'Database\n' +
@@ -155,7 +153,6 @@ const compatibilityCases: readonly CompatibilityCase[] = [
     env: DATA_ENV,
     exitCode: 1,
     admitted: true,
-    commandLoad: false,
     stderr:
       'error [DATA_OPENAIP_UNAVAILABLE]: OpenAIP Navaid acquisition failed.\n' +
       'Cause: The compatibility application returned an operational failure.\n' +
@@ -404,12 +401,7 @@ test.each(compatibilityCases)('$name preserves the Public CLI contract', async s
     sample.airportReloadIcao === undefined ? [] : [sample.airportReloadIcao]
   );
   expect(application.evidence.navaidReloads).toBe(sample.navaidReload === true ? 1 : 0);
-  expect(application.evidence.commandLoads).toBe(
-    (sample.commandLoad ??
-      (sample.admitted === true && sample.routeRequest === undefined)) === true
-      ? 1
-      : 0
-  );
+  expect(application.evidence.commandLoads).toBe(0);
   expect(application.evidence.telemetryLoads).toBe(sample.admitted === true ? 1 : 0);
 });
 

@@ -14,13 +14,14 @@ import type {
   StricliProcess,
 } from '@stricli/core';
 
+import type CliCommandMetadataTypes from '#radial/cli/CliCommandMetadata.js';
 import type CliInputTypes from '#radial/cli/CliInput.js';
+import runAirportReload from '#radial/cli/commands/runAirportReload.js';
 import runDataStatus from '#radial/cli/commands/runDataStatus.js';
 import runPlanRoute from '#radial/cli/commands/runPlanRoute.js';
 import runReloadNavaids from '#radial/cli/commands/runReloadNavaids.js';
 import airportReloadOutput from '#radial/cli/formatAirportReload.js';
 import diagnostics from '#radial/cli/formatDiagnostics.js';
-import runAdmittedCliCommand from '#radial/cli/runAdmittedCliCommand.js';
 import validation from '#radial/route-planner/internal/validation.js';
 
 type CliStricliContext = CommandContext &
@@ -36,7 +37,6 @@ type CommandDescription<
   Flags extends BaseFlags,
   Args extends BaseArgs,
   Id extends string,
-  Metadata extends Readonly<{id: Id}>,
 > = Readonly<{
   id: Id;
   route: readonly string[];
@@ -47,12 +47,7 @@ type CommandDescription<
     owns(invocation: readonly string[]): boolean;
     format(invocation: readonly string[]): string | undefined;
   }>;
-  metadata?: (flags: Flags, ...args: Args) => Metadata;
-  loadCompatibilityExecution?: (
-    flags: Flags,
-    ...args: Args
-  ) => Promise<CliInputTypes['CommandExecution']>;
-  runAdmitted?: (
+  runAdmitted: (
     input: CliInputTypes['Admitted'],
     flags: Flags,
     ...args: Args
@@ -72,9 +67,8 @@ const airportReloadUsage =
   'Action: Run "radial data reload airport <ICAO>".\n';
 
 function describeCommand<Flags extends BaseFlags, Args extends BaseArgs>() {
-  return <const Id extends string, const Metadata extends Readonly<{id: Id}>>(
-    description: CommandDescription<Flags, Args, Id, Metadata>
-  ) => description;
+  return <const Id extends string>(description: CommandDescription<Flags, Args, Id>) =>
+    description;
 }
 
 const routePlan = describeCommand<RoutePlanFlags, RoutePlanArgs>()({
@@ -135,18 +129,6 @@ const routePlan = describeCommand<RoutePlanFlags, RoutePlanArgs>()({
       departureIcao,
       warningDetailsRequested: flags.warnings === true,
     });
-  },
-  metadata(_flags, departureIcao, arrivalIcao) {
-    return {
-      id: 'plan-route',
-      attributes: {
-        'radial.route.arrival_icao': arrivalIcao,
-        'radial.route.departure_icao': departureIcao,
-      },
-    } as const;
-  },
-  async loadCompatibilityExecution() {
-    throw new Error('The Route Plan command does not use compatibility execution.');
   },
 });
 
@@ -215,14 +197,8 @@ const reloadNavaids = describeCommand<NoFlags, NoArgs>()({
       );
     },
   },
-  metadata() {
-    return {id: 'reload-navaids'} as const;
-  },
   runAdmitted(input) {
     return runReloadNavaids(input, {});
-  },
-  async loadCompatibilityExecution() {
-    throw new Error('The Navaid reload command uses its deep admitted entry.');
   },
 });
 
@@ -275,15 +251,8 @@ const reloadAirport = describeCommand<NoFlags, AirportReloadArgs>()({
       return airportReloadUsage;
     },
   },
-  metadata(_flags, icao) {
-    return {
-      id: 'reload-airport',
-      attributes: {'radial.airport.icao': icao},
-    } as const;
-  },
-  async loadCompatibilityExecution(_flags, icao) {
-    const commandModule = await import('#radial/cli/commands/runAirportReload.js');
-    return runtime => commandModule.default({icao}, runtime);
+  runAdmitted(input, _flags, icao) {
+    return runAirportReload(input, {icao});
   },
 });
 
@@ -295,9 +264,7 @@ const commandDescriptions = [
 ] as const;
 type CatalogCommandDescription = (typeof commandDescriptions)[number];
 type CatalogCommandId = CatalogCommandDescription['id'];
-type CatalogCommandMetadata =
-  | ReturnType<NonNullable<CatalogCommandDescription['metadata']>>
-  | Readonly<{id: 'data-status'}>;
+type CatalogCommandMetadata = CliCommandMetadataTypes['Metadata'];
 
 interface BuiltCliApplication {
   readonly application: Application<CliStricliContext>;
@@ -428,8 +395,7 @@ function buildCatalogCommand(
   type ErasedCatalogDescription = CommandDescription<
     BaseFlags,
     BaseArgs,
-    CatalogCommandId,
-    CatalogCommandMetadata
+    CatalogCommandId
   >;
   return buildDescribedCommand(description as unknown as ErasedCatalogDescription);
 }
@@ -479,10 +445,7 @@ function buildDescribedCommand<
   Flags extends BaseFlags,
   Args extends BaseArgs,
   Id extends CatalogCommandId,
-  Metadata extends Extract<CatalogCommandMetadata, Readonly<{id: Id}>>,
->(
-  description: CommandDescription<Flags, Args, Id, Metadata>
-): Command<CliStricliContext> {
+>(description: CommandDescription<Flags, Args, Id>): Command<CliStricliContext> {
   const command = buildCommand<Flags, Args, CliStricliContext>({
     docs: description.docs,
     loader: admittedLoader(description),
@@ -495,9 +458,8 @@ function admittedLoader<
   Flags extends BaseFlags,
   Args extends BaseArgs,
   Id extends CatalogCommandId,
-  Metadata extends Extract<CatalogCommandMetadata, Readonly<{id: Id}>>,
 >(
-  description: CommandDescription<Flags, Args, Id, Metadata>
+  description: CommandDescription<Flags, Args, Id>
 ): () => Promise<CommandFunction<Flags, Args, CliStricliContext>> {
   return async () =>
     async function (flags, ...args) {
@@ -505,23 +467,7 @@ function admittedLoader<
         throw new Error('Stricli did not select the expected registered Radial command.');
       }
 
-      if (description.runAdmitted !== undefined) {
-        this.process.exitCode = await description.runAdmitted(this.input, flags, ...args);
-        return;
-      }
-
-      const metadata = description.metadata?.(flags, ...args);
-      const loadCompatibilityExecution = description.loadCompatibilityExecution;
-      if (metadata === undefined || loadCompatibilityExecution === undefined) {
-        throw new Error(
-          `Radial command ${JSON.stringify(description.id)} has no admitted workflow.`
-        );
-      }
-
-      this.process.exitCode = await runAdmittedCliCommand(this.input, {
-        metadata,
-        loadDefault: () => loadCompatibilityExecution(flags, ...args),
-      });
+      this.process.exitCode = await description.runAdmitted(this.input, flags, ...args);
     };
 }
 

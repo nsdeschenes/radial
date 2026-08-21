@@ -1,9 +1,7 @@
 import {expect, test} from 'vitest';
 
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
-import type CliCommandResultTypes from '#radial/cli/commands/CliCommandResult.js';
 import runCli from '#radial/cli/runCli.js';
-import type CliRuntimeTypes from '#radial/cli/runtime/CliRuntimeContext.js';
 import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
 
 test('keeps help and rejected invocations outside the operational lifecycle', async () => {
@@ -27,42 +25,6 @@ test('keeps help and rejected invocations outside the operational lifecycle', as
   expect(events).toEqual([]);
 });
 
-test.each(['loader', 'handler'] as const)(
-  'captures an escaping command $0 defect once while the span is active',
-  async defectSource => {
-    const events: string[] = [];
-    const defect = new Error(`${defectSource} defect`);
-    const input = recordingInput(events);
-
-    const result = runCli({
-      ...input,
-      args: ['data', 'reload', 'airport', 'CYYZ'],
-      async loadCommand() {
-        events.push('handler loaded reload-airport');
-        if (defectSource === 'loader') {
-          throw defect;
-        }
-
-        return async () => {
-          events.push('handler executed reload-airport');
-          throw defect;
-        };
-      },
-    });
-
-    await expect(result).rejects.toBe(defect);
-    expect(events).toEqual([
-      'telemetry initialized',
-      'span started reload-airport',
-      'handler loaded reload-airport',
-      ...(defectSource === 'handler' ? ['handler executed reload-airport'] : []),
-      'defect captured',
-      'span ended',
-      'telemetry closed',
-    ]);
-  }
-);
-
 test('captures application cleanup defects before they leave the active span', async () => {
   const events: string[] = [];
   const cleanupDefect = new Error('application cleanup defect');
@@ -85,8 +47,6 @@ test('captures application cleanup defects before they leave the active span', a
   expect(events).toEqual([
     'telemetry initialized',
     'span started reload-airport',
-    'handler loaded reload-airport',
-    'handler executed reload-airport',
     'application opened',
     'application disposed',
     'defect captured',
@@ -121,7 +81,7 @@ test.each([
   },
   {
     args: ['data', 'reload', 'airport', ' cyyz '],
-    status: 0,
+    status: 1,
     metadata: {
       id: 'reload-airport',
       attributes: {'radial.airport.icao': 'CYYZ'},
@@ -196,22 +156,19 @@ test('does not let telemetry close failure replace a command result or exception
 
   await expect(
     runCli({
-      args: ['data', 'reload', 'airport', 'CYYZ'],
+      args: ['data', 'status'],
       env: {},
       io: {writeStderr() {}, writeStdout() {}},
-      async loadCommand() {
-        return async () => ({kind: 'expected-failure', status: 1});
-      },
       loadTelemetry,
     })
   ).resolves.toBe(1);
 
   await expect(
     runCli({
-      args: ['data', 'reload', 'airport', 'CYYZ'],
-      env: {},
+      args: ['CYYZ', 'CYOW'],
+      env: {RADIAL_DATABASE_PATH: ':memory:'},
       io: {writeStderr() {}, writeStdout() {}},
-      async loadCommand() {
+      async openApplication() {
         throw commandDefect;
       },
       loadTelemetry,
@@ -224,25 +181,6 @@ function recordingInput(events: string[]) {
     args: [] as readonly string[],
     env: {},
     io: {writeStderr() {}, writeStdout() {}},
-    async loadCommand(
-      commandId: CliTelemetryTypes['CommandMetadata']['id'],
-      loadDefault: () => Promise<
-        (
-          runtime: CliRuntimeTypes['Context'],
-          telemetry: CliTelemetryTypes['Session']
-        ) => Promise<CliCommandResultTypes['Result']>
-      >
-    ) {
-      events.push(`handler loaded ${commandId}`);
-      const command = await loadDefault();
-      return async (
-        runtime: CliRuntimeTypes['Context'],
-        telemetry: CliTelemetryTypes['Session']
-      ) => {
-        events.push(`handler executed ${commandId}`);
-        return command(runtime, telemetry);
-      };
-    },
     async loadTelemetry() {
       events.push('telemetry initialized');
       return recordingTelemetry(events);

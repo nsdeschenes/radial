@@ -52,6 +52,7 @@ test('pins one private Stricli parser authority with import-light eager modules'
   const packageJson = JSON.parse(await readFile('package.json', 'utf8'));
   const [
     adapterSource,
+    airportReloadSource,
     builderSource,
     dataStatusSource,
     executableSource,
@@ -61,6 +62,7 @@ test('pins one private Stricli parser authority with import-light eager modules'
     runtimeSource,
   ] = await Promise.all([
     readFile('src/cli/runCli.ts', 'utf8'),
+    readFile('src/cli/commands/runAirportReload.ts', 'utf8'),
     readFile('src/cli/buildCliApplication.ts', 'utf8'),
     readFile('src/cli/commands/runDataStatus.ts', 'utf8'),
     readFile('src/cli/runCliExecutable.ts', 'utf8'),
@@ -71,6 +73,7 @@ test('pins one private Stricli parser authority with import-light eager modules'
   ]);
   const eagerSources = [
     adapterSource,
+    airportReloadSource,
     builderSource,
     dataStatusSource,
     executableSource,
