@@ -107,6 +107,7 @@ test('runs every admitted command through one ordered lifecycle', async () => {
     'span started data-status',
     'handler loaded data-status',
     'handler executed data-status',
+    'operation recorded data-status-failed',
     'result recorded 1',
     'span ended',
     'telemetry closed',
@@ -273,7 +274,9 @@ function recordingTelemetry(events: string[]): CliTelemetryTypes['Session'] {
         events.push('span ended');
       }
     },
-    recordOperation() {},
+    recordOperation(event) {
+      events.push(`operation recorded ${event.kind}`);
+    },
     async close() {
       events.push('telemetry closed');
     },

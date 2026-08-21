@@ -6,6 +6,7 @@ import {expect, test} from 'vitest';
 
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import runCli from '#radial/cli/runCli.js';
+import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
 import openRoutePlanner from '#radial/route-planner/RoutePlanner.js';
 import syntheticPlannerDatabase from '#radial/test/route-planner/createSyntheticPlannerDatabase.js';
 
@@ -28,6 +29,20 @@ function captureOutput() {
   };
 }
 
+function recordingOperationalTelemetry(
+  operationEvents: CliTelemetryTypes['OperationEvent'][]
+): CliTelemetryTypes['Session'] {
+  return {
+    async execute(_metadata, operation) {
+      return operation();
+    },
+    recordOperation(event) {
+      operationEvents.push(event);
+    },
+    async close() {},
+  };
+}
+
 test('reports malformed command input on stderr and exits 2', async () => {
   const capture = captureOutput();
 
@@ -47,28 +62,65 @@ test('reports malformed command input on stderr and exits 2', async () => {
   });
 });
 
-test('provides data status help and rejects unsupported options', async () => {
+test('keeps data status help and rejected input outside the lifecycle', async () => {
   const helpCapture = captureOutput();
-  const usageCapture = captureOutput();
+  const optionCapture = captureOutput();
+  const argumentCapture = captureOutput();
+  let operationalLifecycleEntries = 0;
+  const lifecycleTraps = {
+    async loadCommand() {
+      operationalLifecycleEntries += 1;
+      throw new Error('Data status help and rejections must not load the command.');
+    },
+    async loadTelemetry() {
+      operationalLifecycleEntries += 1;
+      throw new Error('Data status help and rejections must not initialize telemetry.');
+    },
+    async openApplication() {
+      operationalLifecycleEntries += 1;
+      throw new Error('Data status help and rejections must not open the application.');
+    },
+  };
 
   await expect(
-    runCli({args: ['data', 'status', '--help'], env: {}, io: helpCapture.io})
+    runCli({
+      ...lifecycleTraps,
+      args: ['data', 'status', '--help'],
+      env: {},
+      io: helpCapture.io,
+    })
   ).resolves.toBe(0);
   await expect(
-    runCli({args: ['data', 'status', '--force'], env: {}, io: usageCapture.io})
+    runCli({
+      ...lifecycleTraps,
+      args: ['data', 'status', '--force'],
+      env: {},
+      io: optionCapture.io,
+    })
+  ).resolves.toBe(2);
+  await expect(
+    runCli({
+      ...lifecycleTraps,
+      args: ['data', 'status', 'extra'],
+      env: {},
+      io: argumentCapture.io,
+    })
   ).resolves.toBe(2);
 
   expect(helpCapture.output()).toEqual({
     stdout: 'Usage: radial data status\n',
     stderr: '',
   });
-  expect(usageCapture.output()).toEqual({
+  const usageOutput = {
     stdout: '',
     stderr:
       'error [DATA_USAGE]: Invalid data command.\n' +
       'Cause: The data status command accepts no arguments or operational flags.\n' +
       'Action: Run "radial data status".\n',
-  });
+  };
+  expect(optionCapture.output()).toEqual(usageOutput);
+  expect(argumentCapture.output()).toEqual(usageOutput);
+  expect(operationalLifecycleEntries).toBe(0);
 });
 
 test('reports a nonexistent database as uninitialized without creating it', async () => {
@@ -874,11 +926,15 @@ test('writes a complete normal Route Plan to stdout and exits 0', async () => {
     metadata: [magneticMetadata()],
   });
   const capture = captureOutput();
+  const operationEvents: CliTelemetryTypes['OperationEvent'][] = [];
 
   const exitCode = await runCli({
     args: [' aaaa ', 'bbbb'],
     env: {RADIAL_DATABASE_PATH: database.databasePath},
     io: capture.io,
+    async loadTelemetry() {
+      return recordingOperationalTelemetry(operationEvents);
+    },
     openApplication: openSyntheticApplication,
   });
 
@@ -900,6 +956,16 @@ test('writes a complete normal Route Plan to stdout and exits 0', async () => {
       'MID         VOR-DME  113.70 MHz          61.0 NM\n',
     stderr: '',
   });
+  expect(operationEvents).toEqual([
+    {
+      kind: 'route-plan-completed',
+      arrivalIcao: 'BBBB',
+      departureIcao: 'AAAA',
+      routeDistanceNm: expect.closeTo(120.0809, 4),
+      routeLegCount: 2,
+      warningCodes: [],
+    },
+  ]);
 });
 
 test('summarizes degraded Route Plan warnings unless details are requested', async () => {
@@ -924,17 +990,25 @@ test('summarizes degraded Route Plan warnings unless details are requested', asy
   });
   const summaryCapture = captureOutput();
   const detailedCapture = captureOutput();
+  const summaryOperationEvents: CliTelemetryTypes['OperationEvent'][] = [];
+  const detailedOperationEvents: CliTelemetryTypes['OperationEvent'][] = [];
 
   const summaryExitCode = await runCli({
     args: ['AAAA', 'BBBB'],
     env: {RADIAL_DATABASE_PATH: database.databasePath},
     io: summaryCapture.io,
+    async loadTelemetry() {
+      return recordingOperationalTelemetry(summaryOperationEvents);
+    },
     openApplication: openSyntheticApplication,
   });
   const detailedExitCode = await runCli({
     args: ['AAAA', 'BBBB', '--warnings'],
     env: {RADIAL_DATABASE_PATH: database.databasePath},
     io: detailedCapture.io,
+    async loadTelemetry() {
+      return recordingOperationalTelemetry(detailedOperationEvents);
+    },
     openApplication: openSyntheticApplication,
   });
 
@@ -971,6 +1045,22 @@ test('summarizes degraded Route Plan warnings unless details are requested', asy
       '  Leg 1: AAAA departure, NDX arrival\n' +
       '  Leg 2: NDX departure, BBBB arrival\n',
   });
+  const expectedOperationEvent = {
+    kind: 'route-plan-completed',
+    arrivalIcao: 'BBBB',
+    departureIcao: 'AAAA',
+    routeDistanceNm: expect.closeTo(120.0809, 4),
+    routeLegCount: 2,
+    warningCodes: [
+      'ndb-fallback-used',
+      'magnetic-course-unavailable',
+      'magnetic-course-unavailable',
+      'magnetic-course-unavailable',
+      'magnetic-course-unavailable',
+    ],
+  };
+  expect(summaryOperationEvents).toEqual([expectedOperationEvent]);
+  expect(detailedOperationEvents).toEqual([expectedOperationEvent]);
 });
 
 test('writes no partial Route Plan for a missing airport failure and exits 1', async () => {

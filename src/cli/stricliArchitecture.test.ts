@@ -1,53 +1,82 @@
-import {readFile, readdir} from 'node:fs/promises';
+import {access, readFile, readdir} from 'node:fs/promises';
 import {join} from 'node:path';
 
-import {expect, test} from 'vitest';
+import {expect, expectTypeOf, test} from 'vitest';
+
+import type runCli from '#radial/cli/runCli.js';
+import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
 
 const MANUAL_DISPATCH_PREDICATE = /function is(?:AirportReload|DataStatus|NavaidReload)/;
 const OPERATIONAL_STATIC_IMPORT =
   /^import (?!type\b).*from ['"](?:@duckdb|@sentry|#radial\/(?:application|data-producer|instrument(?:\.js)?))/mu;
 const BUILD_COMMAND = /buildCommand</g;
+const BUILD_ROUTE_MAP = /buildRouteMap\(/g;
+const BUILD_CLI_APPLICATION = /= buildCliApplication\(/g;
 const STRICLI_RUN = /\brun\(application,/g;
+const RAW_INVOCATION_ADMISSION =
+  /\bparseRoutePlanInvocation\b|\bthis\.invocation\b|\binvocation:\s*input\.args\b/u;
+const PRE_ADMISSION_ARGUMENT_TRANSFORMATION =
+  /\binput\.args\.(?:filter|flatMap|map|reduce|slice)\b|\badaptStricliToken\b/u;
+const DISPATCH_CAPABLE_RETRY =
+  /\b(?:hasTerminalWarnings|includeOperationalFlags|initialApplication|operationalFlagApplication)\b/u;
+const MANUAL_ROUTE_HIERARCHY =
+  /\brouteToken\(|const\s+(?:data|reload|root)\s*=\s*buildRouteMap\(/u;
 const RAW_ARGUMENT_TELEMETRY = /\b(?:args|invocation)\b/u;
 const INDEX_MODULE = /(?:^|\/)index\.ts$/u;
 const INDEX_IMPORT = /from ['"][^'"]*\/index\.js['"]/u;
 const FORWARDING_EXPORT = /^export (?:\*|\{[^}]+\}) from /mu;
 const LEGACY_LIFECYCLE = /\b(?:cliLogAttributes|createInterruptSignal|logCliResult)\b/u;
-const STRICLI_RUNTIME_IMPORT = /^import (?!type\b).*from '@stricli\/core'/mu;
+const STRICLI_RUNTIME_IMPORT = /^import(?! type\b)(?:.|\n)*?from '@stricli\/core'/mu;
+const OBSOLETE_MODULES = [
+  'src/cli/buildCliApplication.ts',
+  'src/cli/CliStricliContext.ts',
+  'src/cli/formatCliCompatibilityDiagnostic.ts',
+] as const;
 
-test('pins one Stricli parser authority with import-light eager modules', async () => {
+type ExpectedCommandMetadata =
+  | Readonly<{
+      id: 'plan-route';
+      attributes: Readonly<{
+        'radial.route.arrival_icao': string;
+        'radial.route.departure_icao': string;
+      }>;
+    }>
+  | Readonly<{id: 'data-status'}>
+  | Readonly<{id: 'reload-navaids'}>
+  | Readonly<{
+      id: 'reload-airport';
+      attributes: Readonly<{'radial.airport.icao': string}>;
+    }>;
+type CliCommandTypes = NonNullable<(typeof runCli)['commandTypes']>;
+
+test('pins one private Stricli parser authority with import-light eager modules', async () => {
   const packageJson = JSON.parse(await readFile('package.json', 'utf8'));
-  const [
-    applicationSource,
-    contextSource,
-    diagnosticSource,
-    adapterSource,
-    executableSource,
-    lifecycleSource,
-    runtimeSource,
-  ] = await Promise.all([
-    readFile('src/cli/buildCliApplication.ts', 'utf8'),
-    readFile('src/cli/CliStricliContext.ts', 'utf8'),
-    readFile('src/cli/formatCliCompatibilityDiagnostic.ts', 'utf8'),
-    readFile('src/cli/runCli.ts', 'utf8'),
-    readFile('src/cli/runCliExecutable.ts', 'utf8'),
-    readFile('src/cli/runAdmittedCliCommand.ts', 'utf8'),
-    readFile('src/cli/runtime/createCliRuntimeContext.ts', 'utf8'),
-  ]);
-  const eagerSources = [
-    applicationSource,
-    contextSource,
-    diagnosticSource,
-    adapterSource,
-    executableSource,
-    lifecycleSource,
-    runtimeSource,
-  ];
+  const [adapterSource, executableSource, lifecycleSource, runtimeSource] =
+    await Promise.all([
+      readFile('src/cli/runCli.ts', 'utf8'),
+      readFile('src/cli/runCliExecutable.ts', 'utf8'),
+      readFile('src/cli/runAdmittedCliCommand.ts', 'utf8'),
+      readFile('src/cli/runtime/createCliRuntimeContext.ts', 'utf8'),
+    ]);
+  const eagerSources = [adapterSource, executableSource, lifecycleSource, runtimeSource];
 
   expect(packageJson.dependencies['@stricli/core']).toBe('1.3.0');
-  expect(applicationSource.match(BUILD_COMMAND)).toHaveLength(4);
+  expect(adapterSource.match(BUILD_COMMAND)).toHaveLength(1);
+  expect(adapterSource.match(BUILD_ROUTE_MAP)).toHaveLength(1);
+  expect(adapterSource.match(BUILD_CLI_APPLICATION)).toHaveLength(1);
   expect(adapterSource.match(STRICLI_RUN)).toHaveLength(1);
   expect(adapterSource).not.toMatch(MANUAL_DISPATCH_PREDICATE);
+  expect(adapterSource).not.toMatch(MANUAL_ROUTE_HIERARCHY);
+  expect(adapterSource).not.toMatch(RAW_INVOCATION_ADMISSION);
+  expect(adapterSource).not.toMatch(PRE_ADMISSION_ARGUMENT_TRANSFORMATION);
+  expect(adapterSource).not.toMatch(DISPATCH_CAPABLE_RETRY);
+  expect(adapterSource).toContain(
+    'buildCatalogRouteMap(commandDescriptions, commandFor)'
+  );
+  expect(adapterSource).toContain('await run(application, input.args, context)');
+  expect(adapterSource).toContain('inferEmpty: true');
+  expect(adapterSource).toContain('parse: parseTerminalWarnings');
+  expect(adapterSource).not.toContain("aliases: ['h']");
   expect(lifecycleSource).not.toMatch(RAW_ARGUMENT_TELEMETRY);
 
   for (const source of eagerSources) {
@@ -55,7 +84,16 @@ test('pins one Stricli parser authority with import-light eager modules', async 
   }
 });
 
-test('has direct descriptive CLI modules without legacy or forwarding paths', async () => {
+test('keeps catalog-derived identities and admitted metadata exact', () => {
+  expectTypeOf<CliCommandTypes['id']>().toEqualTypeOf<
+    'plan-route' | 'data-status' | 'reload-navaids' | 'reload-airport'
+  >();
+  expectTypeOf<
+    CliTelemetryTypes['CommandMetadata']
+  >().toEqualTypeOf<ExpectedCommandMetadata>();
+});
+
+test('has one direct command-surface module without obsolete or forwarding paths', async () => {
   const relativePaths = (await readdir('src/cli', {recursive: true})).filter(
     path => path.endsWith('.ts') && !path.endsWith('.test.ts')
   );
@@ -67,6 +105,11 @@ test('has direct descriptive CLI modules without legacy or forwarding paths', as
   );
   const allSources = modules.map(module => module.source).join('\n');
 
+  await Promise.all(
+    OBSOLETE_MODULES.map(async path => {
+      await expect(access(path)).rejects.toThrow();
+    })
+  );
   expect(relativePaths.filter(path => INDEX_MODULE.test(path))).toEqual([]);
   expect(allSources).not.toMatch(INDEX_IMPORT);
   expect(allSources).not.toMatch(FORWARDING_EXPORT);
@@ -77,6 +120,5 @@ test('has direct descriptive CLI modules without legacy or forwarding paths', as
     modules
       .filter(module => STRICLI_RUNTIME_IMPORT.test(module.source))
       .map(module => module.path)
-      .sort()
-  ).toEqual(['buildCliApplication.ts', 'runCli.ts']);
+  ).toEqual(['runCli.ts']);
 });
