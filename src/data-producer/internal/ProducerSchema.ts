@@ -745,50 +745,8 @@ async function prepareProducerSchema(instance: DuckDBInstance): Promise<void> {
   }
 }
 
-async function producerSchemaExists(instance: DuckDBInstance): Promise<boolean> {
-  const connection = await instance.connect();
-  try {
-    const schemas = await connection.runAndReadAll(`
-      SELECT schema_name
-      FROM information_schema.schemata
-      WHERE schema_name = 'radial_producer'
-    `);
-    return schemas.getRowObjectsJS().length > 0;
-  } finally {
-    connection.closeSync();
-  }
-}
-
-async function readActiveNavaidSnapshotId(
-  instance: DuckDBInstance
-): Promise<string | null> {
-  const connection = await instance.connect();
-  try {
-    const state = await connection.runAndReadAll(`
-      SELECT CAST(active_navaid_snapshot_id AS VARCHAR) AS active_navaid_snapshot_id
-      FROM radial_producer.producer_state
-      WHERE singleton
-    `);
-    const rows = state.getRowObjectsJS();
-    if (rows.length !== 1) {
-      throw new Error('Producer Schema state must contain exactly one singleton row.');
-    }
-
-    const activeSnapshotId = rows[0]?.['active_navaid_snapshot_id'];
-    if (activeSnapshotId !== null && typeof activeSnapshotId !== 'string') {
-      throw new Error('Producer Schema active Navaid Snapshot marker is invalid.');
-    }
-
-    return activeSnapshotId;
-  } finally {
-    connection.closeSync();
-  }
-}
-
 export default {
   prepare: prepareProducerSchema,
   inspect: inspectProducerSchema,
   publishNavaidSnapshot,
-  producerSchemaExists,
-  readActiveNavaidSnapshotId,
 };

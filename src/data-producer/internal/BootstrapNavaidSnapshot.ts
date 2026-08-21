@@ -17,15 +17,16 @@ async function ensureFirstNavaidSnapshot(
   publicationGate: PublicationGate,
   dependencies: NavaidDataProducerDependencies = {}
 ): Promise<BootstrapResult> {
-  let readiness: 'ready' | 'bootstrap' | 'credentials-missing';
+  let readiness: 'ready' | 'bootstrap' | 'credentials-missing' | 'invalid';
   try {
     readiness = await publicationGate.run(async () => {
-      const schemaExists = await producerSchema.producerSchemaExists(instance);
-      if (schemaExists) {
-        await producerSchema.prepare(instance);
-        if ((await producerSchema.readActiveNavaidSnapshotId(instance)) !== null) {
-          return 'ready';
-        }
+      const inspection = await producerSchema.inspect(instance);
+      if (inspection.kind === 'invalid') {
+        return 'invalid';
+      }
+
+      if (inspection.kind === 'current' && inspection.snapshot !== null) {
+        return 'ready';
       }
 
       if (openAipApiKey.trim() === '') {
@@ -37,6 +38,10 @@ async function ensureFirstNavaidSnapshot(
     });
   } catch (error) {
     return isDuckDBBusyError(error) ? databaseBusy() : databaseInvalid();
+  }
+
+  if (readiness === 'invalid') {
+    return databaseInvalid();
   }
 
   if (readiness === 'ready') {

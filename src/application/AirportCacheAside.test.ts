@@ -225,7 +225,7 @@ test.each([
   }
 });
 
-test('reports a corrupt committed Cached Airport instead of replacing it', async () => {
+test('rejects planning from a corrupt committed Cached Airport without replacing it', async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-airport-corrupt-'));
   const databasePath = join(temporaryDirectory, 'radial.duckdb');
   let lookupAttempted = false;
@@ -262,17 +262,10 @@ test('reports a corrupt committed Cached Airport instead of replacing it', async
     }
 
     const planner = await opened.value.planning.open();
-    if (!planner.ok) {
-      throw new Error('Expected the planner to open.');
-    }
-
-    await expect(
-      planner.value.planRoute({departureIcao: 'CAAA', arrivalIcao: 'CBBB'})
-    ).resolves.toMatchObject({
+    expect(planner).toMatchObject({
       ok: false,
-      failure: {code: 'airport-cache-corrupt', role: 'departure', normalizedIcao: 'CAAA'},
+      failure: {code: 'DATA_DATABASE_INVALID', activeDataPreserved: true},
     });
-    await planner.value[Symbol.asyncDispose]();
     await opened.value[Symbol.asyncDispose]();
 
     expect(lookupAttempted).toBe(false);
