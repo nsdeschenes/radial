@@ -62,28 +62,65 @@ test('reports malformed command input on stderr and exits 2', async () => {
   });
 });
 
-test('provides data status help and rejects unsupported options', async () => {
+test('keeps data status help and rejected input outside the lifecycle', async () => {
   const helpCapture = captureOutput();
-  const usageCapture = captureOutput();
+  const optionCapture = captureOutput();
+  const argumentCapture = captureOutput();
+  let operationalLifecycleEntries = 0;
+  const lifecycleTraps = {
+    async loadCommand() {
+      operationalLifecycleEntries += 1;
+      throw new Error('Data status help and rejections must not load the command.');
+    },
+    async loadTelemetry() {
+      operationalLifecycleEntries += 1;
+      throw new Error('Data status help and rejections must not initialize telemetry.');
+    },
+    async openApplication() {
+      operationalLifecycleEntries += 1;
+      throw new Error('Data status help and rejections must not open the application.');
+    },
+  };
 
   await expect(
-    runCli({args: ['data', 'status', '--help'], env: {}, io: helpCapture.io})
+    runCli({
+      ...lifecycleTraps,
+      args: ['data', 'status', '--help'],
+      env: {},
+      io: helpCapture.io,
+    })
   ).resolves.toBe(0);
   await expect(
-    runCli({args: ['data', 'status', '--force'], env: {}, io: usageCapture.io})
+    runCli({
+      ...lifecycleTraps,
+      args: ['data', 'status', '--force'],
+      env: {},
+      io: optionCapture.io,
+    })
+  ).resolves.toBe(2);
+  await expect(
+    runCli({
+      ...lifecycleTraps,
+      args: ['data', 'status', 'extra'],
+      env: {},
+      io: argumentCapture.io,
+    })
   ).resolves.toBe(2);
 
   expect(helpCapture.output()).toEqual({
     stdout: 'Usage: radial data status\n',
     stderr: '',
   });
-  expect(usageCapture.output()).toEqual({
+  const usageOutput = {
     stdout: '',
     stderr:
       'error [DATA_USAGE]: Invalid data command.\n' +
       'Cause: The data status command accepts no arguments or operational flags.\n' +
       'Action: Run "radial data status".\n',
-  });
+  };
+  expect(optionCapture.output()).toEqual(usageOutput);
+  expect(argumentCapture.output()).toEqual(usageOutput);
+  expect(operationalLifecycleEntries).toBe(0);
 });
 
 test('reports a nonexistent database as uninitialized without creating it', async () => {

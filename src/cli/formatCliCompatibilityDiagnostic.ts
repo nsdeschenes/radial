@@ -1,17 +1,13 @@
 import commandCatalog from '#radial/cli/CliCommandCatalog.js';
 
-const DATA_STATUS_USAGE =
-  'error [DATA_USAGE]: Invalid data command.\n' +
-  'Cause: The data status command accepts no arguments or operational flags.\n' +
-  'Action: Run "radial data status".\n';
 const NAVAID_RELOAD_USAGE =
   'error [DATA_USAGE]: Invalid data command.\n' +
   'Cause: The Navaid reload accepts no arguments or operational flags.\n' +
   'Action: Run "radial data reload navaids".\n';
 function formatCliCompatibilityDiagnostic(invocation: readonly string[]): string {
   if (invocation[0] === 'data') {
-    if (invocation[1] === 'status') {
-      return DATA_STATUS_USAGE;
+    if (commandCatalog.dataStatus.rejection.owns(invocation)) {
+      return commandCatalog.dataStatus.rejection.format(invocation);
     }
 
     if (commandCatalog.reloadAirport.rejection.owns(invocation)) {

@@ -27,8 +27,9 @@ type CommandDescription<Flags extends BaseFlags, Args extends BaseArgs> = Readon
 
 type RoutePlanFlags = Readonly<{warnings?: boolean}>;
 type RoutePlanArgs = [departureIcao: string, arrivalIcao: string];
-type AirportReloadFlags = Readonly<Record<never, never>>;
 type AirportReloadArgs = [icao: string];
+type NoFlags = Readonly<Record<never, never>>;
+type NoArgs = [];
 
 const airportReloadUsage =
   'error [DATA_USAGE]: Invalid data command.\n' +
@@ -110,6 +111,39 @@ const routePlan = {
   },
 } satisfies CommandDescription<RoutePlanFlags, RoutePlanArgs>;
 
+const dataStatus = {
+  id: 'data-status',
+  route: ['data', 'status'] as const,
+  docs: {brief: 'Read local data status'},
+  parameters: {
+    flags: {},
+    positional: {kind: 'tuple', parameters: []},
+  },
+  help: {
+    leafUsage: 'Usage: radial data status\n',
+    rootUsageLine: '  radial data status\n',
+  },
+  rejection: {
+    owns(invocation: readonly string[]) {
+      return invocation[0] === 'data' && invocation[1] === 'status';
+    },
+    format(_invocation: readonly string[]) {
+      return (
+        'error [DATA_USAGE]: Invalid data command.\n' +
+        'Cause: The data status command accepts no arguments or operational flags.\n' +
+        'Action: Run "radial data status".\n'
+      );
+    },
+  },
+  metadata() {
+    return {id: 'data-status'};
+  },
+  async loadExecution() {
+    const commandModule = await import('#radial/cli/commands/runDataStatus.js');
+    return (runtime, telemetry) => commandModule.default({}, runtime, telemetry);
+  },
+} satisfies CommandDescription<NoFlags, NoArgs>;
+
 function parseRoutePlanInvocation(invocation: readonly string[]) {
   const routeArguments = routeArgumentsFromInvocation(invocation);
   const validated = validation.validateRoutePlanningRequest({
@@ -176,17 +210,17 @@ const reloadAirport = {
       });
     },
   },
-  metadata(_flags: AirportReloadFlags, icao: string) {
+  metadata(_flags: NoFlags, icao: string) {
     return {
       id: 'reload-airport',
       attributes: {'radial.airport.icao': icao},
     };
   },
-  async loadExecution(_flags: AirportReloadFlags, icao: string) {
+  async loadExecution(_flags: NoFlags, icao: string) {
     const commandModule = await import('#radial/cli/commands/runAirportReload.js');
     return runtime => commandModule.default({icao}, runtime);
   },
-} satisfies CommandDescription<AirportReloadFlags, AirportReloadArgs>;
+} satisfies CommandDescription<NoFlags, AirportReloadArgs>;
 
 function parseAirportReloadInvocation(input: string): string {
   const validated = validation.validateAirportIcao(input);
@@ -197,4 +231,4 @@ function parseAirportReloadInvocation(input: string): string {
   return validated.value;
 }
 
-export default {reloadAirport, routePlan};
+export default {dataStatus, reloadAirport, routePlan};
