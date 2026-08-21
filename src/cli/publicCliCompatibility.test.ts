@@ -401,7 +401,9 @@ test.each(compatibilityCases)('$name preserves the Public CLI contract', async s
     sample.airportReloadIcao === undefined ? [] : [sample.airportReloadIcao]
   );
   expect(application.evidence.navaidReloads).toBe(sample.navaidReload === true ? 1 : 0);
-  expect(application.evidence.commandLoads).toBe(sample.admitted === true ? 1 : 0);
+  expect(application.evidence.commandLoads).toBe(
+    sample.admitted === true && sample.airportReloadIcao === undefined ? 1 : 0
+  );
   expect(application.evidence.telemetryLoads).toBe(sample.admitted === true ? 1 : 0);
 });
 

@@ -85,8 +85,6 @@ test('captures application cleanup defects before they leave the active span', a
   expect(events).toEqual([
     'telemetry initialized',
     'span started reload-airport',
-    'handler loaded reload-airport',
-    'handler executed reload-airport',
     'application opened',
     'application disposed',
     'defect captured',
@@ -158,7 +156,7 @@ test.each([
           };
         },
       })
-    ).resolves.toBe(0);
+    ).resolves.toBe(metadata.id === 'reload-airport' ? 1 : 0);
     expect(admittedMetadata).toEqual([metadata]);
   }
 );

@@ -1,15 +1,30 @@
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
-import type CliCommandResultTypes from '#radial/cli/commands/CliCommandResult.js';
+import type CliInputTypes from '#radial/cli/CliInput.js';
 import airportReloadOutput from '#radial/cli/formatAirportReload.js';
+import runAdmittedCliCommand from '#radial/cli/runAdmittedCliCommand.js';
 import cliInterruption from '#radial/cli/runtime/CliInterruption.js';
 import type CliRuntimeTypes from '#radial/cli/runtime/CliRuntimeContext.js';
 
 type AirportReloadInput = Readonly<{icao: string}>;
+type CommandStatus = 0 | 1 | 2 | 130;
 
 async function runAirportReload(
+  admitted: CliInputTypes['Admitted'],
+  input: AirportReloadInput
+): Promise<CommandStatus> {
+  return runAdmittedCliCommand(admitted, {
+    metadata: {
+      id: 'reload-airport',
+      attributes: {'radial.airport.icao': input.icao},
+    },
+    execute: runtime => reloadAirport(input, runtime),
+  });
+}
+
+async function reloadAirport(
   input: AirportReloadInput,
   runtime: CliRuntimeTypes['Context']
-): Promise<CliCommandResultTypes['Result']> {
+): Promise<CommandStatus> {
   const databasePath = runtime.env['RADIAL_DATABASE_PATH'] ?? '';
   if (databasePath.trim() === '') {
     runtime.io.writeStderr(
@@ -22,7 +37,7 @@ async function runAirportReload(
         activeDataPreserved: true,
       })
     );
-    return {kind: 'expected-failure', status: 1};
+    return 1;
   }
 
   const openAipApiKey = runtime.env['OPENAIP_API_KEY'] ?? '';
@@ -36,11 +51,11 @@ async function runAirportReload(
         activeDataPreserved: true,
       })
     );
-    return {kind: 'expected-failure', status: 1};
+    return 1;
   }
 
   let applicationResult:
-    | Readonly<{ok: true; value: CliCommandResultTypes['Result']}>
+    | Readonly<{ok: true; value: CommandStatus}>
     | Readonly<{ok: false; failure: ApplicationTypes['ApplicationOpenFailure']}>;
   try {
     applicationResult = await runtime.withApplication(
@@ -57,8 +72,8 @@ async function runAirportReload(
             signal: runtime.signal,
           });
         } catch (error) {
-          if (isSharedSignalCancellation(error, runtime.signal)) {
-            return {kind: 'interrupted', status: 130};
+          if (cliInterruption.isCancellation(error, runtime.signal)) {
+            return 130;
           }
 
           throw error;
@@ -66,19 +81,16 @@ async function runAirportReload(
 
         if (!result.ok) {
           runtime.io.writeStderr(airportReloadOutput.formatFailure(result.failure));
-          return {
-            kind: 'expected-failure',
-            status: result.failure.code === 'DATA_INVALID_ICAO' ? 2 : 1,
-          };
+          return result.failure.code === 'DATA_INVALID_ICAO' ? 2 : 1;
         }
 
         runtime.io.writeStdout(airportReloadOutput.formatSuccess(result.value));
-        return {kind: 'success', status: 0};
+        return 0;
       }
     );
   } catch (error) {
     if (cliInterruption.is(error)) {
-      return {kind: 'interrupted', status: 130};
+      return 130;
     }
 
     throw error;
@@ -94,14 +106,10 @@ async function runAirportReload(
         activeDataPreserved: true,
       })
     );
-    return {kind: 'expected-failure', status: 1};
+    return 1;
   }
 
   return applicationResult.value;
-}
-
-function isSharedSignalCancellation(error: unknown, signal: AbortSignal): boolean {
-  return signal.aborted && error === signal.reason;
 }
 
 export default runAirportReload;

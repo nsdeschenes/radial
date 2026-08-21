@@ -15,6 +15,7 @@ import type {
 } from '@stricli/core';
 
 import type CliInputTypes from '#radial/cli/CliInput.js';
+import runAirportReload from '#radial/cli/commands/runAirportReload.js';
 import airportReloadOutput from '#radial/cli/formatAirportReload.js';
 import diagnostics from '#radial/cli/formatDiagnostics.js';
 import runAdmittedCliCommand from '#radial/cli/runAdmittedCliCommand.js';
@@ -44,11 +45,16 @@ type CommandDescription<
     owns(invocation: readonly string[]): boolean;
     format(invocation: readonly string[]): string | undefined;
   }>;
-  metadata(flags: Flags, ...args: Args): Metadata;
-  loadCompatibilityExecution(
+  metadata?: (flags: Flags, ...args: Args) => Metadata;
+  loadCompatibilityExecution?: (
     flags: Flags,
     ...args: Args
-  ): Promise<CliInputTypes['CommandExecution']>;
+  ) => Promise<CliInputTypes['CommandExecution']>;
+  runAdmitted?: (
+    input: CliInputTypes['Admitted'],
+    flags: Flags,
+    ...args: Args
+  ) => Promise<number>;
 }>;
 
 type RoutePlanFlags = Readonly<{warnings?: boolean}>;
@@ -269,15 +275,8 @@ const reloadAirport = describeCommand<NoFlags, AirportReloadArgs>()({
       return airportReloadUsage;
     },
   },
-  metadata(_flags, icao) {
-    return {
-      id: 'reload-airport',
-      attributes: {'radial.airport.icao': icao},
-    } as const;
-  },
-  async loadCompatibilityExecution(_flags, icao) {
-    const commandModule = await import('#radial/cli/commands/runAirportReload.js');
-    return runtime => commandModule.default({icao}, runtime);
+  runAdmitted(input, _flags, icao) {
+    return runAirportReload(input, {icao});
   },
 });
 
@@ -289,7 +288,14 @@ const commandDescriptions = [
 ] as const;
 type CatalogCommandDescription = (typeof commandDescriptions)[number];
 type CatalogCommandId = CatalogCommandDescription['id'];
-type CatalogCommandMetadata = ReturnType<CatalogCommandDescription['metadata']>;
+type CatalogCommandMetadata =
+  | ReturnType<NonNullable<typeof routePlan.metadata>>
+  | ReturnType<NonNullable<typeof dataStatus.metadata>>
+  | ReturnType<NonNullable<typeof reloadNavaids.metadata>>
+  | Readonly<{
+      id: 'reload-airport';
+      attributes: Readonly<{'radial.airport.icao': string}>;
+    }>;
 
 interface BuiltCliApplication {
   readonly application: Application<CliStricliContext>;
@@ -497,10 +503,22 @@ function admittedLoader<
         throw new Error('Stricli did not select the expected registered Radial command.');
       }
 
-      const metadata = description.metadata(flags, ...args);
+      if (description.runAdmitted !== undefined) {
+        this.process.exitCode = await description.runAdmitted(this.input, flags, ...args);
+        return;
+      }
+
+      const metadata = description.metadata?.(flags, ...args);
+      const loadCompatibilityExecution = description.loadCompatibilityExecution;
+      if (metadata === undefined || loadCompatibilityExecution === undefined) {
+        throw new Error(
+          `Radial command ${JSON.stringify(description.id)} has no admitted workflow.`
+        );
+      }
+
       this.process.exitCode = await runAdmittedCliCommand(this.input, {
         metadata,
-        loadDefault: () => description.loadCompatibilityExecution(flags, ...args),
+        loadDefault: () => loadCompatibilityExecution(flags, ...args),
       });
     };
 }
