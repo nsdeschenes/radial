@@ -3,9 +3,9 @@ import {randomUUID} from 'node:crypto';
 import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 
 import abortableOperation from '#radial/application/internal/AbortableOperation.js';
-import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
 import NavaidSnapshotPublicationError from '#radial/data-producer/internal/NavaidSnapshotPublicationError.js';
 import type NavaidSnapshotCandidate from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotCandidate.js';
+import producerSchemaNavaidSnapshotCodec from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotCodec.js';
 import type PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 import type ValidatedNavaidSnapshotCandidate from '#radial/data-producer/internal/ValidatedNavaidSnapshotCandidate.js';
 import Wmm2025 from '#radial/data-producer/internal/Wmm2025.js';
@@ -13,6 +13,13 @@ import Wmm2025 from '#radial/data-producer/internal/Wmm2025.js';
 const {localMagneticDeclinationFromWmm2025} = Wmm2025;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type NavaidSnapshotStorageRows = ReturnType<
+  typeof producerSchemaNavaidSnapshotCodec.encodeRows
+>;
+type SnapshotMetadataStorageRow = ReturnType<
+  typeof producerSchemaNavaidSnapshotCodec.encodeMetadata
+>;
 
 type NavaidPublicationBoundary =
   | 'before-transaction'
@@ -92,11 +99,14 @@ async function publishNavaidSnapshotWithinGate(
       transactionStarted = true;
       await options.onBoundary?.('transaction-started');
       abortableOperation.throwIfAborted(options.signal);
+      const storageRows = producerSchemaNavaidSnapshotCodec.encodeRows(
+        candidate,
+        snapshotId
+      );
       const previousSnapshotId = await activeSnapshotId(connection);
       await insertCandidateRows(
         connection,
-        snapshotId,
-        candidate,
+        storageRows,
         options.signal,
         options.onBoundary
       );
@@ -107,12 +117,17 @@ async function publishNavaidSnapshotWithinGate(
         options.signal
       );
       abortableOperation.throwIfAborted(options.signal);
-      await verifyStoredCandidate(connection, snapshotId, candidate);
+      await verifyStoredCandidate(connection, snapshotId, candidate, storageRows);
       await options.onBoundary?.('candidate-verified');
 
       const publishedAt = (options.publishedAt ?? (() => new Date().toISOString()))();
       validateTimestamp(publishedAt, 'publishedAt');
-      await insertSnapshotMetadata(connection, snapshotId, candidate, publishedAt);
+      const metadata = producerSchemaNavaidSnapshotCodec.encodeMetadata(
+        candidate,
+        snapshotId,
+        publishedAt
+      );
+      await insertSnapshotMetadata(connection, metadata);
       await verifySnapshotMetadata(connection, snapshotId, candidate);
       await connection.run(
         `UPDATE radial_producer.producer_state
@@ -174,11 +189,8 @@ async function publishNavaidSnapshotWithinGate(
 
 async function insertSnapshotMetadata(
   connection: DuckDBConnection,
-  snapshotId: string,
-  candidate: NavaidSnapshotCandidate,
-  publishedAt: string
+  metadata: SnapshotMetadataStorageRow
 ): Promise<void> {
-  const magneticModel = candidate.provenance.magneticModel;
   await connection.run(
     `INSERT INTO radial_producer.navaid_snapshots (
       snapshot_id, snapshot_checksum, raw_navaids_checksum,
@@ -198,63 +210,62 @@ async function insertSnapshotMetadata(
       CAST(? AS DATE), ?, ?
     )`,
     [
-      snapshotId,
-      candidate.snapshotChecksum,
-      candidate.componentChecksums.rawNavaids,
-      candidate.componentChecksums.plannerNavaids,
-      candidate.componentChecksums.exclusions,
-      candidate.componentChecksums.facilityVariationAudits,
-      candidate.retrievedAt,
-      candidate.retrievalCompletedAt,
-      publishedAt,
-      candidate.provenance.sourceIdentity,
-      candidate.provenance.derivationPolicyIdentity,
-      candidate.provenance.matchingPolicyIdentity,
-      candidate.provenance.faaNasr.sourceUrl,
-      candidate.provenance.faaNasr.retrievedAt,
-      candidate.provenance.faaNasr.archiveIdentity,
-      candidate.provenance.faaNasr.archiveChecksum,
-      candidate.provenance.faaNasr.contentChecksum,
-      candidate.provenance.faaNasr.cycleId,
-      candidate.provenance.faaNasr.effectiveDate,
-      candidate.rawNavaids.length,
-      candidate.plannerNavaids.length,
-      candidate.exclusions.length,
-      magneticModel.model,
-      magneticModel.version,
-      magneticModel.epochYear,
-      magneticModel.referenceDate,
-      magneticModel.source,
-      magneticModel.coefficientChecksum,
+      metadata.snapshotId,
+      metadata.snapshotChecksum,
+      metadata.rawNavaidsChecksum,
+      metadata.plannerNavaidsChecksum,
+      metadata.exclusionsChecksum,
+      metadata.facilityVariationAuditsChecksum,
+      metadata.retrievedAt,
+      metadata.retrievalCompletedAt,
+      metadata.publishedAt,
+      metadata.sourceIdentity,
+      metadata.derivationPolicyIdentity,
+      metadata.matchingPolicyIdentity,
+      metadata.nasrSourceUrl,
+      metadata.nasrRetrievedAt,
+      metadata.nasrArchiveIdentity,
+      metadata.nasrArchiveChecksum,
+      metadata.nasrContentChecksum,
+      metadata.nasrCycleId,
+      metadata.nasrEffectiveDate,
+      metadata.rawNavaidCount,
+      metadata.plannerNavaidCount,
+      metadata.exclusionCount,
+      metadata.magneticModel,
+      metadata.magneticModelVersion,
+      metadata.magneticModelEpochYear,
+      metadata.magneticReferenceDate,
+      metadata.magneticModelSource,
+      metadata.magneticModelChecksum,
     ]
   );
 }
 
 async function insertCandidateRows(
   connection: DuckDBConnection,
-  snapshotId: string,
-  candidate: NavaidSnapshotCandidate,
+  storage: NavaidSnapshotStorageRows,
   signal?: AbortSignal,
   onBoundary?: PublicationOptions['onBoundary']
 ): Promise<void> {
-  for (const raw of candidate.rawNavaids) {
+  for (const raw of storage.rawNavaids) {
     abortableOperation.throwIfAborted(signal);
     await connection.run(
       `INSERT INTO radial_producer.raw_navaids
        VALUES (CAST(? AS UUID), ?, CAST(? AS JSON), ?)`,
-      [snapshotId, raw.sourceRecordId, raw.canonicalRecord, raw.recordChecksum]
+      [raw.snapshotId, raw.sourceRecordId, raw.canonicalRecord, raw.recordChecksum]
     );
     await onBoundary?.('candidate-write');
   }
 
-  for (const navaid of candidate.plannerNavaids) {
+  for (const navaid of storage.plannerNavaids) {
     abortableOperation.throwIfAborted(signal);
     await connection.run(
       `INSERT INTO radial_producer.planner_navaids VALUES (
         CAST(? AS UUID), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS DATE)
       )`,
       [
-        snapshotId,
+        navaid.snapshotId,
         navaid.databaseId,
         navaid.sourceRecordId,
         navaid.identifier,
@@ -274,26 +285,26 @@ async function insertCandidateRows(
     await onBoundary?.('candidate-write');
   }
 
-  for (const exclusion of candidate.exclusions) {
+  for (const exclusion of storage.exclusions) {
     abortableOperation.throwIfAborted(signal);
     await connection.run(
       `INSERT INTO radial_producer.navaid_exclusions VALUES (CAST(? AS UUID), ?, ?)`,
-      [snapshotId, exclusion.sourceRecordId, exclusion.reason]
+      [exclusion.snapshotId, exclusion.sourceRecordId, exclusion.reason]
     );
     await onBoundary?.('candidate-write');
   }
 
-  for (const audit of candidate.facilityVariationAudits) {
+  for (const audit of storage.facilityVariationAudits) {
     abortableOperation.throwIfAborted(signal);
     await connection.run(
       `INSERT INTO radial_producer.facility_variation_audits
        VALUES (CAST(? AS UUID), ?, ?, ?, CAST(? AS JSON))`,
       [
-        snapshotId,
+        audit.snapshotId,
         audit.sourceRecordId,
         audit.outcome,
         audit.sourceIdentity,
-        canonicalizeJson(audit),
+        audit.auditRecord,
       ]
     );
     await onBoundary?.('candidate-write');
@@ -351,7 +362,8 @@ async function regenerateAirportProjections(
 async function verifyStoredCandidate(
   connection: DuckDBConnection,
   snapshotId: string,
-  candidate: NavaidSnapshotCandidate
+  candidate: NavaidSnapshotCandidate,
+  storage: NavaidSnapshotStorageRows
 ): Promise<void> {
   const counts = await connection.runAndReadAll(
     `SELECT
@@ -384,8 +396,8 @@ async function verifyStoredCandidate(
   const actualAuditRecords = storedAudits
     .getRowObjectsJS()
     .map(stored => requireString(stored['audit_record'], 'audit_record'));
-  const expectedAuditRecords = candidate.facilityVariationAudits.map(audit =>
-    canonicalizeJson(audit)
+  const expectedAuditRecords = storage.facilityVariationAudits.map(
+    audit => audit.auditRecord
   );
   if (actualAuditRecords.join('\n') !== expectedAuditRecords.join('\n')) {
     throw new Error('stored Facility Variation provenance does not reconcile');
