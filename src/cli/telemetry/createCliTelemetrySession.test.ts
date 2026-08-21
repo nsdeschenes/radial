@@ -1,6 +1,5 @@
 import {expect, test} from 'vitest';
 
-import type CliCommandResultTypes from '#radial/cli/commands/CliCommandResult.js';
 import createCliTelemetrySession from '#radial/cli/telemetry/createCliTelemetrySession.js';
 
 const resultCases = [
@@ -21,7 +20,7 @@ const resultCases = [
     log: 'error',
   },
 ] satisfies readonly Readonly<{
-  result: CliCommandResultTypes['Result'];
+  result: Readonly<{kind: string; status: number}>;
   outcome: 'failure' | 'success';
   log: 'error' | 'info';
 }>[];

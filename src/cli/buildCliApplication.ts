@@ -14,7 +14,6 @@ import type {
   StricliProcess,
 } from '@stricli/core';
 
-import type CliCommandMetadataTypes from '#radial/cli/CliCommandMetadata.js';
 import type CliInputTypes from '#radial/cli/CliInput.js';
 import runAirportReload from '#radial/cli/commands/runAirportReload.js';
 import runDataStatus from '#radial/cli/commands/runDataStatus.js';
@@ -33,12 +32,7 @@ type CliStricliContext = CommandContext &
   }>;
 type CliApplicationContext = ApplicationContext;
 
-type CommandDescription<
-  Flags extends BaseFlags,
-  Args extends BaseArgs,
-  Id extends string,
-> = Readonly<{
-  id: Id;
+type CommandDescription<Flags extends BaseFlags, Args extends BaseArgs> = Readonly<{
   route: readonly string[];
   docs: CommandBuilderArguments<Flags, Args, CliStricliContext>['docs'];
   parameters: CommandBuilderArguments<Flags, Args, CliStricliContext>['parameters'];
@@ -67,12 +61,10 @@ const airportReloadUsage =
   'Action: Run "radial data reload airport <ICAO>".\n';
 
 function describeCommand<Flags extends BaseFlags, Args extends BaseArgs>() {
-  return <const Id extends string>(description: CommandDescription<Flags, Args, Id>) =>
-    description;
+  return (description: CommandDescription<Flags, Args>) => description;
 }
 
 const routePlan = describeCommand<RoutePlanFlags, RoutePlanArgs>()({
-  id: 'plan-route',
   route: [INTERNAL_PLAN_ROUTE],
   docs: {brief: 'Plan a Route'},
   parameters: {
@@ -133,7 +125,6 @@ const routePlan = describeCommand<RoutePlanFlags, RoutePlanArgs>()({
 });
 
 const dataStatus = describeCommand<NoFlags, NoArgs>()({
-  id: 'data-status',
   route: ['data', 'status'],
   docs: {brief: 'Read local data status'},
   parameters: {
@@ -166,7 +157,6 @@ const dataStatus = describeCommand<NoFlags, NoArgs>()({
 });
 
 const reloadNavaids = describeCommand<NoFlags, NoArgs>()({
-  id: 'reload-navaids',
   route: ['data', 'reload', 'navaids'],
   docs: {brief: 'Reload the Navaid Snapshot'},
   parameters: {
@@ -203,7 +193,6 @@ const reloadNavaids = describeCommand<NoFlags, NoArgs>()({
 });
 
 const reloadAirport = describeCommand<NoFlags, AirportReloadArgs>()({
-  id: 'reload-airport',
   route: ['data', 'reload', 'airport'],
   docs: {brief: 'Reload one Cached Airport'},
   parameters: {
@@ -263,17 +252,11 @@ const commandDescriptions = [
   reloadAirport,
 ] as const;
 type CatalogCommandDescription = (typeof commandDescriptions)[number];
-type CatalogCommandId = CatalogCommandDescription['id'];
-type CatalogCommandMetadata = CliCommandMetadataTypes['Metadata'];
 
 interface BuiltCliApplication {
   readonly application: Application<CliStricliContext>;
   contextFor(input: CliInputTypes['Input'], process: StricliProcess): CliStricliContext;
   rejectedInvocationDiagnostic(invocation: readonly string[]): string;
-  readonly commandTypes?: Readonly<{
-    id: CatalogCommandId;
-    metadata: CatalogCommandMetadata;
-  }>;
 }
 
 const ROOT_HELP =
@@ -352,7 +335,7 @@ function buildCliApplication(): BuiltCliApplication {
     const command = compiledCommands.get(description);
     if (command === undefined) {
       throw new Error(
-        `Radial command ${JSON.stringify(description.id)} was not compiled.`
+        `Radial command ${JSON.stringify(description.route)} was not compiled.`
       );
     }
 
@@ -392,11 +375,7 @@ function buildCliApplication(): BuiltCliApplication {
 function buildCatalogCommand(
   description: CatalogCommandDescription
 ): Command<CliStricliContext> {
-  type ErasedCatalogDescription = CommandDescription<
-    BaseFlags,
-    BaseArgs,
-    CatalogCommandId
-  >;
+  type ErasedCatalogDescription = CommandDescription<BaseFlags, BaseArgs>;
   return buildDescribedCommand(description as unknown as ErasedCatalogDescription);
 }
 
@@ -441,11 +420,9 @@ function buildCatalogRouteMap(
   });
 }
 
-function buildDescribedCommand<
-  Flags extends BaseFlags,
-  Args extends BaseArgs,
-  Id extends CatalogCommandId,
->(description: CommandDescription<Flags, Args, Id>): Command<CliStricliContext> {
+function buildDescribedCommand<Flags extends BaseFlags, Args extends BaseArgs>(
+  description: CommandDescription<Flags, Args>
+): Command<CliStricliContext> {
   const command = buildCommand<Flags, Args, CliStricliContext>({
     docs: description.docs,
     loader: admittedLoader(description),
@@ -454,12 +431,8 @@ function buildDescribedCommand<
   return command;
 }
 
-function admittedLoader<
-  Flags extends BaseFlags,
-  Args extends BaseArgs,
-  Id extends CatalogCommandId,
->(
-  description: CommandDescription<Flags, Args, Id>
+function admittedLoader<Flags extends BaseFlags, Args extends BaseArgs>(
+  description: CommandDescription<Flags, Args>
 ): () => Promise<CommandFunction<Flags, Args, CliStricliContext>> {
   return async () =>
     async function (flags, ...args) {

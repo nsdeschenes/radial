@@ -30,9 +30,6 @@ test.each([
       args,
       env: {},
       io: {writeStderr() {}, writeStdout() {}},
-      async loadCommand() {
-        return async () => ({kind: 'success', status: 0});
-      },
       async loadTelemetry() {
         return {
           async execute(actualMetadata, operation) {
@@ -99,10 +96,6 @@ test('renders help without entering the temporary command dispatcher', async () 
     args: ['data', 'status', '--help'],
     env: {},
     io: {writeStderr() {}, writeStdout() {}},
-    async loadCommand() {
-      operationalLifecycleEntries += 1;
-      throw new Error('Help must not load a command.');
-    },
     async loadTelemetry() {
       operationalLifecycleEntries += 1;
       throw new Error('Help must not initialize telemetry.');

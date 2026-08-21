@@ -48,18 +48,12 @@ test('exposes an immutable environment snapshot and capability-only context', as
   });
 
   env['RADIAL_DATABASE_PATH'] = 'after';
-  scope.selectCommand('plan-route');
-
   expect(scope.context.env['RADIAL_DATABASE_PATH']).toBe('before');
   expect(scope.context.io).toBe(io);
   expect(scope.context.signal).toBe(controller.signal);
-  expect(scope.context.command.id).toBe('plan-route');
   expect(Object.isFrozen(scope.context)).toBe(true);
   expect(Object.isFrozen(scope.context.env)).toBe(true);
-  expect(Object.isFrozen(scope.context.command)).toBe(true);
   expect(Object.keys(scope.context).sort()).toEqual([
-    'command',
-    'disposeApplication',
     'env',
     'io',
     'signal',

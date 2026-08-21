@@ -1,4 +1,3 @@
-import type CliCommandResultTypes from '#radial/cli/commands/CliCommandResult.js';
 import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
 
 type TelemetryAttributes = Record<string, boolean | number | string>;
@@ -119,7 +118,7 @@ function recordResult(
   client: TelemetryClient,
   commandId: string,
   commandAttributes: Readonly<Record<string, string>>,
-  result: CliCommandResultTypes['Result']
+  result: Readonly<{status: number}>
 ): void {
   const outcome = result.status === 0 ? 'success' : 'failure';
   client.recordCommand({command: commandId, outcome});

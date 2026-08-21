@@ -1,11 +1,24 @@
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
-import type CliCommandMetadataTypes from '#radial/cli/CliCommandMetadata.js';
-import type CliCommandResultTypes from '#radial/cli/commands/CliCommandResult.js';
 
 type RoutePlanningWarningCode =
   ApplicationTypes['RoutePlanningSuccess']['warnings'][number]['code'];
 
-type CommandMetadata = CliCommandMetadataTypes['Metadata'];
+type CommandMetadata =
+  | Readonly<{
+      id: 'plan-route';
+      attributes: Readonly<{
+        'radial.route.arrival_icao': string;
+        'radial.route.departure_icao': string;
+      }>;
+    }>
+  | Readonly<{id: 'data-status'}>
+  | Readonly<{id: 'reload-navaids'}>
+  | Readonly<{
+      id: 'reload-airport';
+      attributes: Readonly<{'radial.airport.icao': string}>;
+    }>;
+
+type CommandOutcome = Readonly<{status: number}>;
 
 type OperationEvent =
   | Readonly<{
@@ -29,10 +42,10 @@ type OperationEvent =
     }>;
 
 type CliTelemetrySession = Readonly<{
-  execute(
+  execute<Result extends CommandOutcome>(
     metadata: CommandMetadata,
-    operation: () => Promise<CliCommandResultTypes['Result']>
-  ): Promise<CliCommandResultTypes['Result']>;
+    operation: () => Promise<Result>
+  ): Promise<Result>;
   recordOperation(event: OperationEvent): void;
   close(): Promise<void>;
 }>;
