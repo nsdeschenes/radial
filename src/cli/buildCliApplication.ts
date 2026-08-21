@@ -32,30 +32,21 @@ const ROOT_HELP =
   'Usage:\n' +
   commandCatalog.routePlan.help.rootUsageLine +
   commandCatalog.dataStatus.help.rootUsageLine +
-  '  radial data reload navaids\n' +
+  commandCatalog.reloadNavaids.help.rootUsageLine +
   commandCatalog.reloadAirport.help.rootUsageLine;
 const commandSelections = new WeakMap<object, CommandSelection>();
 
 function buildCliApplication(): Application<CliStricliContext> {
-  const noFlags = {};
-  const noPositionals = {kind: 'tuple' as const, parameters: [] as const};
   const dataStatus = buildDescribedCommand(commandCatalog.dataStatus);
-  const reloadNavaids = registerCommand(
-    {id: 'reload-navaids'},
-    buildCommand<Readonly<Record<never, never>>, [], CliStricliContext>({
-      docs: {brief: 'Reload the Navaid Snapshot'},
-      loader: admittedLoader(async () => {
-        const commandModule = await import('#radial/cli/commands/runReloadNavaids.js');
-        return runtime => commandModule.default({}, runtime);
-      }),
-      parameters: {flags: noFlags, positional: noPositionals},
-    })
-  );
+  const reloadNavaids = buildDescribedCommand(commandCatalog.reloadNavaids);
   const reloadAirport = buildDescribedCommand(commandCatalog.reloadAirport);
   const planRoute = buildDescribedCommand(commandCatalog.routePlan);
   const reload = buildRouteMap({
     docs: {brief: 'Reload local data'},
-    routes: {airport: reloadAirport, navaids: reloadNavaids},
+    routes: {
+      airport: reloadAirport,
+      [commandCatalog.reloadNavaids.route[2]]: reloadNavaids,
+    },
   });
   const data = buildRouteMap({
     docs: {brief: 'Inspect or reload local data'},
@@ -218,8 +209,8 @@ function helpForInvocation(invocation: readonly string[]): string | undefined {
     return commandCatalog.dataStatus.help.leafUsage;
   }
 
-  if (key === 'data reload navaids --help') {
-    return 'Usage: radial data reload navaids\n';
+  if (key === `${commandCatalog.reloadNavaids.route.join(' ')} --help`) {
+    return commandCatalog.reloadNavaids.help.leafUsage;
   }
 
   if (key === 'data reload airport --help') {

@@ -231,4 +231,41 @@ function parseAirportReloadInvocation(input: string): string {
   return validated.value;
 }
 
-export default {dataStatus, reloadAirport, routePlan};
+const reloadNavaids = {
+  id: 'reload-navaids',
+  route: ['data', 'reload', 'navaids'] as const,
+  docs: {brief: 'Reload the Navaid Snapshot'},
+  parameters: {
+    flags: {},
+    positional: {kind: 'tuple', parameters: []},
+  },
+  help: {
+    leafUsage: 'Usage: radial data reload navaids\n',
+    rootUsageLine: '  radial data reload navaids\n',
+  },
+  rejection: {
+    owns(invocation: readonly string[]) {
+      return (
+        invocation[0] === 'data' &&
+        invocation[1] !== 'status' &&
+        !(invocation[1] === 'reload' && invocation[2] === 'airport')
+      );
+    },
+    format(_invocation: readonly string[]) {
+      return (
+        'error [DATA_USAGE]: Invalid data command.\n' +
+        'Cause: The Navaid reload accepts no arguments or operational flags.\n' +
+        'Action: Run "radial data reload navaids".\n'
+      );
+    },
+  },
+  metadata() {
+    return {id: 'reload-navaids'};
+  },
+  async loadExecution() {
+    const commandModule = await import('#radial/cli/commands/runReloadNavaids.js');
+    return runtime => commandModule.default({}, runtime);
+  },
+} satisfies CommandDescription<NoFlags, NoArgs>;
+
+export default {dataStatus, reloadAirport, reloadNavaids, routePlan};
