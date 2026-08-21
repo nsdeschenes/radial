@@ -286,7 +286,17 @@ function decodeFacilityVariationAudit(
     throw new Error('stored Facility Variation audit is not a JSON object');
   }
 
-  return decoded as NavaidSnapshotCandidate['facilityVariationAudits'][number];
+  const audit = decoded as Record<string, unknown>;
+  if (
+    audit['sourceRecordId'] !== row.sourceRecordId ||
+    audit['outcome'] !== row.outcome ||
+    audit['sourceIdentity'] !== row.sourceIdentity ||
+    canonicalizeJson(audit) !== row.auditRecord
+  ) {
+    throw new Error('stored Facility Variation audit columns do not reconcile');
+  }
+
+  return audit as NavaidSnapshotCandidate['facilityVariationAudits'][number];
 }
 
 function orderContent(content: CandidateContent): CandidateContent {
@@ -317,6 +327,29 @@ function constructComponentChecksums(content: CandidateContent): ComponentChecks
       )
     ),
   };
+}
+
+function recomputeComponentChecksums(
+  storage: DecodedNavaidSnapshotStorage
+): ComponentChecksums {
+  return constructComponentChecksums({
+    retrievedAt: storage.metadata.retrievedAt,
+    retrievalCompletedAt: storage.metadata.retrievalCompletedAt,
+    provenance: {
+      sourceIdentity: storage.metadata.sourceIdentity,
+      derivationPolicyIdentity: storage.metadata.derivationPolicyIdentity,
+      matchingPolicyIdentity: storage.metadata.matchingPolicyIdentity,
+      magneticModel: storage.metadata.magneticModel,
+      faaNasr: {
+        ...storage.metadata.faaNasr,
+        publishedAt: '',
+      },
+    },
+    rawNavaids: storage.rawNavaids,
+    plannerNavaids: storage.plannerNavaids,
+    exclusions: storage.exclusions,
+    facilityVariationAudits: storage.facilityVariationAudits,
+  });
 }
 
 function constructSnapshotChecksum(
@@ -389,6 +422,7 @@ const producerSchemaNavaidSnapshotCodec = {
   encode,
   encodeMetadata,
   encodeRows,
+  recomputeComponentChecksums,
 };
 
 export default producerSchemaNavaidSnapshotCodec;

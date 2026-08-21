@@ -1,5 +1,6 @@
 import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 
+import committedNavaidSnapshotInspection from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotInspection.js';
 import plannerDatabaseContract from '#radial/planner-database/PlannerDatabaseContract.js';
 
 const PRODUCER_VIEW_SOURCES = {
@@ -200,17 +201,9 @@ type ProducerSchemaMigration = {
   readonly to: ProducerSchemaVersion;
 };
 
-type ProducerSchemaCachedAirport = Readonly<{
-  icao: string;
-  sourceId: string;
-  name: string;
-  longitude: number;
-  latitude: number;
-  recordChecksum: string;
-  sourceIdentity: string;
-  retrievedAt: string;
-  publishedAt: string;
-}>;
+type CommittedNavaidInspection = Awaited<
+  ReturnType<typeof committedNavaidSnapshotInspection.inspect>
+>;
 
 type ProducerSchemaInspection =
   | Readonly<{kind: 'absent'}>
@@ -220,7 +213,8 @@ type ProducerSchemaInspection =
       plannerContractVersion: number;
       checksumManifestVersion: number;
       activeNavaidSnapshotId: string | null;
-      cachedAirports: readonly ProducerSchemaCachedAirport[];
+      snapshot: CommittedNavaidInspection['snapshot'];
+      cachedAirports: CommittedNavaidInspection['cachedAirports'];
     }>
   | Readonly<{kind: 'invalid'; diagnostic: string}>;
 
@@ -438,11 +432,14 @@ async function inspectProducerSchemaTransaction(
     return invalidInspection(structuralDiagnostic);
   }
 
-  let cachedAirports: readonly ProducerSchemaCachedAirport[];
+  let committedNavaids: CommittedNavaidInspection;
   try {
-    cachedAirports = await readCachedAirports(connection);
+    committedNavaids = await committedNavaidSnapshotInspection.inspect(
+      connection,
+      state.activeNavaidSnapshotId
+    );
   } catch (error) {
-    if (error instanceof InvalidProducerSchemaError) {
+    if (committedNavaidSnapshotInspection.isInvalidError(error)) {
       return invalidInspection(error.message);
     }
 
@@ -455,7 +452,8 @@ async function inspectProducerSchemaTransaction(
     plannerContractVersion: state.version[1],
     checksumManifestVersion: state.version[2],
     activeNavaidSnapshotId: state.activeNavaidSnapshotId,
-    cachedAirports,
+    snapshot: committedNavaids.snapshot,
+    cachedAirports: committedNavaids.cachedAirports,
   };
 }
 
@@ -613,44 +611,6 @@ async function inspectCrossSnapshotIdentities(
   return null;
 }
 
-async function readCachedAirports(
-  connection: DuckDBConnection
-): Promise<readonly ProducerSchemaCachedAirport[]> {
-  const result = await connection.runAndReadAll(`
-    SELECT
-      icao,
-      database_id,
-      name,
-      longitude,
-      latitude,
-      record_checksum,
-      source_identity,
-      CAST(retrieved_at AS VARCHAR) AS retrieved_at,
-      CAST(published_at AS VARCHAR) AS published_at
-    FROM radial_producer.cached_airports
-    ORDER BY icao
-  `);
-  return result.getRowObjectsJS().map(row => {
-    const longitude = finiteNumber(row['longitude'], 'Cached Airport longitude');
-    const latitude = finiteNumber(row['latitude'], 'Cached Airport latitude');
-    if (longitude < -180 || longitude > 180 || latitude < -90 || latitude > 90) {
-      throw new InvalidProducerSchemaError('A Cached Airport has invalid coordinates.');
-    }
-
-    return {
-      icao: requiredString(row, 'icao'),
-      sourceId: requiredString(row, 'database_id'),
-      name: requiredString(row, 'name'),
-      longitude,
-      latitude,
-      recordChecksum: requiredString(row, 'record_checksum'),
-      sourceIdentity: requiredString(row, 'source_identity'),
-      retrievedAt: canonicalTimestamp(row, 'retrieved_at'),
-      publishedAt: canonicalTimestamp(row, 'published_at'),
-    };
-  });
-}
-
 function invalidInspection(diagnostic: string): ProducerSchemaInspection {
   return {kind: 'invalid', diagnostic};
 }
@@ -662,24 +622,6 @@ function requiredString(row: Record<string, unknown>, field: string): string {
   }
 
   return value;
-}
-
-function finiteNumber(value: unknown, field: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new InvalidProducerSchemaError(`Committed ${field} is invalid.`);
-  }
-
-  return value;
-}
-
-function canonicalTimestamp(row: Record<string, unknown>, field: string): string {
-  const value = requiredString(row, field);
-  const timestamp = new Date(value);
-  if (Number.isNaN(timestamp.getTime())) {
-    throw new InvalidProducerSchemaError(`Committed ${field} is invalid.`);
-  }
-
-  return timestamp.toISOString();
 }
 
 class InvalidProducerSchemaError extends Error {}

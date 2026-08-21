@@ -7,7 +7,7 @@ async function insertSyntheticCachedAirport(instance: DuckDBInstance): Promise<v
       `INSERT INTO radial_producer.cached_airports VALUES
         ('CYYZ', 'airport-yyz', 'Toronto Pearson', -79.6306, 43.6777,
          '{"_id":"airport-yyz"}',
-         'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+         'sha256:581b0b5f9856d1f68cfd15960a3ebd920e106848b6906749a9e2ca8581c88790',
          'openaip:airport-yyz',
          TIMESTAMPTZ '2026-08-17 11:00:00+00',
          TIMESTAMPTZ '2026-08-17 11:00:01+00')`
