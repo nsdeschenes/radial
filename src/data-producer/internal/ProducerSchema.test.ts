@@ -5,7 +5,7 @@ import {join} from 'node:path';
 import {DuckDBInstance} from '@duckdb/node-api';
 import {expect, test} from 'vitest';
 
-import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import producerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 
 test('initializes versioned producer storage and three empty planner views', async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-producer-schema-'));
@@ -13,7 +13,7 @@ test('initializes versioned producer storage and three empty planner views', asy
 
   try {
     const instance = await DuckDBInstance.create(databasePath);
-    await expect(initializeProducerSchema(instance)).resolves.toBeUndefined();
+    await expect(producerSchema.prepare(instance)).resolves.toBeUndefined();
     instance.closeSync();
 
     const inspectedInstance = await DuckDBInstance.create(databasePath);
@@ -96,8 +96,8 @@ test('repeatedly opens a current producer schema as a no-op', async () => {
   const instance = await DuckDBInstance.create(databasePath);
 
   try {
-    await initializeProducerSchema(instance);
-    await expect(initializeProducerSchema(instance)).resolves.toBeUndefined();
+    await producerSchema.prepare(instance);
+    await expect(producerSchema.prepare(instance)).resolves.toBeUndefined();
 
     const connection = await instance.connect();
     try {
@@ -129,12 +129,12 @@ test('leaves the database file unchanged when reopening a current schema', async
 
   try {
     const initializedInstance = await DuckDBInstance.create(databasePath);
-    await initializeProducerSchema(initializedInstance);
+    await producerSchema.prepare(initializedInstance);
     initializedInstance.closeSync();
     const before = await readFile(databasePath);
 
     const reopenedInstance = await DuckDBInstance.create(databasePath);
-    await initializeProducerSchema(reopenedInstance);
+    await producerSchema.prepare(reopenedInstance);
     reopenedInstance.closeSync();
 
     expect(await readFile(databasePath)).toEqual(before);
@@ -149,12 +149,12 @@ test('rejects a partial producer schema without repairing it', async () => {
   const instance = await DuckDBInstance.create(databasePath);
 
   try {
-    await initializeProducerSchema(instance);
+    await producerSchema.prepare(instance);
     const connection = await instance.connect();
     await connection.run('DROP TABLE radial_producer.raw_navaids');
     connection.closeSync();
 
-    await expect(initializeProducerSchema(instance)).rejects.toThrow(
+    await expect(producerSchema.prepare(instance)).rejects.toThrow(
       'Producer Schema objects do not match version 1/1/1.'
     );
 
@@ -182,7 +182,7 @@ test('rejects a malformed private producer table without repairing it', async ()
   const instance = await DuckDBInstance.create(databasePath);
 
   try {
-    await initializeProducerSchema(instance);
+    await producerSchema.prepare(instance);
     const connection = await instance.connect();
     await connection.run(`
       DROP TABLE radial_producer.raw_navaids;
@@ -191,7 +191,7 @@ test('rejects a malformed private producer table without repairing it', async ()
     `);
     connection.closeSync();
 
-    await expect(initializeProducerSchema(instance)).rejects.toThrow(
+    await expect(producerSchema.prepare(instance)).rejects.toThrow(
       'Producer Schema objects do not match version 1/1/1.'
     );
 
@@ -216,7 +216,7 @@ test('rejects a partial public planner view without repairing it', async () => {
   const instance = await DuckDBInstance.create(databasePath);
 
   try {
-    await initializeProducerSchema(instance);
+    await producerSchema.prepare(instance);
     const connection = await instance.connect();
     await connection.run(`
       DROP VIEW main.planner_metadata;
@@ -224,7 +224,7 @@ test('rejects a partial public planner view without repairing it', async () => {
     `);
     connection.closeSync();
 
-    await expect(initializeProducerSchema(instance)).rejects.toThrow(
+    await expect(producerSchema.prepare(instance)).rejects.toThrow(
       'Producer Schema objects do not match version 1/1/1.'
     );
 
@@ -249,7 +249,7 @@ test('rejects a malformed producer-state singleton without mutation', async () =
 
   try {
     const instance = await DuckDBInstance.create(databasePath);
-    await initializeProducerSchema(instance);
+    await producerSchema.prepare(instance);
     const connection = await instance.connect();
     await connection.run('DELETE FROM radial_producer.producer_state');
     connection.closeSync();
@@ -257,7 +257,7 @@ test('rejects a malformed producer-state singleton without mutation', async () =
     const before = await readFile(databasePath);
 
     const reopenedInstance = await DuckDBInstance.create(databasePath);
-    await expect(initializeProducerSchema(reopenedInstance)).rejects.toThrow(
+    await expect(producerSchema.prepare(reopenedInstance)).rejects.toThrow(
       'Producer Schema state must contain exactly one singleton row.'
     );
     reopenedInstance.closeSync();
@@ -274,7 +274,7 @@ test('rejects a newer Producer Schema component without mutation', async () => {
 
   try {
     const instance = await DuckDBInstance.create(databasePath);
-    await initializeProducerSchema(instance);
+    await producerSchema.prepare(instance);
     const connection = await instance.connect();
     await connection.run(`
       UPDATE radial_producer.producer_state
@@ -285,7 +285,7 @@ test('rejects a newer Producer Schema component without mutation', async () => {
     const before = await readFile(databasePath);
 
     const reopenedInstance = await DuckDBInstance.create(databasePath);
-    await expect(initializeProducerSchema(reopenedInstance)).rejects.toThrow(
+    await expect(producerSchema.prepare(reopenedInstance)).rejects.toThrow(
       'Producer Schema version 2/1/1 is newer than supported 1/1/1.'
     );
     reopenedInstance.closeSync();
@@ -310,7 +310,7 @@ test('rolls back initialization without changing legacy aviation data', async ()
   connection.closeSync();
 
   try {
-    await expect(initializeProducerSchema(instance)).rejects.toThrow(
+    await expect(producerSchema.prepare(instance)).rejects.toThrow(
       'Producer Schema public view names collide with existing objects.'
     );
     instance.closeSync();
@@ -357,7 +357,7 @@ test('preserves legacy aviation objects and rows during successful initializatio
   connection.closeSync();
 
   try {
-    await initializeProducerSchema(instance);
+    await producerSchema.prepare(instance);
     instance.closeSync();
 
     const inspectedInstance = await DuckDBInstance.create(databasePath);

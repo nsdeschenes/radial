@@ -2,14 +2,13 @@ import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import dataStatusResult from '#radial/data-producer/internal/DataStatusResult.js';
-import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import producerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import isDuckDBBusyError from '#radial/db/duckdb/isDuckDBBusyError.js';
-import plannerDatabaseContract from '#radial/planner-database/PlannerDatabaseContract.js';
 
 type DataStatusResult = RadialApplicationTypes['DataStatusResult'];
 type DataStatusSuccess = RadialApplicationTypes['DataStatusSuccess'];
-type DataStatusCachedAirport = RadialApplicationTypes['DataStatusCachedAirport'];
 type DataStatusExclusionCount = Readonly<{reason: string; count: number}>;
+type ProducerSchemaInspection = Awaited<ReturnType<typeof producerSchema.inspect>>;
 
 const LEGACY_TABLE_NAMES = [
   'airports',
@@ -47,7 +46,10 @@ async function readDataStatus(
 
   try {
     try {
-      return dataStatusResult.success(await inspectStatus(connection, databasePath));
+      const schema = await producerSchema.inspect(instance);
+      return dataStatusResult.success(
+        await inspectStatus(connection, databasePath, schema)
+      );
     } catch (error) {
       if (error instanceof InvalidDataStatusError) {
         return dataStatusResult.failure(
@@ -81,77 +83,45 @@ async function readDataStatus(
 
 async function inspectStatus(
   connection: DuckDBConnection,
-  databasePath: string
+  databasePath: string,
+  schema: ProducerSchemaInspection
 ): Promise<DataStatusSuccess> {
-  const schema = await initializeProducerSchema.inspect(connection);
   const legacyObjects = await readLegacyObjects(connection);
 
   if (schema.kind === 'absent') {
-    if (await plannerDatabaseContract.hasAnyReservedRelation(connection)) {
-      throw new InvalidDataStatusError(
-        'The Producer Schema is absent while a planner view name is already in use.'
-      );
-    }
-
     return dataStatusResult.uninitializedValue(databasePath, legacyObjects);
   }
 
   if (schema.kind === 'invalid') {
-    throw new InvalidDataStatusError('The Producer Schema is incomplete or invalid.');
+    throw new InvalidDataStatusError(schema.diagnostic);
   }
 
-  const state = await readProducerState(connection);
-  const cachedAirports = await readCachedAirports(connection);
   const producerSchema = {
     producerSchemaVersion: schema.producerSchemaVersion,
     plannerContractVersion: schema.plannerContractVersion,
     checksumManifestVersion: schema.checksumManifestVersion,
   } as const;
 
-  if (state.activeSnapshotId === null) {
+  if (schema.activeNavaidSnapshotId === null) {
     return {
       databasePath,
       status: 'uninitialized',
       legacyObjects,
       producerSchema,
       snapshot: null,
-      cachedAirports,
+      cachedAirports: schema.cachedAirports,
     };
   }
 
-  const snapshot = await readSnapshot(connection, state.activeSnapshotId);
+  const snapshot = await readSnapshot(connection, schema.activeNavaidSnapshotId);
   return {
     databasePath,
     status: 'ready',
     legacyObjects,
     producerSchema,
     snapshot,
-    cachedAirports,
+    cachedAirports: schema.cachedAirports,
   };
-}
-
-async function readProducerState(
-  connection: DuckDBConnection
-): Promise<Readonly<{activeSnapshotId: string | null}>> {
-  const result = await connection.runAndReadAll(`
-    SELECT
-      singleton,
-      CAST(active_navaid_snapshot_id AS VARCHAR) AS active_snapshot_id
-    FROM radial_producer.producer_state
-  `);
-  const rows = result.getRowObjectsJS();
-  if (rows.length !== 1 || rows[0]?.['singleton'] !== true) {
-    throw new InvalidDataStatusError(
-      'The Producer Schema state must contain exactly one singleton row.'
-    );
-  }
-
-  const activeSnapshotId = rows[0]?.['active_snapshot_id'];
-  if (activeSnapshotId !== null && typeof activeSnapshotId !== 'string') {
-    throw new InvalidDataStatusError('The active Navaid Snapshot marker is invalid.');
-  }
-
-  return {activeSnapshotId};
 }
 
 async function readSnapshot(
@@ -410,44 +380,6 @@ async function readGroupedCounts(
     reason: requiredString(row, 'reason'),
     count: nonNegativeInteger(row['count'], 'grouped count'),
   }));
-}
-
-async function readCachedAirports(
-  connection: DuckDBConnection
-): Promise<readonly DataStatusCachedAirport[]> {
-  const result = await connection.runAndReadAll(`
-    SELECT
-      icao,
-      database_id,
-      name,
-      longitude,
-      latitude,
-      record_checksum,
-      source_identity,
-      CAST(retrieved_at AS VARCHAR) AS retrieved_at,
-      CAST(published_at AS VARCHAR) AS published_at
-    FROM radial_producer.cached_airports
-    ORDER BY icao
-  `);
-  return result.getRowObjectsJS().map(row => {
-    const longitude = finiteNumber(row['longitude'], 'Cached Airport longitude');
-    const latitude = finiteNumber(row['latitude'], 'Cached Airport latitude');
-    if (longitude < -180 || longitude > 180 || latitude < -90 || latitude > 90) {
-      throw new InvalidDataStatusError('A Cached Airport has invalid coordinates.');
-    }
-
-    return {
-      icao: requiredString(row, 'icao'),
-      sourceId: requiredString(row, 'database_id'),
-      name: requiredString(row, 'name'),
-      longitude,
-      latitude,
-      recordChecksum: requiredString(row, 'record_checksum'),
-      sourceIdentity: requiredString(row, 'source_identity'),
-      retrievedAt: canonicalTimestamp(row, 'retrieved_at'),
-      publishedAt: canonicalTimestamp(row, 'published_at'),
-    };
-  });
 }
 
 async function readLegacyObjects(

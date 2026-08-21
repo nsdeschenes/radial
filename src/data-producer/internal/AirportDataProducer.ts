@@ -7,7 +7,7 @@ import abortableOperation from '#radial/application/internal/AbortableOperation.
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import OpenAIP from '#radial/clients/OpenAIP/OpenAIP.js';
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
-import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import producerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import type PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 import Wmm2025 from '#radial/data-producer/internal/Wmm2025.js';
 
@@ -124,7 +124,7 @@ async function reloadAirport(
           'db.system.name': 'duckdb',
         },
       },
-      () => publicationGate.run(() => initializeProducerSchema(instance), request.signal)
+      () => publicationGate.run(() => producerSchema.prepare(instance), request.signal)
     );
     abortableOperation.throwIfAborted(request.signal);
   } catch {

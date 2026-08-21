@@ -8,7 +8,7 @@ import {expect, test} from 'vitest';
 import FifoOperationCoordinator from '#radial/application/internal/FifoOperationCoordinator.js';
 import validateNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidateValidation.js';
 import publishNavaidSnapshot from '#radial/data-producer/internal/NavaidSnapshotPublication.js';
-import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import producerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 import createSyntheticNavaidSnapshotCandidate from '#radial/test/data-producer/createSyntheticNavaidSnapshotCandidate.js';
 import insertSyntheticCachedAirport from '#radial/test/data-producer/insertSyntheticCachedAirport.js';
@@ -24,7 +24,7 @@ test('atomically replaces the active snapshot and regenerates Cached Airport pro
   const publicationGate = createPublicationGate();
 
   try {
-    await initializeProducerSchema(instance);
+    await producerSchema.prepare(instance);
     await insertSyntheticCachedAirport(instance);
     const firstCandidate = createSyntheticNavaidSnapshotCandidate(
       '2026-08-17T12:00:00.000Z'
@@ -125,7 +125,7 @@ test('independently rejects a corrupt candidate and rolls back a publication fai
   const publicationGate = createPublicationGate();
 
   try {
-    await initializeProducerSchema(instance);
+    await producerSchema.prepare(instance);
     const candidate = createSyntheticNavaidSnapshotCandidate('2026-08-17T12:00:00.000Z');
     await publishNavaidSnapshot(instance, candidate, publicationGate, {
       snapshotId: FIRST_SNAPSHOT_ID,
@@ -189,7 +189,7 @@ test.each(INJECTED_FAILURE_BOUNDARIES)(
     const publicationGate = createPublicationGate();
 
     try {
-      await initializeProducerSchema(instance);
+      await producerSchema.prepare(instance);
       await insertSyntheticCachedAirport(instance);
       const firstCandidate = createSyntheticNavaidSnapshotCandidate(
         '2026-08-17T12:00:00.000Z'
@@ -239,7 +239,7 @@ test('does not mutate when publication gate acquisition fails', async () => {
   const publicationGate = createPublicationGate();
 
   try {
-    await initializeProducerSchema(instance);
+    await producerSchema.prepare(instance);
     await publishNavaidSnapshot(
       instance,
       createSyntheticNavaidSnapshotCandidate('2026-08-17T12:00:00.000Z'),

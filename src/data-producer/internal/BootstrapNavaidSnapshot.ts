@@ -3,7 +3,7 @@ import * as Sentry from '@sentry/node';
 
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import reloadNavaids from '#radial/data-producer/internal/NavaidDataProducer.js';
-import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import producerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import type PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 import isDuckDBBusyError from '#radial/db/duckdb/isDuckDBBusyError.js';
 
@@ -20,12 +20,10 @@ async function ensureFirstNavaidSnapshot(
   let readiness: 'ready' | 'bootstrap' | 'credentials-missing';
   try {
     readiness = await publicationGate.run(async () => {
-      const schemaExists = await initializeProducerSchema.producerSchemaExists(instance);
+      const schemaExists = await producerSchema.producerSchemaExists(instance);
       if (schemaExists) {
-        await initializeProducerSchema(instance);
-        if (
-          (await initializeProducerSchema.readActiveNavaidSnapshotId(instance)) !== null
-        ) {
+        await producerSchema.prepare(instance);
+        if ((await producerSchema.readActiveNavaidSnapshotId(instance)) !== null) {
           return 'ready';
         }
       }
@@ -34,7 +32,7 @@ async function ensureFirstNavaidSnapshot(
         return 'credentials-missing';
       }
 
-      await initializeProducerSchema(instance);
+      await producerSchema.prepare(instance);
       return 'bootstrap';
     });
   } catch (error) {

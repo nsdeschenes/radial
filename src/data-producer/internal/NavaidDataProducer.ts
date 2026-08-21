@@ -13,7 +13,7 @@ import NavaidSnapshotValidationError from '#radial/data-producer/internal/Navaid
 import captureOpenAIPNavaids from '#radial/data-producer/internal/OpenAIPNavaidCapture.js';
 import OpenAIPNavaidCaptureError from '#radial/data-producer/internal/OpenAIPNavaidCaptureError.js';
 import type OpenAIPNavaidTransport from '#radial/data-producer/internal/OpenAIPNavaidTransport.js';
-import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import producerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import type NavaidSnapshotCandidate from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotCandidate.js';
 import acquireProductionFAANasrCycle from '#radial/data-producer/internal/ProductionFAANasrCycleSource.js';
 import createProductionOpenAIPNavaidTransport from '#radial/data-producer/internal/ProductionOpenAIPNavaidTransport.js';
@@ -63,7 +63,7 @@ async function reloadNavaids(
           'db.system.name': 'duckdb',
         },
       },
-      () => publicationGate.run(() => initializeProducerSchema(instance), request.signal)
+      () => publicationGate.run(() => producerSchema.prepare(instance), request.signal)
     );
     abortableOperation.throwIfAborted(request.signal);
   } catch (error) {

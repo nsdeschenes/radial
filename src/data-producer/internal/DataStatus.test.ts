@@ -10,7 +10,7 @@ import readDataStatus from '#radial/data-producer/internal/DataStatus.js';
 import buildNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidate.js';
 import validateNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidateValidation.js';
 import publishNavaidSnapshot from '#radial/data-producer/internal/NavaidSnapshotPublication.js';
-import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import producerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 import createSyntheticFAANasrCycle from '#radial/test/createSyntheticFAANasrCycle.js';
 
@@ -47,7 +47,7 @@ test('reports pre-bootstrap Cached Airports from an inactive Producer Schema', a
   const instance = await DuckDBInstance.create(databasePath);
 
   try {
-    await initializeProducerSchema(instance);
+    await producerSchema.prepare(instance);
     const connection = await instance.connect();
     try {
       await connection.run(
@@ -106,7 +106,7 @@ test('distinguishes an invalid Producer Schema from ordinary uninitialized data'
   const instance = await DuckDBInstance.create(databasePath);
 
   try {
-    await initializeProducerSchema(instance);
+    await producerSchema.prepare(instance);
     const connection = await instance.connect();
     try {
       await connection.run('DROP TABLE radial_producer.raw_navaids');
@@ -133,7 +133,7 @@ test('reports the active snapshot provenance, counts, and Facility Variation rea
   const instance = await DuckDBInstance.create(databasePath);
 
   try {
-    await initializeProducerSchema(instance);
+    await producerSchema.prepare(instance);
     const candidate = buildNavaidSnapshotCandidate({
       faaNasrCycles: [
         createSyntheticFAANasrCycle([

@@ -2,7 +2,7 @@ import {DuckDBInstance} from '@duckdb/node-api';
 
 import FifoOperationCoordinator from '#radial/application/internal/FifoOperationCoordinator.js';
 import publishNavaidSnapshot from '#radial/data-producer/internal/NavaidSnapshotPublication.js';
-import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
+import producerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 import createSyntheticNavaidSnapshotCandidate from '#radial/test/data-producer/createSyntheticNavaidSnapshotCandidate.js';
 import insertSyntheticCachedAirport from '#radial/test/data-producer/insertSyntheticCachedAirport.js';
@@ -21,7 +21,7 @@ if (mode === undefined || databasePath === undefined) {
 const instance = await DuckDBInstance.create(databasePath);
 const publicationGate = new PublicationGate(new FifoOperationCoordinator());
 try {
-  await initializeProducerSchema(instance);
+  await producerSchema.prepare(instance);
 
   if (mode === 'seed') {
     await insertSyntheticCachedAirport(instance);
