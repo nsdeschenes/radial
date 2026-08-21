@@ -2,11 +2,12 @@ import {mkdtemp, readdir, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
+import {DuckDBInstance} from '@duckdb/node-api';
 import {expect, test} from 'vitest';
 
 import runDataStatus from '#radial/cli/commands/runDataStatus.js';
-import createCliRuntimeContext from '#radial/cli/runtime/createCliRuntimeContext.js';
 import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
+import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 
 function captureOutput() {
   let stdout = '';
@@ -27,25 +28,26 @@ function captureOutput() {
   };
 }
 
-test('reports a missing database without creating it through the handler', async () => {
+test('reports a missing database without creating it through the admitted entry', async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-status-handler-'));
   const databasePath = join(temporaryDirectory, 'missing.duckdb');
   const capture = captureOutput();
+  const admittedMetadata: CliTelemetryTypes['CommandMetadata'][] = [];
   const operationEvents: CliTelemetryTypes['OperationEvent'][] = [];
-  const runtime = createCliRuntimeContext({
-    env: {RADIAL_DATABASE_PATH: databasePath},
-    io: capture.io,
-    signal: new AbortController().signal,
-  });
 
   try {
     await expect(
-      runDataStatus({}, runtime.context, recordingTelemetry(operationEvents))
-    ).resolves.toMatchObject({
-      kind: 'success',
-      status: 0,
-      success: {databasePath, status: 'uninitialized'},
-    });
+      runDataStatus(
+        {
+          env: {RADIAL_DATABASE_PATH: databasePath},
+          io: capture.io,
+          async loadTelemetry() {
+            return recordingTelemetry(operationEvents, admittedMetadata);
+          },
+        },
+        {}
+      )
+    ).resolves.toBe(0);
     expect(capture.output()).toEqual({
       stdout:
         'Radial data status\n' +
@@ -70,9 +72,53 @@ test('reports a missing database without creating it through the handler', async
         status: 'uninitialized',
       },
     ]);
+    expect(admittedMetadata).toEqual([{id: 'data-status'}]);
     await expect(readdir(temporaryDirectory)).resolves.toEqual([]);
   } finally {
-    await runtime[Symbol.asyncDispose]();
+    await rm(temporaryDirectory, {recursive: true});
+  }
+});
+
+test('reports initialized local data through the admitted entry', async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-status-command-'));
+  const databasePath = join(temporaryDirectory, 'initialized.duckdb');
+  const instance = await DuckDBInstance.create(databasePath);
+  try {
+    await initializeProducerSchema(instance);
+  } finally {
+    instance.closeSync();
+  }
+
+  const capture = captureOutput();
+  const operationEvents: CliTelemetryTypes['OperationEvent'][] = [];
+  try {
+    await expect(
+      runDataStatus(
+        {
+          env: {RADIAL_DATABASE_PATH: databasePath},
+          io: capture.io,
+          async loadTelemetry() {
+            return recordingTelemetry(operationEvents);
+          },
+        },
+        {}
+      )
+    ).resolves.toBe(0);
+    expect(capture.output().stdout).toContain(
+      `  Path: ${databasePath}\n` +
+        '  State: uninitialized\n' +
+        '  Producer Schema version: 1/1/1\n'
+    );
+    expect(capture.output().stderr).toBe('');
+    expect(operationEvents).toEqual([
+      {
+        kind: 'data-status-completed',
+        cachedAirportCount: 0,
+        snapshotPresent: false,
+        status: 'uninitialized',
+      },
+    ]);
+  } finally {
     await rm(temporaryDirectory, {recursive: true});
   }
 });
@@ -80,67 +126,65 @@ test('reports a missing database without creating it through the handler', async
 test('returns an expected failure and writes its diagnostic to stderr', async () => {
   const capture = captureOutput();
   const operationEvents: CliTelemetryTypes['OperationEvent'][] = [];
-  const runtime = createCliRuntimeContext({
-    env: {},
-    io: capture.io,
-    signal: new AbortController().signal,
-  });
-
-  try {
-    await expect(
-      runDataStatus({}, runtime.context, recordingTelemetry(operationEvents))
-    ).resolves.toMatchObject({
-      kind: 'expected-failure',
-      status: 1,
-      failure: {code: 'DATA_DATABASE_PATH_MISSING'},
-    });
-    expect(capture.output()).toEqual({
-      stdout: '',
-      stderr:
-        'error [DATA_DATABASE_PATH_MISSING]: Database path is missing.\n' +
-        'Cause: RADIAL_DATABASE_PATH is required for data status.\n' +
-        'Action: Set RADIAL_DATABASE_PATH to the DuckDB database file and retry.\n' +
-        'Active data remains unchanged.\n',
-    });
-    expect(operationEvents).toEqual([
+  await expect(
+    runDataStatus(
       {
-        kind: 'data-status-failed',
-        activeDataPreserved: true,
-        failureCode: 'DATA_DATABASE_PATH_MISSING',
+        env: {},
+        io: capture.io,
+        async loadTelemetry() {
+          return recordingTelemetry(operationEvents);
+        },
       },
-    ]);
-  } finally {
-    await runtime[Symbol.asyncDispose]();
-  }
+      {}
+    )
+  ).resolves.toBe(1);
+  expect(capture.output()).toEqual({
+    stdout: '',
+    stderr:
+      'error [DATA_DATABASE_PATH_MISSING]: Database path is missing.\n' +
+      'Cause: RADIAL_DATABASE_PATH is required for data status.\n' +
+      'Action: Set RADIAL_DATABASE_PATH to the DuckDB database file and retry.\n' +
+      'Active data remains unchanged.\n',
+  });
+  expect(operationEvents).toEqual([
+    {
+      kind: 'data-status-failed',
+      activeDataPreserved: true,
+      failureCode: 'DATA_DATABASE_PATH_MISSING',
+    },
+  ]);
 });
 
 test('returns a silent recognized interruption before reading status', async () => {
   const capture = captureOutput();
   const controller = new AbortController();
   controller.abort(new Error('Data status interrupted.'));
-  const runtime = createCliRuntimeContext({
-    env: {RADIAL_DATABASE_PATH: ':memory:'},
-    io: capture.io,
-    signal: controller.signal,
-  });
   const operationEvents: CliTelemetryTypes['OperationEvent'][] = [];
 
-  try {
-    await expect(
-      runDataStatus({}, runtime.context, recordingTelemetry(operationEvents))
-    ).resolves.toEqual({kind: 'interrupted', status: 130});
-    expect(capture.output()).toEqual({stdout: '', stderr: ''});
-    expect(operationEvents).toEqual([]);
-  } finally {
-    await runtime[Symbol.asyncDispose]();
-  }
+  await expect(
+    runDataStatus(
+      {
+        env: {RADIAL_DATABASE_PATH: ':memory:'},
+        io: capture.io,
+        async loadTelemetry() {
+          return recordingTelemetry(operationEvents);
+        },
+        signal: controller.signal,
+      },
+      {}
+    )
+  ).resolves.toBe(130);
+  expect(capture.output()).toEqual({stdout: '', stderr: ''});
+  expect(operationEvents).toEqual([]);
 });
 
 function recordingTelemetry(
-  operationEvents: CliTelemetryTypes['OperationEvent'][]
+  operationEvents: CliTelemetryTypes['OperationEvent'][],
+  admittedMetadata: CliTelemetryTypes['CommandMetadata'][] = []
 ): CliTelemetryTypes['Session'] {
   return {
-    async execute(_metadata, operation) {
+    async execute(metadata, operation) {
+      admittedMetadata.push(metadata);
       return operation();
     },
     recordOperation(event) {
