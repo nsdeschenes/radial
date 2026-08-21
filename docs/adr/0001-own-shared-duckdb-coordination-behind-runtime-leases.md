@@ -2,6 +2,8 @@
 
 Radial applications acquire per-application DuckDB runtime leases backed by one registry-owned core for each canonical database identity. The lease exposes operation-shaped application capabilities and owns its child planners; the shared core exclusively owns lazy, retryable instance creation, Navaid FIFO ordering, per-ICAO Airport ordering, publication exclusion, reference counting, and final drain order, so raw DuckDB instances and coordination primitives never cross the runtime seam.
 
+Data Status also enters through a runtime lease. Inspection never creates a missing database or mutates an existing one: the shared core reuses its owned instance when one exists and otherwise owns a temporary read-only instance for the inspection. Temporary inspection and creation of the first persistent writable instance are ordered inside the core; after the persistent instance exists, status reads remain concurrent.
+
 This boundary preserves concurrent reads, concurrent acquisition of different Airports, end-to-end Navaid serialization, and global exclusion between Airport and Navaid publication. Ordinary Airport resolution is deduplicated per lease and ICAO while the FIFO remains shared per ICAO, preventing one lease's credentials or source dependencies from governing another lease's failed attempt.
 
 Disposing a lease stops new top-level work, drains admitted operations and child planners, then releases the shared core. The final release permits downstream coordination created by admitted work, drains all shared queues, closes the coordination primitives and DuckDB instance, and removes the core from the registry; cleanup attempts every stage before reporting one or more disposal failures.

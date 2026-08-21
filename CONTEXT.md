@@ -75,3 +75,7 @@ _Avoid_: Navigation-point cache, startup refresh
 **Cached Airport**:
 An airport record fetched from OpenAIP for a requested departure or arrival ICAO and retained for later Route Plans. An explicit reload replaces it only after the replacement has been fetched and validated successfully.
 _Avoid_: Airport Snapshot
+
+**Data Status**:
+A read-only account of the committed data available to Radial. Inspecting Data Status never creates or changes storage; a missing database is uninitialized.
+_Avoid_: Database initialization, data health check
