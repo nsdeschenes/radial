@@ -89,6 +89,25 @@ test('dispatches normalized Route Plan values through the deep command entry', a
   });
 });
 
+test('separates raw arguments from the capabilities passed to deep commands', () => {
+  const cliApplication = buildCliApplication();
+  const input: CliInputTypes['Input'] = {
+    args: ['data', 'status'],
+    env: {},
+    io: {writeStderr() {}, writeStdout() {}},
+  };
+  const process: StricliProcess = {
+    env: {STRICLI_NO_COLOR: '1'},
+    stderr: {write() {}},
+    stdout: {write() {}},
+  };
+
+  const context = cliApplication.contextFor(input, process);
+
+  expect(context.admitted).toEqual({env: input.env, io: input.io});
+  expect(context.admitted).not.toHaveProperty('args');
+});
+
 test('renders help without entering the temporary command dispatcher', async () => {
   let operationalLifecycleEntries = 0;
   const stdout: string[] = [];

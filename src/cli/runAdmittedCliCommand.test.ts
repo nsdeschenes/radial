@@ -15,8 +15,10 @@ test.each([0, 1, 2, 130] as const)(
           loadTelemetry: inertTelemetry,
         },
         {
+          applicationAccess: false,
           metadata: {id: 'data-status'},
-          async execute() {
+          async execute(runtime) {
+            expect(runtime).not.toHaveProperty('withApplication');
             return status;
           },
         }

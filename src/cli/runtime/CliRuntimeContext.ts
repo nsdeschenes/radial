@@ -9,15 +9,19 @@ type ApplicationUseResult<Value> =
   | Readonly<{ok: true; value: Value}>
   | Readonly<{ok: false; failure: ApplicationTypes['ApplicationOpenFailure']}>;
 
-type CliRuntimeContext = Readonly<{
+type CliLifecycleContext = Readonly<{
   env: Readonly<Record<string, string | undefined>>;
   io: CliIo;
   signal: AbortSignal;
-  withApplication<Value>(
-    config: ApplicationTypes['ApplicationConfig'],
-    use: (application: ApplicationTypes['Application']) => Promise<Value>
-  ): Promise<ApplicationUseResult<Value>>;
 }>;
+
+type CliRuntimeContext = CliLifecycleContext &
+  Readonly<{
+    withApplication<Value>(
+      config: ApplicationTypes['ApplicationConfig'],
+      use: (application: ApplicationTypes['Application']) => Promise<Value>
+    ): Promise<ApplicationUseResult<Value>>;
+  }>;
 
 export default interface CliRuntimeTypes {
   ApplicationOpener: (
@@ -26,4 +30,5 @@ export default interface CliRuntimeTypes {
   ApplicationLoader: () => Promise<CliRuntimeTypes['ApplicationOpener']>;
   Context: CliRuntimeContext;
   Io: CliIo;
+  LifecycleContext: CliLifecycleContext;
 }

@@ -17,6 +17,7 @@ type RuntimeInput = Readonly<{
 
 type RuntimeScope = Readonly<{
   context: CliRuntimeTypes['Context'];
+  lifecycleContext: CliRuntimeTypes['LifecycleContext'];
   [Symbol.asyncDispose](): Promise<void>;
 }>;
 
@@ -44,10 +45,13 @@ function createCliRuntimeContext(input: RuntimeInput): RuntimeScope {
     return applicationDisposal;
   };
 
-  const context: CliRuntimeTypes['Context'] = Object.freeze({
+  const lifecycleContext: CliRuntimeTypes['LifecycleContext'] = Object.freeze({
     env: environmentSnapshot,
     io: input.io,
     signal: input.signal,
+  });
+  const context: CliRuntimeTypes['Context'] = Object.freeze({
+    ...lifecycleContext,
     async withApplication<Value>(
       config: ApplicationConfig,
       use: (application: ApplicationTypes['Application']) => Promise<Value>
@@ -99,6 +103,7 @@ function createCliRuntimeContext(input: RuntimeInput): RuntimeScope {
 
   return Object.freeze({
     context,
+    lifecycleContext,
     async [Symbol.asyncDispose]() {
       disposed = true;
       await disposeApplication();

@@ -21,7 +21,7 @@ const DISPATCH_CAPABLE_RETRY =
 const MANUAL_ROUTE_HIERARCHY =
   /\brouteToken\(|const\s+(?:data|reload|root)\s*=\s*buildRouteMap\(/u;
 const RAW_ARGUMENT_TELEMETRY = /\b(?:args|invocation)\b/u;
-const RAW_ARGUMENT_ACCESS = /\b(?:input\.args|\.args\b)/u;
+const RAW_ARGUMENT_ACCESS = /\b(?:input\.args|\.args\b)|\{args,\s*\.\.\.admitted\}/u;
 const INDEX_MODULE = /(?:^|\/)index\.ts$/u;
 const INDEX_IMPORT = /from ['"][^'"]*\/index\.js['"]/u;
 const FORWARDING_EXPORT = /^export (?:\*|\{[^}]+\}) from /mu;
@@ -102,6 +102,8 @@ test('pins one private Stricli parser authority with import-light eager modules'
   expect(builderSource).not.toMatch(RAW_INVOCATION_ADMISSION);
   expect(builderSource).not.toMatch(PRE_ADMISSION_ARGUMENT_TRANSFORMATION);
   expect(builderSource).not.toMatch(DISPATCH_CAPABLE_RETRY);
+  expect(builderSource).toContain('const {args, ...admitted} = input;');
+  expect(builderSource).not.toContain('runAdmitted(this.input');
   expect(builderSource).toContain(
     'buildCatalogRouteMap(commandDescriptions, commandFor)'
   );
@@ -115,6 +117,8 @@ test('pins one private Stricli parser authority with import-light eager modules'
   expect(dataStatusSource).toContain(
     "await import('#radial/data-producer/internal/DataStatus.js')"
   );
+  expect(dataStatusSource).toContain('applicationAccess: false');
+  expect(dataStatusSource).toContain("CliRuntimeTypes['LifecycleContext']");
 
   for (const source of eagerSources) {
     expect(source).not.toMatch(OPERATIONAL_STATIC_IMPORT);
