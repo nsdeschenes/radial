@@ -164,13 +164,13 @@ class SharedDuckDBRuntime {
 
   async readDataStatus(): Promise<RadialApplicationTypes['DataStatusResult']> {
     if (this.#instance !== undefined) {
-      return readDataStatus.fromInstance(this.#instance, this.databasePath);
+      return readDataStatus(this.#instance, this.databasePath);
     }
 
     return this.#ownershipTransitionCoordinator.run(() =>
       this.#instance === undefined
         ? this.#readDataStatusWithoutPersistentInstance()
-        : readDataStatus.fromInstance(this.#instance, this.databasePath)
+        : readDataStatus(this.#instance, this.databasePath)
     );
   }
 
@@ -334,7 +334,7 @@ class SharedDuckDBRuntime {
     }
 
     try {
-      return await readDataStatus.fromInstance(instance, this.databasePath);
+      return await readDataStatus(instance, this.databasePath);
     } finally {
       instance.closeSync();
     }

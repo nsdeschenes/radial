@@ -1,4 +1,4 @@
-import {mkdtemp, readdir, rm} from 'node:fs/promises';
+import {mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
@@ -13,28 +13,6 @@ import initializeProducerSchema from '#radial/data-producer/internal/ProducerSch
 import PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 import createSyntheticFAANasrCycle from '#radial/test/createSyntheticFAANasrCycle.js';
 
-test('reports a missing database as uninitialized without creating a file or artifacts', async () => {
-  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-data-status-'));
-  const databasePath = join(temporaryDirectory, 'missing.duckdb');
-
-  try {
-    await expect(readDataStatus(databasePath)).resolves.toEqual({
-      ok: true,
-      value: {
-        databasePath,
-        status: 'uninitialized',
-        legacyObjects: [],
-        producerSchema: null,
-        snapshot: null,
-        cachedAirports: [],
-      },
-    });
-    await expect(readdir(temporaryDirectory)).resolves.toEqual([]);
-  } finally {
-    await rm(temporaryDirectory, {recursive: true});
-  }
-});
-
 test('reports legacy-only storage as inactive and uninitialized', async () => {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-data-status-'));
   const databasePath = join(temporaryDirectory, 'legacy.duckdb');
@@ -48,7 +26,7 @@ test('reports legacy-only storage as inactive and uninitialized', async () => {
   }
 
   try {
-    const result = await readDataStatus(databasePath);
+    const result = await readOwnedDataStatus(databasePath);
     expect(result).toEqual({
       ok: true,
       value: expect.objectContaining({
@@ -88,7 +66,7 @@ test('reports pre-bootstrap Cached Airports from an inactive Producer Schema', a
   }
 
   try {
-    await expect(readDataStatus(databasePath)).resolves.toEqual({
+    await expect(readOwnedDataStatus(databasePath)).resolves.toEqual({
       ok: true,
       value: {
         databasePath,
@@ -139,7 +117,7 @@ test('distinguishes an invalid Producer Schema from ordinary uninitialized data'
   }
 
   try {
-    await expect(readDataStatus(databasePath)).resolves.toMatchObject({
+    await expect(readOwnedDataStatus(databasePath)).resolves.toMatchObject({
       ok: false,
       failure: {code: 'DATA_DATABASE_INVALID'},
     });
@@ -204,7 +182,7 @@ test('reports the active snapshot provenance, counts, and Facility Variation rea
   }
 
   try {
-    const result = await readDataStatus(databasePath);
+    const result = await readOwnedDataStatus(databasePath);
     expect(result).toMatchObject({
       ok: true,
       value: {
@@ -237,3 +215,12 @@ test('reports the active snapshot provenance, counts, and Facility Variation rea
     await rm(temporaryDirectory, {recursive: true});
   }
 });
+
+async function readOwnedDataStatus(databasePath: string) {
+  const instance = await DuckDBInstance.create(databasePath);
+  try {
+    return await readDataStatus(instance, databasePath);
+  } finally {
+    instance.closeSync();
+  }
+}
