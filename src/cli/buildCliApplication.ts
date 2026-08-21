@@ -32,7 +32,7 @@ const INTERNAL_PLAN_ROUTE = '__radial_internal_plan_route__';
 const ROOT_HELP =
   'Usage:\n' +
   commandCatalog.routePlan.help.rootUsageLine +
-  '  radial data status\n' +
+  commandCatalog.dataStatus.help.rootUsageLine +
   '  radial data reload navaids\n' +
   '  radial data reload airport <ICAO>\n';
 const commandSelections = new WeakMap<object, CommandSelection>();
@@ -40,17 +40,7 @@ const commandSelections = new WeakMap<object, CommandSelection>();
 function buildCliApplication(): Application<CliStricliContext> {
   const noFlags = {};
   const noPositionals = {kind: 'tuple' as const, parameters: [] as const};
-  const dataStatus = registerCommand(
-    {id: 'data-status'},
-    buildCommand<Readonly<Record<never, never>>, [], CliStricliContext>({
-      docs: {brief: 'Read local data status'},
-      loader: admittedLoader(async () => {
-        const commandModule = await import('#radial/cli/commands/runDataStatus.js');
-        return (runtime, telemetry) => commandModule.default({}, runtime, telemetry);
-      }),
-      parameters: {flags: noFlags, positional: noPositionals},
-    })
-  );
+  const dataStatus = buildDescribedCommand(commandCatalog.dataStatus);
   const reloadNavaids = registerCommand(
     {id: 'reload-navaids'},
     buildCommand<Readonly<Record<never, never>>, [], CliStricliContext>({
@@ -244,7 +234,7 @@ function helpForInvocation(invocation: readonly string[]): string | undefined {
   }
 
   if (key === 'data status --help') {
-    return 'Usage: radial data status\n';
+    return commandCatalog.dataStatus.help.leafUsage;
   }
 
   if (key === 'data reload navaids --help') {

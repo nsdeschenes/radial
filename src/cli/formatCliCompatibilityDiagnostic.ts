@@ -2,10 +2,6 @@ import commandCatalog from '#radial/cli/CliCommandCatalog.js';
 import airportReloadOutput from '#radial/cli/formatAirportReload.js';
 import validation from '#radial/route-planner/internal/validation.js';
 
-const DATA_STATUS_USAGE =
-  'error [DATA_USAGE]: Invalid data command.\n' +
-  'Cause: The data status command accepts no arguments or operational flags.\n' +
-  'Action: Run "radial data status".\n';
 const NAVAID_RELOAD_USAGE =
   'error [DATA_USAGE]: Invalid data command.\n' +
   'Cause: The Navaid reload accepts no arguments or operational flags.\n' +
@@ -17,8 +13,8 @@ const AIRPORT_RELOAD_USAGE =
 
 function formatCliCompatibilityDiagnostic(invocation: readonly string[]): string {
   if (invocation[0] === 'data') {
-    if (invocation[1] === 'status') {
-      return DATA_STATUS_USAGE;
+    if (commandCatalog.dataStatus.rejection.owns(invocation)) {
+      return commandCatalog.dataStatus.rejection.format(invocation);
     }
 
     if (invocation[1] === 'reload' && invocation[2] === 'airport') {

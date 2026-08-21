@@ -15,7 +15,7 @@ type CommandDescription<Flags extends BaseFlags, Args extends BaseArgs> = Readon
     Args,
     CliStricliTypes['Context']
   >['parameters'];
-  help: Readonly<{rootUsageLine: string}>;
+  help: Readonly<{leafUsage?: string; rootUsageLine: string}>;
   rejection: Readonly<{
     owns(invocation: readonly string[]): boolean;
     format(invocation: readonly string[]): string;
@@ -26,6 +26,8 @@ type CommandDescription<Flags extends BaseFlags, Args extends BaseArgs> = Readon
 
 type RoutePlanFlags = Readonly<{warnings?: boolean}>;
 type RoutePlanArgs = [departureIcao: string, arrivalIcao: string];
+type NoFlags = Readonly<Record<never, never>>;
+type NoArgs = [];
 
 const routePlan = {
   id: 'plan-route',
@@ -102,6 +104,39 @@ const routePlan = {
   },
 } satisfies CommandDescription<RoutePlanFlags, RoutePlanArgs>;
 
+const dataStatus = {
+  id: 'data-status',
+  route: ['data', 'status'] as const,
+  docs: {brief: 'Read local data status'},
+  parameters: {
+    flags: {},
+    positional: {kind: 'tuple', parameters: []},
+  },
+  help: {
+    leafUsage: 'Usage: radial data status\n',
+    rootUsageLine: '  radial data status\n',
+  },
+  rejection: {
+    owns(invocation: readonly string[]) {
+      return invocation[0] === 'data' && invocation[1] === 'status';
+    },
+    format(_invocation: readonly string[]) {
+      return (
+        'error [DATA_USAGE]: Invalid data command.\n' +
+        'Cause: The data status command accepts no arguments or operational flags.\n' +
+        'Action: Run "radial data status".\n'
+      );
+    },
+  },
+  metadata() {
+    return {id: 'data-status'};
+  },
+  async loadExecution() {
+    const commandModule = await import('#radial/cli/commands/runDataStatus.js');
+    return (runtime, telemetry) => commandModule.default({}, runtime, telemetry);
+  },
+} satisfies CommandDescription<NoFlags, NoArgs>;
+
 function parseRoutePlanInvocation(invocation: readonly string[]) {
   const routeArguments = routeArgumentsFromInvocation(invocation);
   const validated = validation.validateRoutePlanningRequest({
@@ -119,4 +154,4 @@ function routeArgumentsFromInvocation(invocation: readonly string[]) {
   return invocation.at(-1) === '--warnings' ? invocation.slice(0, -1) : invocation;
 }
 
-export default {routePlan};
+export default {dataStatus, routePlan};
