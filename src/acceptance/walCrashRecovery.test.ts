@@ -7,7 +7,7 @@ import {createInterface} from 'node:readline';
 import {DuckDBInstance} from '@duckdb/node-api';
 import {expect, test} from 'vitest';
 
-import readDataStatus from '#radial/data-producer/internal/DataStatus.js';
+import openRadialApplication from '#radial/application/RadialApplication.js';
 
 const OLD_SNAPSHOT_ID = '11111111-1111-4111-8111-111111111111';
 const NEW_SNAPSHOT_ID = '22222222-2222-4222-8222-222222222222';
@@ -46,14 +46,23 @@ test.each(CRASH_PHASES)(
       }
 
       await expectOnlyDatabaseArtifacts(temporaryDirectory, databasePath);
-      const status = await readDataStatus(databasePath);
-      expect(status).toMatchObject({
-        ok: true,
-        value: {
-          status: 'ready',
-          snapshot: {snapshotId: expectedSnapshotId},
-        },
-      });
+      const opened = await openRadialApplication({databasePath});
+      if (!opened.ok) {
+        throw new Error('Expected the application to open recovered storage.');
+      }
+
+      try {
+        await expect(opened.value.dataManagement.status()).resolves.toMatchObject({
+          ok: true,
+          value: {
+            status: 'ready',
+            snapshot: {snapshotId: expectedSnapshotId},
+          },
+        });
+      } finally {
+        await opened.value[Symbol.asyncDispose]();
+      }
+
       await expectCommittedState(databasePath, expectedSnapshotId);
       await expectOnlyDatabaseArtifacts(temporaryDirectory, databasePath);
     } finally {

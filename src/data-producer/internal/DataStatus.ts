@@ -1,11 +1,7 @@
-import {stat} from 'node:fs/promises';
-import {resolve} from 'node:path';
-
-import {DuckDBInstance} from '@duckdb/node-api';
-import type {DuckDBConnection} from '@duckdb/node-api';
-import * as Sentry from '@sentry/node';
+import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 
 import type RadialApplicationTypes from '#radial/application/RadialApplicationTypes.js';
+import dataStatusResult from '#radial/data-producer/internal/DataStatusResult.js';
 import initializeProducerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import isDuckDBBusyError from '#radial/db/duckdb/isDuckDBBusyError.js';
 import plannerDatabaseContract from '#radial/planner-database/PlannerDatabaseContract.js';
@@ -24,81 +20,7 @@ const LEGACY_TABLE_NAMES = [
   'reporting_points',
 ] as const;
 
-function readDataStatus(databasePath: string): Promise<DataStatusResult> {
-  return Sentry.startSpan({name: 'Read data status', op: 'task'}, () =>
-    readDataStatusWithinSpan(databasePath)
-  );
-}
-
-async function readDataStatusWithinSpan(databasePath: string): Promise<DataStatusResult> {
-  if (databasePath.trim() === '') {
-    return failure(
-      'DATA_DATABASE_PATH_MISSING',
-      'Database path is missing.',
-      'RADIAL_DATABASE_PATH is required for data status.',
-      'Set RADIAL_DATABASE_PATH to the DuckDB database file and retry.'
-    );
-  }
-
-  const displayPath = databasePath === ':memory:' ? databasePath : resolve(databasePath);
-  if (databasePath === ':memory:') {
-    return success(uninitializedStatus(displayPath, []));
-  }
-
-  let databaseExists: boolean;
-  try {
-    databaseExists = (await stat(databasePath)).isFile();
-  } catch (error) {
-    if (isMissingPathError(error)) {
-      return success(uninitializedStatus(displayPath, []));
-    }
-
-    return failure(
-      'DATA_DATABASE_UNAVAILABLE',
-      'The configured database is unavailable.',
-      'The configured database path could not be inspected.',
-      'Check RADIAL_DATABASE_PATH and retry.'
-    );
-  }
-
-  if (!databaseExists) {
-    return failure(
-      'DATA_DATABASE_UNAVAILABLE',
-      'The configured database is unavailable.',
-      'The configured database path is not a regular file.',
-      'Set RADIAL_DATABASE_PATH to a DuckDB database file and retry.'
-    );
-  }
-
-  let instance: DuckDBInstance;
-  try {
-    instance = await DuckDBInstance.create(databasePath, {access_mode: 'READ_ONLY'});
-  } catch (error) {
-    if (isDuckDBBusyError(error)) {
-      return failure(
-        'DATA_DATABASE_BUSY',
-        'The configured database is busy.',
-        'Another process owns the native DuckDB database file.',
-        'Route the operation through the owning process or obtain exclusive maintenance access.'
-      );
-    }
-
-    return failure(
-      'DATA_DATABASE_UNAVAILABLE',
-      'The configured database is unavailable.',
-      'The existing database could not be opened for read-only inspection.',
-      'Check database availability and retry.'
-    );
-  }
-
-  try {
-    return await readDataStatusFromInstance(instance, displayPath);
-  } finally {
-    instance.closeSync();
-  }
-}
-
-async function readDataStatusFromInstance(
+async function readDataStatus(
   instance: DuckDBInstance,
   databasePath: string
 ): Promise<DataStatusResult> {
@@ -107,7 +29,7 @@ async function readDataStatusFromInstance(
     connection = await instance.connect();
   } catch (error) {
     if (isDuckDBBusyError(error)) {
-      return failure(
+      return dataStatusResult.failure(
         'DATA_DATABASE_BUSY',
         'The configured database is busy.',
         'Another process owns the native DuckDB database file.',
@@ -115,7 +37,7 @@ async function readDataStatusFromInstance(
       );
     }
 
-    return failure(
+    return dataStatusResult.failure(
       'DATA_DATABASE_UNAVAILABLE',
       'The configured database is unavailable.',
       'A read-only status connection could not be opened.',
@@ -125,10 +47,10 @@ async function readDataStatusFromInstance(
 
   try {
     try {
-      return success(await inspectStatus(connection, databasePath));
+      return dataStatusResult.success(await inspectStatus(connection, databasePath));
     } catch (error) {
       if (error instanceof InvalidDataStatusError) {
-        return failure(
+        return dataStatusResult.failure(
           'DATA_DATABASE_INVALID',
           'The configured database is invalid.',
           error.message,
@@ -137,7 +59,7 @@ async function readDataStatusFromInstance(
       }
 
       if (isDuckDBBusyError(error)) {
-        return failure(
+        return dataStatusResult.failure(
           'DATA_DATABASE_BUSY',
           'The configured database is busy.',
           'Another process owns the native DuckDB database file.',
@@ -145,7 +67,7 @@ async function readDataStatusFromInstance(
         );
       }
 
-      return failure(
+      return dataStatusResult.failure(
         'DATA_DATABASE_UNAVAILABLE',
         'The configured database is unavailable.',
         'The committed data status could not be read.',
@@ -171,7 +93,7 @@ async function inspectStatus(
       );
     }
 
-    return uninitializedStatus(databasePath, legacyObjects);
+    return dataStatusResult.uninitializedValue(databasePath, legacyObjects);
   }
 
   if (schema.kind === 'invalid') {
@@ -545,20 +467,6 @@ async function readLegacyObjects(
   });
 }
 
-function uninitializedStatus(
-  databasePath: string,
-  legacyObjects: readonly string[]
-): DataStatusSuccess {
-  return {
-    databasePath,
-    status: 'uninitialized',
-    legacyObjects,
-    producerSchema: null,
-    snapshot: null,
-    cachedAirports: [],
-  };
-}
-
 function requiredString(row: Record<string, unknown>, field: string): string {
   const value = row[field];
   if (typeof value !== 'string' || value.trim() === '') {
@@ -603,28 +511,6 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isMissingPathError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
-}
-
-function failure(
-  code: RadialApplicationTypes['DataFailure']['code'],
-  summary: string,
-  cause: string,
-  action: string
-): DataStatusResult {
-  return {
-    ok: false,
-    failure: {code, summary, cause, action, activeDataPreserved: true},
-  };
-}
-
-function success(value: DataStatusSuccess): DataStatusResult {
-  return {ok: true, value};
-}
-
 class InvalidDataStatusError extends Error {}
 
-export default Object.assign(readDataStatus, {
-  fromInstance: readDataStatusFromInstance,
-});
+export default readDataStatus;

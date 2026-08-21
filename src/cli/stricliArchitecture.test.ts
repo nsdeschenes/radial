@@ -114,11 +114,9 @@ test('pins one private Stricli parser authority with import-light eager modules'
   expect(builderSource).toContain('parse: parseTerminalWarnings');
   expect(builderSource).not.toContain("aliases: ['h']");
   expect(lifecycleSource).not.toMatch(RAW_ARGUMENT_TELEMETRY);
-  expect(dataStatusSource).toContain(
-    "await import('#radial/data-producer/internal/DataStatus.js')"
-  );
-  expect(dataStatusSource).toContain('applicationAccess: false');
-  expect(dataStatusSource).toContain("CliRuntimeTypes['LifecycleContext']");
+  expect(dataStatusSource).not.toContain('#radial/data-producer/internal/DataStatus.js');
+  expect(dataStatusSource).toContain('application.dataManagement.status()');
+  expect(dataStatusSource).toContain("CliRuntimeTypes['Context']");
 
   for (const source of eagerSources) {
     expect(source).not.toMatch(OPERATIONAL_STATIC_IMPORT);

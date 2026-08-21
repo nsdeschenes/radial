@@ -1,4 +1,4 @@
-import {mkdtemp, realpath, rm, stat, symlink, unlink} from 'node:fs/promises';
+import {mkdtemp, readdir, realpath, rm, stat, symlink, unlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {dirname, join, relative} from 'node:path';
 
@@ -84,6 +84,88 @@ test('opening the application does not bootstrap or validate planner storage', a
     await opened.value[Symbol.asyncDispose]();
   } finally {
     await rm(temporaryDirectory, {recursive: true});
+  }
+});
+
+test('reports a missing database as uninitialized without creating storage', async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-status-missing-'));
+  const databasePath = join(temporaryDirectory, 'radial.duckdb');
+
+  try {
+    const opened = await openRadialApplication({databasePath});
+    if (!opened.ok) {
+      throw new Error('Expected the application to open.');
+    }
+
+    await expect(opened.value.dataManagement.status()).resolves.toEqual({
+      ok: true,
+      value: {
+        databasePath: opened.value.databasePath,
+        status: 'uninitialized',
+        legacyObjects: [],
+        producerSchema: null,
+        snapshot: null,
+        cachedAirports: [],
+      },
+    });
+    await expect(readdir(temporaryDirectory)).resolves.toEqual([]);
+    await opened.value[Symbol.asyncDispose]();
+  } finally {
+    await rm(temporaryDirectory, {recursive: true});
+  }
+});
+
+test('reads existing committed storage without changing it', async () => {
+  for (const storageKind of ['empty', 'legacy', 'invalid'] as const) {
+    const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-status-existing-'));
+    const databasePath = join(temporaryDirectory, `${storageKind}.duckdb`);
+    const instance = await DuckDBInstance.create(databasePath);
+    const connection = await instance.connect();
+    try {
+      if (storageKind === 'legacy') {
+        await connection.run('CREATE TABLE navaids (identifier VARCHAR)');
+      } else if (storageKind === 'invalid') {
+        await connection.run('CREATE SCHEMA radial_producer');
+      }
+    } finally {
+      connection.closeSync();
+      instance.closeSync();
+    }
+
+    try {
+      const beforeStatus = await stat(databasePath);
+      const opened = await openRadialApplication({databasePath});
+      if (!opened.ok) {
+        throw new Error('Expected the application to open.');
+      }
+
+      const status = await opened.value.dataManagement.status();
+      if (storageKind === 'invalid') {
+        expect(status).toMatchObject({
+          ok: false,
+          failure: {code: 'DATA_DATABASE_INVALID', activeDataPreserved: true},
+        });
+      } else {
+        expect(status).toMatchObject({
+          ok: true,
+          value: {
+            status: 'uninitialized',
+            legacyObjects: storageKind === 'legacy' ? ['main.navaids'] : [],
+          },
+        });
+      }
+
+      const afterStatus = await stat(databasePath);
+      expect({size: afterStatus.size, mtimeMs: afterStatus.mtimeMs}).toEqual({
+        size: beforeStatus.size,
+        mtimeMs: beforeStatus.mtimeMs,
+      });
+      const reopenedWritable = await DuckDBInstance.create(databasePath);
+      reopenedWritable.closeSync();
+      await opened.value[Symbol.asyncDispose]();
+    } finally {
+      await rm(temporaryDirectory, {recursive: true});
+    }
   }
 });
 
@@ -504,6 +586,14 @@ test('publishes fresh reload identities and preserves the active snapshot on acq
         facilityVariationEpochYearMissingCount: 0,
       });
     }
+
+    await expect(opened.value.dataManagement.status()).resolves.toMatchObject({
+      ok: true,
+      value: {
+        status: 'ready',
+        snapshot: {snapshotId: second.ok ? second.value.snapshotId : ''},
+      },
+    });
 
     openAipUnavailable = true;
     await expect(

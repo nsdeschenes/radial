@@ -17,6 +17,7 @@ type CompatibilityCase = Readonly<{
   applicationOpens?: number;
   routeRequest?: Readonly<{arrivalIcao: string; departureIcao: string}>;
   airportReloadIcao?: string;
+  dataStatus?: boolean;
   navaidReload?: boolean;
 }>;
 
@@ -133,6 +134,8 @@ const compatibilityCases: readonly CompatibilityCase[] = [
     env: {RADIAL_DATABASE_PATH: 'missing-public-cli-compatibility.duckdb'},
     exitCode: 0,
     admitted: true,
+    applicationOpens: 1,
+    dataStatus: true,
     stdout:
       'Radial data status\n' +
       'Database\n' +
@@ -397,6 +400,7 @@ test.each(compatibilityCases)('$name preserves the Public CLI contract', async s
     sample.airportReloadIcao === undefined ? [] : [sample.airportReloadIcao]
   );
   expect(application.evidence.navaidReloads).toBe(sample.navaidReload === true ? 1 : 0);
+  expect(application.evidence.statusCalls).toBe(sample.dataStatus === true ? 1 : 0);
   expect(application.evidence.telemetryLoads).toBe(sample.admitted === true ? 1 : 0);
 });
 
@@ -430,6 +434,39 @@ test('recognized interruption remains silent and exits 130 through the Public CL
   expect(capture.output()).toEqual({stderr: '', stdout: ''});
   expect(capture.writes()).toEqual([]);
   expect(application.evidence.applicationOpens).toBe(1);
+});
+
+test('Data Status interruption after inspection remains silent through the Public CLI seam', async () => {
+  const capture = captureOutput();
+  const controller = new AbortController();
+  const started = Promise.withResolvers<void>();
+  const status = Promise.withResolvers<ApplicationTypes['DataStatusResult']>();
+  const application = compatibilityApplication({
+    status() {
+      started.resolve();
+      return status.promise;
+    },
+  });
+
+  const running = runCli({
+    args: ['data', 'status'],
+    env: {RADIAL_DATABASE_PATH: 'missing-public-cli-compatibility.duckdb'},
+    io: capture.io,
+    openApplication: application.open,
+    signal: controller.signal,
+  });
+  await started.promise;
+  controller.abort();
+  status.resolve({ok: true, value: compatibilityDataStatus()});
+
+  await expect(running).resolves.toBe(130);
+  expect(capture.output()).toEqual({stderr: '', stdout: ''});
+  expect(capture.writes()).toEqual([]);
+  expect(application.evidence).toMatchObject({
+    applicationDisposals: 1,
+    applicationOpens: 1,
+    statusCalls: 1,
+  });
 });
 
 function captureOutput() {
@@ -474,17 +511,16 @@ function compatibilityApplication(
 ) {
   const evidence = {
     airportReloadIcaos: [] as string[],
+    applicationDisposals: 0,
     applicationOpens: 0,
     navaidReloads: 0,
     routeRequests: [] as Array<{arrivalIcao: string; departureIcao: string}>,
+    statusCalls: 0,
     telemetryLoads: 0,
   };
   const application: ApplicationTypes['Application'] = {
     databasePath: ':compatibility:',
     dataManagement: {
-      async status() {
-        throw new Error('Data status does not open the application.');
-      },
       async reloadNavaids() {
         evidence.navaidReloads += 1;
         return {
@@ -512,6 +548,10 @@ function compatibilityApplication(
         };
       },
       ...overrides,
+      async status() {
+        evidence.statusCalls += 1;
+        return overrides.status?.() ?? {ok: true, value: compatibilityDataStatus()};
+      },
     },
     planning: {
       async open() {
@@ -539,7 +579,9 @@ function compatibilityApplication(
         };
       },
     },
-    async [Symbol.asyncDispose]() {},
+    async [Symbol.asyncDispose]() {
+      evidence.applicationDisposals += 1;
+    },
   };
 
   return {
@@ -548,5 +590,16 @@ function compatibilityApplication(
       evidence.applicationOpens += 1;
       return {ok: true, value: application};
     },
+  };
+}
+
+function compatibilityDataStatus(): ApplicationTypes['DataStatusSuccess'] {
+  return {
+    databasePath: resolve('missing-public-cli-compatibility.duckdb'),
+    status: 'uninitialized',
+    legacyObjects: [],
+    producerSchema: null,
+    snapshot: null,
+    cachedAirports: [],
   };
 }
