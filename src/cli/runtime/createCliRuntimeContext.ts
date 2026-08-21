@@ -22,7 +22,9 @@ type RuntimeScope = Readonly<{
 }>;
 
 function createCliRuntimeContext(input: RuntimeInput): RuntimeScope {
-  const environmentSnapshot = Object.freeze({...input.env});
+  const environmentSnapshot = Object.isFrozen(input.env)
+    ? input.env
+    : Object.freeze({...input.env});
   let selectedCommand: CliRuntimeTypes['CommandId'] | undefined;
   const command = Object.freeze({
     get id() {
