@@ -7,7 +7,6 @@ import {expect, test} from 'vitest';
 
 import FifoOperationCoordinator from '#radial/application/internal/FifoOperationCoordinator.js';
 import validateNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidateValidation.js';
-import publishNavaidSnapshot from '#radial/data-producer/internal/NavaidSnapshotPublication.js';
 import producerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 import createSyntheticNavaidSnapshotCandidate from '#radial/test/data-producer/createSyntheticNavaidSnapshotCandidate.js';
@@ -29,16 +28,29 @@ test('atomically replaces the active snapshot and regenerates Cached Airport pro
     const firstCandidate = createSyntheticNavaidSnapshotCandidate(
       '2026-08-17T12:00:00.000Z'
     );
-    const first = await publishNavaidSnapshot(instance, firstCandidate, publicationGate, {
-      snapshotId: FIRST_SNAPSHOT_ID,
-      publishedAt: () => '2026-08-17T12:00:02.000Z',
-    });
+    const first = await producerSchema.publishNavaidSnapshot(
+      instance,
+      firstCandidate,
+      publicationGate,
+      {
+        snapshotId: FIRST_SNAPSHOT_ID,
+        publishedAt: () => '2026-08-17T12:00:02.000Z',
+      }
+    );
     expect(first).toEqual({
       snapshotId: FIRST_SNAPSHOT_ID,
       snapshotChecksum: firstCandidate.snapshotChecksum,
+      componentChecksums: firstCandidate.componentChecksums,
+      publishedAt: '2026-08-17T12:00:02.000Z',
       rawNavaidCount: 2,
       plannerNavaidCount: 1,
+      vorFamilyNavaidCount: 1,
+      fallbackNavaidCount: 0,
       exclusionCount: 1,
+      exclusionCounts: [{reason: 'unsupported-navaid-type', count: 1}],
+      facilityVariationPresentCount: 1,
+      facilityVariationMissingCount: 0,
+      facilityVariationEpochYearMissingCount: 0,
     });
 
     const connection = await instance.connect();
@@ -101,10 +113,15 @@ test('atomically replaces the active snapshot and regenerates Cached Airport pro
       '2026-08-17T13:00:00.000Z'
     );
     expect(equivalentCandidate.snapshotChecksum).toBe(firstCandidate.snapshotChecksum);
-    await publishNavaidSnapshot(instance, equivalentCandidate, publicationGate, {
-      snapshotId: SECOND_SNAPSHOT_ID,
-      publishedAt: () => '2026-08-18T12:00:02.000Z',
-    });
+    await producerSchema.publishNavaidSnapshot(
+      instance,
+      equivalentCandidate,
+      publicationGate,
+      {
+        snapshotId: SECOND_SNAPSHOT_ID,
+        publishedAt: () => '2026-08-18T12:00:02.000Z',
+      }
+    );
 
     await expect(activeState(instance)).resolves.toEqual({
       activeSnapshotId: SECOND_SNAPSHOT_ID,
@@ -127,7 +144,7 @@ test('independently rejects a corrupt candidate and rolls back a publication fai
   try {
     await producerSchema.prepare(instance);
     const candidate = createSyntheticNavaidSnapshotCandidate('2026-08-17T12:00:00.000Z');
-    await publishNavaidSnapshot(instance, candidate, publicationGate, {
+    await producerSchema.publishNavaidSnapshot(instance, candidate, publicationGate, {
       snapshotId: FIRST_SNAPSHOT_ID,
       publishedAt: () => '2026-08-17T12:00:02.000Z',
     });
@@ -144,7 +161,7 @@ test('independently rejects a corrupt candidate and rolls back a publication fai
       'candidate raw Navaid checksum does not reconcile'
     );
     await expect(
-      publishNavaidSnapshot(
+      producerSchema.publishNavaidSnapshot(
         instance,
         createSyntheticNavaidSnapshotCandidate('2026-08-19T12:00:00.000Z'),
         publicationGate,
@@ -194,13 +211,18 @@ test.each(INJECTED_FAILURE_BOUNDARIES)(
       const firstCandidate = createSyntheticNavaidSnapshotCandidate(
         '2026-08-17T12:00:00.000Z'
       );
-      await publishNavaidSnapshot(instance, firstCandidate, publicationGate, {
-        snapshotId: FIRST_SNAPSHOT_ID,
-        publishedAt: () => '2026-08-17T12:00:02.000Z',
-      });
+      await producerSchema.publishNavaidSnapshot(
+        instance,
+        firstCandidate,
+        publicationGate,
+        {
+          snapshotId: FIRST_SNAPSHOT_ID,
+          publishedAt: () => '2026-08-17T12:00:02.000Z',
+        }
+      );
 
       await expect(
-        publishNavaidSnapshot(
+        producerSchema.publishNavaidSnapshot(
           instance,
           createSyntheticNavaidSnapshotCandidate('2026-08-18T12:00:00.000Z'),
           publicationGate,
@@ -240,7 +262,7 @@ test('does not mutate when publication gate acquisition fails', async () => {
 
   try {
     await producerSchema.prepare(instance);
-    await publishNavaidSnapshot(
+    await producerSchema.publishNavaidSnapshot(
       instance,
       createSyntheticNavaidSnapshotCandidate('2026-08-17T12:00:00.000Z'),
       publicationGate,
@@ -253,7 +275,7 @@ test('does not mutate when publication gate acquisition fails', async () => {
     closedPublicationGate.close();
 
     await expect(
-      publishNavaidSnapshot(
+      producerSchema.publishNavaidSnapshot(
         instance,
         createSyntheticNavaidSnapshotCandidate('2026-08-18T12:00:00.000Z'),
         closedPublicationGate,
@@ -269,6 +291,87 @@ test('does not mutate when publication gate acquisition fails', async () => {
       rawSnapshotIds: [FIRST_SNAPSHOT_ID],
       airportSnapshotIds: [],
     });
+  } finally {
+    instance.closeSync();
+    await rm(temporaryDirectory, {recursive: true});
+  }
+});
+
+test('requires explicit Producer Schema preparation before publication', async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-publication-'));
+  const databasePath = join(temporaryDirectory, 'radial.duckdb');
+  const instance = await DuckDBInstance.create(databasePath);
+  const publicationGate = createPublicationGate();
+
+  try {
+    await expect(
+      producerSchema.publishNavaidSnapshot(
+        instance,
+        createSyntheticNavaidSnapshotCandidate('2026-08-17T12:00:00.000Z'),
+        publicationGate,
+        {snapshotId: FIRST_SNAPSHOT_ID}
+      )
+    ).rejects.toMatchObject({
+      activeDataPreserved: true,
+      message: 'Producer Schema must be prepared before publication.',
+    });
+    await expect(producerSchema.inspect(instance)).resolves.toEqual({kind: 'absent'});
+  } finally {
+    instance.closeSync();
+    await rm(temporaryDirectory, {recursive: true});
+  }
+});
+
+test('rejects invalid committed state without mutation', async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'radial-publication-'));
+  const databasePath = join(temporaryDirectory, 'radial.duckdb');
+  const instance = await DuckDBInstance.create(databasePath);
+  const publicationGate = createPublicationGate();
+
+  try {
+    await producerSchema.prepare(instance);
+    const connection = await instance.connect();
+    try {
+      await connection.run(`
+        UPDATE radial_producer.producer_state
+        SET producer_schema_version = 2
+        WHERE singleton
+      `);
+    } finally {
+      connection.closeSync();
+    }
+
+    await expect(
+      producerSchema.publishNavaidSnapshot(
+        instance,
+        createSyntheticNavaidSnapshotCandidate('2026-08-17T12:00:00.000Z'),
+        publicationGate,
+        {snapshotId: FIRST_SNAPSHOT_ID}
+      )
+    ).rejects.toMatchObject({
+      activeDataPreserved: true,
+      message:
+        'Producer Schema cannot publish over invalid committed state: Producer Schema version 2/1/1 is not supported; expected 1/1/1.',
+    });
+
+    const verificationConnection = await instance.connect();
+    try {
+      const state = await verificationConnection.runAndReadAll(`
+        SELECT producer_schema_version,
+          CAST(active_navaid_snapshot_id AS VARCHAR) AS active_navaid_snapshot_id,
+          (SELECT count(*) FROM radial_producer.navaid_snapshots) AS snapshot_count
+        FROM radial_producer.producer_state
+      `);
+      expect(state.getRowObjectsJS()).toEqual([
+        {
+          producer_schema_version: 2,
+          active_navaid_snapshot_id: null,
+          snapshot_count: 0n,
+        },
+      ]);
+    } finally {
+      verificationConnection.closeSync();
+    }
   } finally {
     instance.closeSync();
     await rm(temporaryDirectory, {recursive: true});

@@ -7,7 +7,6 @@ import FAANasrCycleSourceError from '#radial/data-producer/internal/FAANasrCycle
 import faaNasrFacilityVariation from '#radial/data-producer/internal/FAANasrFacilityVariation.js';
 import buildNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidate.js';
 import validateNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidateValidation.js';
-import publishNavaidSnapshot from '#radial/data-producer/internal/NavaidSnapshotPublication.js';
 import NavaidSnapshotPublicationError from '#radial/data-producer/internal/NavaidSnapshotPublicationError.js';
 import NavaidSnapshotValidationError from '#radial/data-producer/internal/NavaidSnapshotValidationError.js';
 import captureOpenAIPNavaids from '#radial/data-producer/internal/OpenAIPNavaidCapture.js';
@@ -280,12 +279,17 @@ async function reloadNavaids(
         },
       },
       () =>
-        publishNavaidSnapshot(instance, validatedCandidate, publicationGate, {
-          ...(dependencies.beforeNavaidCommit === undefined
-            ? {}
-            : {beforeCommit: dependencies.beforeNavaidCommit}),
-          ...(request.signal === undefined ? {} : {signal: request.signal}),
-        })
+        producerSchema.publishNavaidSnapshot(
+          instance,
+          validatedCandidate,
+          publicationGate,
+          {
+            ...(dependencies.beforeNavaidCommit === undefined
+              ? {}
+              : {beforeCommit: dependencies.beforeNavaidCommit}),
+            ...(request.signal === undefined ? {} : {signal: request.signal}),
+          }
+        )
     );
     request.onProgress?.({stage: 'complete', message: 'Navaid Snapshot committed.'});
     Sentry.logger.info('Navaid Snapshot published', {
@@ -306,8 +310,18 @@ async function reloadNavaids(
     return {
       ok: true,
       value: {
-        ...published,
-        ...committedCounts(validatedCandidate),
+        snapshotId: published.snapshotId,
+        snapshotChecksum: published.snapshotChecksum,
+        rawNavaidCount: published.rawNavaidCount,
+        plannerNavaidCount: published.plannerNavaidCount,
+        vorFamilyNavaidCount: published.vorFamilyNavaidCount,
+        fallbackNavaidCount: published.fallbackNavaidCount,
+        exclusionCount: published.exclusionCount,
+        exclusionCounts: published.exclusionCounts,
+        facilityVariationPresentCount: published.facilityVariationPresentCount,
+        facilityVariationMissingCount: published.facilityVariationMissingCount,
+        facilityVariationEpochYearMissingCount:
+          published.facilityVariationEpochYearMissingCount,
         retrievedAt: validatedCandidate.retrievedAt,
         retrievalCompletedAt: validatedCandidate.retrievalCompletedAt,
         provenance: validatedCandidate.provenance,
@@ -348,37 +362,6 @@ async function reloadNavaids(
       error instanceof NavaidSnapshotPublicationError ? error.activeDataPreserved : false
     );
   }
-}
-
-function committedCounts(candidate: NavaidSnapshotCandidate) {
-  const exclusionCounts = new Map<string, number>();
-  for (const exclusion of candidate.exclusions) {
-    exclusionCounts.set(
-      exclusion.reason,
-      (exclusionCounts.get(exclusion.reason) ?? 0) + 1
-    );
-  }
-
-  return {
-    vorFamilyNavaidCount: candidate.plannerNavaids.filter(
-      navaid => navaid.family !== 'NDB'
-    ).length,
-    fallbackNavaidCount: candidate.plannerNavaids.filter(
-      navaid => navaid.family === 'NDB'
-    ).length,
-    exclusionCounts: [...exclusionCounts]
-      .toSorted(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-      .map(([reason, count]) => ({reason, count})),
-    facilityVariationPresentCount: candidate.facilityVariationAudits.filter(
-      audit => audit.outcome === 'matched'
-    ).length,
-    facilityVariationMissingCount: candidate.facilityVariationAudits.filter(
-      audit => audit.outcome !== 'matched'
-    ).length,
-    facilityVariationEpochYearMissingCount: candidate.facilityVariationAudits.filter(
-      audit => audit.outcome === 'matched' && audit.facilityVariationEpochYear === null
-    ).length,
-  };
 }
 
 function failure(

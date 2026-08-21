@@ -1,6 +1,9 @@
 import type {DuckDBConnection, DuckDBInstance} from '@duckdb/node-api';
 
 import committedNavaidSnapshotInspection from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotInspection.js';
+import publishValidatedNavaidSnapshot from '#radial/data-producer/internal/ProducerSchemaNavaidSnapshotStore.js';
+import type PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
+import type ValidatedNavaidSnapshotCandidate from '#radial/data-producer/internal/ValidatedNavaidSnapshotCandidate.js';
 import plannerDatabaseContract from '#radial/planner-database/PlannerDatabaseContract.js';
 
 const PRODUCER_VIEW_SOURCES = {
@@ -383,6 +386,21 @@ async function inspectProducerSchema(
   } finally {
     connection.closeSync();
   }
+}
+
+async function publishNavaidSnapshot(
+  instance: DuckDBInstance,
+  candidate: ValidatedNavaidSnapshotCandidate,
+  publicationGate: PublicationGate,
+  options: Parameters<typeof publishValidatedNavaidSnapshot>[4] = {}
+) {
+  return publishValidatedNavaidSnapshot(
+    instance,
+    candidate,
+    publicationGate,
+    inspectProducerSchemaTransaction,
+    options
+  );
 }
 
 async function inspectProducerSchemaTransaction(
@@ -770,6 +788,7 @@ async function readActiveNavaidSnapshotId(
 export default {
   prepare: prepareProducerSchema,
   inspect: inspectProducerSchema,
+  publishNavaidSnapshot,
   producerSchemaExists,
   readActiveNavaidSnapshotId,
 };

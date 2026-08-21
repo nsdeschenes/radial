@@ -38,25 +38,51 @@ type PublicationOptions = Readonly<{
   signal?: AbortSignal;
 }>;
 
-type PublicationResult = Readonly<{
+type PublicationReceipt = Readonly<{
   snapshotId: string;
   snapshotChecksum: string;
+  componentChecksums: NavaidSnapshotCandidate['componentChecksums'];
+  publishedAt: string;
   rawNavaidCount: number;
   plannerNavaidCount: number;
+  vorFamilyNavaidCount: number;
+  fallbackNavaidCount: number;
   exclusionCount: number;
+  exclusionCounts: readonly Readonly<{reason: string; count: number}>[];
+  facilityVariationPresentCount: number;
+  facilityVariationMissingCount: number;
+  facilityVariationEpochYearMissingCount: number;
 }>;
+
+type PublicationPrecondition = Readonly<
+  | {kind: 'absent'}
+  | {
+      kind: 'current';
+      activeNavaidSnapshotId: string | null;
+      snapshot: PublicationReceipt | null;
+    }
+  | {kind: 'invalid'; diagnostic: string}
+>;
 
 async function publishNavaidSnapshot(
   instance: DuckDBInstance,
   candidate: ValidatedNavaidSnapshotCandidate,
   publicationGate: PublicationGate,
+  inspectPrecondition: (connection: DuckDBConnection) => Promise<PublicationPrecondition>,
   options: PublicationOptions = {}
-): Promise<PublicationResult> {
+): Promise<PublicationReceipt> {
   abortableOperation.throwIfAborted(options.signal);
   const snapshotId = options.snapshotId ?? randomUUID();
   validateUuid(snapshotId);
   return publicationGate.run(
-    () => publishNavaidSnapshotWithinGate(instance, candidate, snapshotId, options),
+    () =>
+      publishNavaidSnapshotWithinGate(
+        instance,
+        candidate,
+        snapshotId,
+        inspectPrecondition,
+        options
+      ),
     options.signal
   );
 }
@@ -65,8 +91,9 @@ async function publishNavaidSnapshotWithinGate(
   instance: DuckDBInstance,
   candidate: NavaidSnapshotCandidate,
   snapshotId: string,
+  inspectPrecondition: (connection: DuckDBConnection) => Promise<PublicationPrecondition>,
   options: PublicationOptions
-): Promise<PublicationResult> {
+): Promise<PublicationReceipt> {
   abortableOperation.throwIfAborted(options.signal);
   let connection: DuckDBConnection | undefined;
   try {
@@ -91,6 +118,7 @@ async function publishNavaidSnapshotWithinGate(
 
   let commitStarted = false;
   let transactionStarted = false;
+  let receipt: PublicationReceipt | undefined;
 
   try {
     try {
@@ -99,6 +127,17 @@ async function publishNavaidSnapshotWithinGate(
       transactionStarted = true;
       await options.onBoundary?.('transaction-started');
       abortableOperation.throwIfAborted(options.signal);
+      const precondition = await inspectPrecondition(connection);
+      if (precondition.kind === 'absent') {
+        throw new Error('Producer Schema must be prepared before publication.');
+      }
+
+      if (precondition.kind === 'invalid') {
+        throw new Error(
+          `Producer Schema cannot publish over invalid committed state: ${precondition.diagnostic}`
+        );
+      }
+
       const storageRows = producerSchemaNavaidSnapshotCodec.encodeRows(
         candidate,
         snapshotId
@@ -143,6 +182,16 @@ async function publishNavaidSnapshotWithinGate(
       }
 
       await verifyNoCrossSnapshotReferences(connection);
+      const committedState = await inspectPrecondition(connection);
+      if (
+        committedState.kind !== 'current' ||
+        committedState.activeNavaidSnapshotId !== snapshotId ||
+        committedState.snapshot?.snapshotId !== snapshotId
+      ) {
+        throw new Error('committed Navaid Snapshot does not reconcile');
+      }
+
+      receipt = publicationReceipt(committedState.snapshot);
       await options.beforeCommit?.();
       await options.onBoundary?.('before-commit');
       abortableOperation.throwIfAborted(options.signal);
@@ -178,12 +227,29 @@ async function publishNavaidSnapshotWithinGate(
     connection.closeSync();
   }
 
+  if (receipt === undefined) {
+    throw new NavaidSnapshotPublicationError(false);
+  }
+
+  return receipt;
+}
+
+function publicationReceipt(snapshot: PublicationReceipt): PublicationReceipt {
   return {
-    snapshotId,
-    snapshotChecksum: candidate.snapshotChecksum,
-    rawNavaidCount: candidate.rawNavaids.length,
-    plannerNavaidCount: candidate.plannerNavaids.length,
-    exclusionCount: candidate.exclusions.length,
+    snapshotId: snapshot.snapshotId,
+    snapshotChecksum: snapshot.snapshotChecksum,
+    componentChecksums: snapshot.componentChecksums,
+    publishedAt: snapshot.publishedAt,
+    rawNavaidCount: snapshot.rawNavaidCount,
+    plannerNavaidCount: snapshot.plannerNavaidCount,
+    vorFamilyNavaidCount: snapshot.vorFamilyNavaidCount,
+    fallbackNavaidCount: snapshot.fallbackNavaidCount,
+    exclusionCount: snapshot.exclusionCount,
+    exclusionCounts: snapshot.exclusionCounts,
+    facilityVariationPresentCount: snapshot.facilityVariationPresentCount,
+    facilityVariationMissingCount: snapshot.facilityVariationMissingCount,
+    facilityVariationEpochYearMissingCount:
+      snapshot.facilityVariationEpochYearMissingCount,
   };
 }
 

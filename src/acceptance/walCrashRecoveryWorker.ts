@@ -1,7 +1,6 @@
 import {DuckDBInstance} from '@duckdb/node-api';
 
 import FifoOperationCoordinator from '#radial/application/internal/FifoOperationCoordinator.js';
-import publishNavaidSnapshot from '#radial/data-producer/internal/NavaidSnapshotPublication.js';
 import producerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 import createSyntheticNavaidSnapshotCandidate from '#radial/test/data-producer/createSyntheticNavaidSnapshotCandidate.js';
@@ -25,7 +24,7 @@ try {
 
   if (mode === 'seed') {
     await insertSyntheticCachedAirport(instance);
-    await publishNavaidSnapshot(
+    await producerSchema.publishNavaidSnapshot(
       instance,
       createSyntheticNavaidSnapshotCandidate('2026-08-17T12:00:00.000Z'),
       publicationGate,
@@ -41,7 +40,7 @@ try {
       throw new Error('Expected a crash phase.');
     }
 
-    await publishNavaidSnapshot(
+    await producerSchema.publishNavaidSnapshot(
       instance,
       createSyntheticNavaidSnapshotCandidate('2026-08-18T12:00:00.000Z'),
       publicationGate,

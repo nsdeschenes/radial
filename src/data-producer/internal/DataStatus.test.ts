@@ -9,7 +9,6 @@ import FifoOperationCoordinator from '#radial/application/internal/FifoOperation
 import readDataStatus from '#radial/data-producer/internal/DataStatus.js';
 import buildNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidate.js';
 import validateNavaidSnapshotCandidate from '#radial/data-producer/internal/NavaidSnapshotCandidateValidation.js';
-import publishNavaidSnapshot from '#radial/data-producer/internal/NavaidSnapshotPublication.js';
 import producerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 import createSyntheticFAANasrCycle from '#radial/test/createSyntheticFAANasrCycle.js';
@@ -169,7 +168,7 @@ test('reports the active snapshot provenance, counts, and Facility Variation rea
       retrievedAt: '2026-07-10T00:00:00.000Z',
       retrievalCompletedAt: '2026-07-10T00:00:02.000Z',
     });
-    await publishNavaidSnapshot(
+    await producerSchema.publishNavaidSnapshot(
       instance,
       validateNavaidSnapshotCandidate(candidate),
       new PublicationGate(new FifoOperationCoordinator()),

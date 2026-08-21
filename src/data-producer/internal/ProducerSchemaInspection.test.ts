@@ -8,7 +8,6 @@ import {expect, test} from 'vitest';
 
 import FifoOperationCoordinator from '#radial/application/internal/FifoOperationCoordinator.js';
 import canonicalizeJson from '#radial/data-producer/internal/CanonicalJson.js';
-import publishNavaidSnapshot from '#radial/data-producer/internal/NavaidSnapshotPublication.js';
 import producerSchema from '#radial/data-producer/internal/ProducerSchema.js';
 import PublicationGate from '#radial/data-producer/internal/PublicationGate.js';
 import createSyntheticNavaidSnapshotCandidate from '#radial/test/data-producer/createSyntheticNavaidSnapshotCandidate.js';
@@ -329,7 +328,7 @@ test.each([
 
 async function publishSnapshot(instance: DuckDBInstance, prepare = true): Promise<void> {
   if (prepare) await producerSchema.prepare(instance);
-  await publishNavaidSnapshot(
+  await producerSchema.publishNavaidSnapshot(
     instance,
     createSyntheticNavaidSnapshotCandidate('2026-08-17T12:00:00.000Z'),
     new PublicationGate(new FifoOperationCoordinator()),
