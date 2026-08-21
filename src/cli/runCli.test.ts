@@ -6,6 +6,7 @@ import {expect, test} from 'vitest';
 
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
 import runCli from '#radial/cli/runCli.js';
+import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
 import openRoutePlanner from '#radial/route-planner/RoutePlanner.js';
 import syntheticPlannerDatabase from '#radial/test/route-planner/createSyntheticPlannerDatabase.js';
 
@@ -25,6 +26,20 @@ function captureOutput() {
     output() {
       return {stdout, stderr};
     },
+  };
+}
+
+function recordingOperationalTelemetry(
+  operationEvents: CliTelemetryTypes['OperationEvent'][]
+): CliTelemetryTypes['Session'] {
+  return {
+    async execute(_metadata, operation) {
+      return operation();
+    },
+    recordOperation(event) {
+      operationEvents.push(event);
+    },
+    async close() {},
   };
 }
 
@@ -874,11 +889,15 @@ test('writes a complete normal Route Plan to stdout and exits 0', async () => {
     metadata: [magneticMetadata()],
   });
   const capture = captureOutput();
+  const operationEvents: CliTelemetryTypes['OperationEvent'][] = [];
 
   const exitCode = await runCli({
     args: [' aaaa ', 'bbbb'],
     env: {RADIAL_DATABASE_PATH: database.databasePath},
     io: capture.io,
+    async loadTelemetry() {
+      return recordingOperationalTelemetry(operationEvents);
+    },
     openApplication: openSyntheticApplication,
   });
 
@@ -900,6 +919,16 @@ test('writes a complete normal Route Plan to stdout and exits 0', async () => {
       'MID         VOR-DME  113.70 MHz          61.0 NM\n',
     stderr: '',
   });
+  expect(operationEvents).toEqual([
+    {
+      kind: 'route-plan-completed',
+      arrivalIcao: 'BBBB',
+      departureIcao: 'AAAA',
+      routeDistanceNm: expect.closeTo(120.0809, 4),
+      routeLegCount: 2,
+      warningCodes: [],
+    },
+  ]);
 });
 
 test('summarizes degraded Route Plan warnings unless details are requested', async () => {
@@ -924,17 +953,25 @@ test('summarizes degraded Route Plan warnings unless details are requested', asy
   });
   const summaryCapture = captureOutput();
   const detailedCapture = captureOutput();
+  const summaryOperationEvents: CliTelemetryTypes['OperationEvent'][] = [];
+  const detailedOperationEvents: CliTelemetryTypes['OperationEvent'][] = [];
 
   const summaryExitCode = await runCli({
     args: ['AAAA', 'BBBB'],
     env: {RADIAL_DATABASE_PATH: database.databasePath},
     io: summaryCapture.io,
+    async loadTelemetry() {
+      return recordingOperationalTelemetry(summaryOperationEvents);
+    },
     openApplication: openSyntheticApplication,
   });
   const detailedExitCode = await runCli({
     args: ['AAAA', 'BBBB', '--warnings'],
     env: {RADIAL_DATABASE_PATH: database.databasePath},
     io: detailedCapture.io,
+    async loadTelemetry() {
+      return recordingOperationalTelemetry(detailedOperationEvents);
+    },
     openApplication: openSyntheticApplication,
   });
 
@@ -971,6 +1008,22 @@ test('summarizes degraded Route Plan warnings unless details are requested', asy
       '  Leg 1: AAAA departure, NDX arrival\n' +
       '  Leg 2: NDX departure, BBBB arrival\n',
   });
+  const expectedOperationEvent = {
+    kind: 'route-plan-completed',
+    arrivalIcao: 'BBBB',
+    departureIcao: 'AAAA',
+    routeDistanceNm: expect.closeTo(120.0809, 4),
+    routeLegCount: 2,
+    warningCodes: [
+      'ndb-fallback-used',
+      'magnetic-course-unavailable',
+      'magnetic-course-unavailable',
+      'magnetic-course-unavailable',
+      'magnetic-course-unavailable',
+    ],
+  };
+  expect(summaryOperationEvents).toEqual([expectedOperationEvent]);
+  expect(detailedOperationEvents).toEqual([expectedOperationEvent]);
 });
 
 test('writes no partial Route Plan for a missing airport failure and exits 1', async () => {
