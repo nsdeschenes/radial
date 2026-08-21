@@ -97,9 +97,6 @@ test.each([
         args,
         env: {},
         io: {writeStderr() {}, writeStdout() {}},
-        async loadCommand() {
-          return async () => ({kind: 'success', status: 0});
-        },
         async loadTelemetry() {
           return {
             async execute(actualMetadata, operation) {

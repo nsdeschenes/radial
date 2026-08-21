@@ -68,10 +68,6 @@ test('keeps data status help and rejected input outside the lifecycle', async ()
   const argumentCapture = captureOutput();
   let operationalLifecycleEntries = 0;
   const lifecycleTraps = {
-    async loadCommand() {
-      operationalLifecycleEntries += 1;
-      throw new Error('Data status help and rejections must not load the command.');
-    },
     async loadTelemetry() {
       operationalLifecycleEntries += 1;
       throw new Error('Data status help and rejections must not initialize telemetry.');

@@ -3,7 +3,6 @@ import {join} from 'node:path';
 
 import {expect, expectTypeOf, test} from 'vitest';
 
-import type runCli from '#radial/cli/runCli.js';
 import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
 
 const MANUAL_DISPATCH_PREDICATE = /function is(?:AirportReload|DataStatus|NavaidReload)/;
@@ -22,14 +21,25 @@ const DISPATCH_CAPABLE_RETRY =
 const MANUAL_ROUTE_HIERARCHY =
   /\brouteToken\(|const\s+(?:data|reload|root)\s*=\s*buildRouteMap\(/u;
 const RAW_ARGUMENT_TELEMETRY = /\b(?:args|invocation)\b/u;
+const RAW_ARGUMENT_ACCESS = /\b(?:input\.args|\.args\b)/u;
 const INDEX_MODULE = /(?:^|\/)index\.ts$/u;
 const INDEX_IMPORT = /from ['"][^'"]*\/index\.js['"]/u;
 const FORWARDING_EXPORT = /^export (?:\*|\{[^}]+\}) from /mu;
 const LEGACY_LIFECYCLE = /\b(?:cliLogAttributes|createInterruptSignal|logCliResult)\b/u;
+const LEGACY_COMMAND_SEAM =
+  /\b(?:loadCommand|CommandExecution|selectCommand|commandTypes)\b/u;
 const STRICLI_RUNTIME_IMPORT = /^import(?! type\b)(?:.|\n)*?from '@stricli\/core'/mu;
 const OBSOLETE_MODULES = [
   'src/cli/CliStricliContext.ts',
+  'src/cli/CliCommandMetadata.ts',
+  'src/cli/commands/CliCommandResult.ts',
   'src/cli/formatCliCompatibilityDiagnostic.ts',
+] as const;
+const COMMAND_ENTRIES = [
+  'runAirportReload',
+  'runDataStatus',
+  'runPlanRoute',
+  'runReloadNavaids',
 ] as const;
 
 type ExpectedCommandMetadata =
@@ -46,7 +56,6 @@ type ExpectedCommandMetadata =
       id: 'reload-airport';
       attributes: Readonly<{'radial.airport.icao': string}>;
     }>;
-type CliCommandTypes = NonNullable<(typeof runCli)['commandTypes']>;
 
 test('pins one private Stricli parser authority with import-light eager modules', async () => {
   const packageJson = JSON.parse(await readFile('package.json', 'utf8'));
@@ -112,10 +121,7 @@ test('pins one private Stricli parser authority with import-light eager modules'
   }
 });
 
-test('keeps catalog-derived identities and admitted metadata exact', () => {
-  expectTypeOf<CliCommandTypes['id']>().toEqualTypeOf<
-    'plan-route' | 'data-status' | 'reload-navaids' | 'reload-airport'
-  >();
+test('keeps command-owned admitted metadata exact', () => {
   expectTypeOf<
     CliTelemetryTypes['CommandMetadata']
   >().toEqualTypeOf<ExpectedCommandMetadata>();
@@ -132,6 +138,9 @@ test('has one private generated builder without obsolete or forwarding paths', a
     }))
   );
   const allSources = modules.map(module => module.source).join('\n');
+  const builderSource = modules.find(
+    module => module.path === 'buildCliApplication.ts'
+  )?.source;
 
   await Promise.all(
     OBSOLETE_MODULES.map(async path => {
@@ -143,6 +152,24 @@ test('has one private generated builder without obsolete or forwarding paths', a
   expect(allSources).not.toMatch(FORWARDING_EXPORT);
   expect(allSources).not.toMatch(MANUAL_DISPATCH_PREDICATE);
   expect(allSources).not.toMatch(LEGACY_LIFECYCLE);
+  expect(allSources).not.toMatch(LEGACY_COMMAND_SEAM);
+  expect(
+    modules.find(module => module.path === 'runtime/CliRuntimeContext.ts')?.source
+  ).not.toContain('disposeApplication');
+
+  const rawArgumentOwners = modules
+    .filter(module => RAW_ARGUMENT_ACCESS.test(module.source))
+    .map(module => module.path);
+  expect(rawArgumentOwners).toEqual(['buildCliApplication.ts', 'runCli.ts']);
+
+  for (const commandEntry of COMMAND_ENTRIES) {
+    const directImport =
+      `import ${commandEntry} from ` + `'#radial/cli/commands/${commandEntry}.js';`;
+    expect(builderSource).toContain(directImport);
+    await expect(
+      readFile(`src/cli/commands/${commandEntry}.test.ts`, 'utf8')
+    ).resolves.toContain(directImport);
+  }
 
   expect(
     modules

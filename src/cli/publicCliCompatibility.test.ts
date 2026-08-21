@@ -370,10 +370,6 @@ test.each(compatibilityCases)('$name preserves the Public CLI contract', async s
     args: sample.args,
     env: sample.env ?? {},
     io: capture.io,
-    async loadCommand(_commandId, loadDefault) {
-      application.evidence.commandLoads += 1;
-      return loadDefault();
-    },
     async loadTelemetry() {
       application.evidence.telemetryLoads += 1;
       return {
@@ -401,7 +397,6 @@ test.each(compatibilityCases)('$name preserves the Public CLI contract', async s
     sample.airportReloadIcao === undefined ? [] : [sample.airportReloadIcao]
   );
   expect(application.evidence.navaidReloads).toBe(sample.navaidReload === true ? 1 : 0);
-  expect(application.evidence.commandLoads).toBe(0);
   expect(application.evidence.telemetryLoads).toBe(sample.admitted === true ? 1 : 0);
 });
 
@@ -480,7 +475,6 @@ function compatibilityApplication(
   const evidence = {
     airportReloadIcaos: [] as string[],
     applicationOpens: 0,
-    commandLoads: 0,
     navaidReloads: 0,
     routeRequests: [] as Array<{arrivalIcao: string; departureIcao: string}>,
     telemetryLoads: 0,

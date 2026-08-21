@@ -17,7 +17,6 @@ type RuntimeInput = Readonly<{
 
 type RuntimeScope = Readonly<{
   context: CliRuntimeTypes['Context'];
-  selectCommand(commandId: CliRuntimeTypes['CommandId']): void;
   [Symbol.asyncDispose](): Promise<void>;
 }>;
 
@@ -25,12 +24,6 @@ function createCliRuntimeContext(input: RuntimeInput): RuntimeScope {
   const environmentSnapshot = Object.isFrozen(input.env)
     ? input.env
     : Object.freeze({...input.env});
-  let selectedCommand: CliRuntimeTypes['CommandId'] | undefined;
-  const command = Object.freeze({
-    get id() {
-      return selectedCommand;
-    },
-  });
   let applicationConfig: ApplicationConfig | undefined;
   let applicationOpener: Promise<CliRuntimeTypes['ApplicationOpener']> | undefined;
   let applicationOpen: Promise<ApplicationOpenResult> | undefined;
@@ -52,8 +45,6 @@ function createCliRuntimeContext(input: RuntimeInput): RuntimeScope {
   };
 
   const context: CliRuntimeTypes['Context'] = Object.freeze({
-    command,
-    disposeApplication,
     env: environmentSnapshot,
     io: input.io,
     signal: input.signal,
@@ -108,13 +99,6 @@ function createCliRuntimeContext(input: RuntimeInput): RuntimeScope {
 
   return Object.freeze({
     context,
-    selectCommand(commandId: CliRuntimeTypes['CommandId']) {
-      if (selectedCommand !== undefined && selectedCommand !== commandId) {
-        throw new Error('Cannot select more than one command in one CLI invocation.');
-      }
-
-      selectedCommand = commandId;
-    },
     async [Symbol.asyncDispose]() {
       disposed = true;
       await disposeApplication();

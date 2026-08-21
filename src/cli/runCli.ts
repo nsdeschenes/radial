@@ -5,14 +5,7 @@ import buildCliApplication from '#radial/cli/buildCliApplication.js';
 import type CliInputTypes from '#radial/cli/CliInput.js';
 
 const cliApplication = buildCliApplication();
-type CliCommandTypes = NonNullable<(typeof cliApplication)['commandTypes']>;
-
-interface RunCli {
-  (input: CliInputTypes['Input']): Promise<number>;
-  readonly commandTypes?: CliCommandTypes;
-}
-
-const runCli: RunCli = async input => {
+const runCli = async (input: CliInputTypes['Input']): Promise<number> => {
   let frameworkStderr = '';
   const processFacade: StricliProcess = {
     env: {STRICLI_NO_COLOR: '1'},

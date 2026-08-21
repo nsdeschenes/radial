@@ -1,5 +1,4 @@
 import type CliInputTypes from '#radial/cli/CliInput.js';
-import type CliCommandResultTypes from '#radial/cli/commands/CliCommandResult.js';
 import type CliRuntimeTypes from '#radial/cli/runtime/CliRuntimeContext.js';
 import createCliRuntimeContext from '#radial/cli/runtime/createCliRuntimeContext.js';
 import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
@@ -12,24 +11,15 @@ type AdmittedCommand = Readonly<{
   ) => Promise<CommandStatus>;
 }>;
 
-type CompatibilityCommand = Readonly<{
-  metadata: CliTelemetryTypes['CommandMetadata'];
-  loadDefault: () => Promise<CliInputTypes['CommandExecution']>;
-}>;
-
 type CommandStatus = 0 | 1 | 2 | 130;
+type CommandResult =
+  | Readonly<{kind: 'success'; status: 0}>
+  | Readonly<{kind: 'expected-failure'; status: 1 | 2}>
+  | Readonly<{kind: 'interrupted'; status: 130}>;
 
-function runAdmittedCliCommand(
+async function runAdmittedCliCommand(
   input: CliInputTypes['Admitted'],
   command: AdmittedCommand
-): Promise<CommandStatus>;
-function runAdmittedCliCommand(
-  input: CliInputTypes['Input'],
-  command: CompatibilityCommand
-): Promise<CommandStatus>;
-async function runAdmittedCliCommand(
-  input: CliInputTypes['Admitted'] | CliInputTypes['Input'],
-  command: AdmittedCommand | CompatibilityCommand
 ): Promise<CommandStatus> {
   const environmentSnapshot = Object.freeze({...input.env});
   const loadTelemetry = input.loadTelemetry ?? loadSentryTelemetry;
@@ -44,22 +34,9 @@ async function runAdmittedCliCommand(
           ? {}
           : {loadApplication: async () => input.openApplication!}),
       });
-      runtime.selectCommand(command.metadata.id);
       try {
-        if ('execute' in command) {
-          const status = await command.execute(runtime.context, telemetry);
-          return commandResultFor(status);
-        }
-
-        const compatibilityInput = input as CliInputTypes['Input'];
-        const execute =
-          compatibilityInput.loadCommand === undefined
-            ? await command.loadDefault()
-            : await compatibilityInput.loadCommand(
-                command.metadata.id,
-                command.loadDefault
-              );
-        return await execute(runtime.context, telemetry);
+        const status = await command.execute(runtime.context, telemetry);
+        return commandResultFor(status);
       } finally {
         await runtime[Symbol.asyncDispose]();
       }
@@ -74,7 +51,7 @@ async function runAdmittedCliCommand(
   }
 }
 
-function commandResultFor(status: CommandStatus): CliCommandResultTypes['Result'] {
+function commandResultFor(status: CommandStatus): CommandResult {
   if (status === 0) {
     return {kind: 'success', status};
   }
