@@ -51,7 +51,7 @@ test.each([
 
     const process = await runBuiltApplication(input);
 
-    expect(process.exitCode).toBe(0);
+    expect(process.exitCode).toBe(metadata.id === 'reload-navaids' ? 1 : 0);
     expect(admittedMetadata).toEqual([metadata]);
   }
 );

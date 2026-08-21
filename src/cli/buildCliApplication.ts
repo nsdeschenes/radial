@@ -15,6 +15,7 @@ import type {
 } from '@stricli/core';
 
 import type CliInputTypes from '#radial/cli/CliInput.js';
+import runReloadNavaids from '#radial/cli/commands/runReloadNavaids.js';
 import airportReloadOutput from '#radial/cli/formatAirportReload.js';
 import diagnostics from '#radial/cli/formatDiagnostics.js';
 import runAdmittedCliCommand from '#radial/cli/runAdmittedCliCommand.js';
@@ -49,6 +50,11 @@ type CommandDescription<
     flags: Flags,
     ...args: Args
   ): Promise<CliInputTypes['CommandExecution']>;
+  runAdmitted?: (
+    input: CliInputTypes['Admitted'],
+    flags: Flags,
+    ...args: Args
+  ) => Promise<number>;
 }>;
 
 type RoutePlanFlags = Readonly<{warnings?: boolean}>;
@@ -214,9 +220,11 @@ const reloadNavaids = describeCommand<NoFlags, NoArgs>()({
   metadata() {
     return {id: 'reload-navaids'} as const;
   },
+  runAdmitted(input) {
+    return runReloadNavaids(input, {});
+  },
   async loadCompatibilityExecution() {
-    const commandModule = await import('#radial/cli/commands/runReloadNavaids.js');
-    return runtime => commandModule.default({}, runtime);
+    throw new Error('The Navaid reload command uses its deep admitted entry.');
   },
 });
 
@@ -495,6 +503,11 @@ function admittedLoader<
     async function (flags, ...args) {
       if (this.selectedDescription.value !== description) {
         throw new Error('Stricli did not select the expected registered Radial command.');
+      }
+
+      if (description.runAdmitted !== undefined) {
+        this.process.exitCode = await description.runAdmitted(this.input, flags, ...args);
+        return;
       }
 
       const metadata = description.metadata(flags, ...args);

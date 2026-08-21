@@ -1,29 +1,31 @@
 import {expect, test} from 'vitest';
 
 import type ApplicationTypes from '#radial/application/RadialApplicationTypes.js';
+import type CliInputTypes from '#radial/cli/CliInput.js';
 import runReloadNavaids from '#radial/cli/commands/runReloadNavaids.js';
-import type CliRuntimeTypes from '#radial/cli/runtime/CliRuntimeContext.js';
-import createCliRuntimeContext from '#radial/cli/runtime/createCliRuntimeContext.js';
+import type CliTelemetryTypes from '#radial/cli/telemetry/CliTelemetry.js';
 
-test('rejects missing Navaid reload configuration before opening the application', async () => {
+test('rejects missing configuration before opening the application with database precedence', async () => {
   const stderr: string[] = [];
-  let applicationOpened = false;
-  const runtime = runtimeContext({
-    env: {},
-    writeStderr(text) {
-      stderr.push(text);
-    },
-    async withApplication() {
-      applicationOpened = true;
-      throw new Error('The application must not open for invalid configuration.');
-    },
-  });
+  let applicationOpenCount = 0;
+  const controller = new AbortController();
+  controller.abort();
 
-  await expect(runReloadNavaids({}, runtime)).resolves.toEqual({
-    kind: 'expected-failure',
-    status: 1,
-  });
-  expect(applicationOpened).toBe(false);
+  await expect(
+    runReloadNavaids(
+      admittedInput({
+        env: {},
+        signal: controller.signal,
+        writeStderr: text => stderr.push(text),
+        async openApplication() {
+          applicationOpenCount += 1;
+          throw new Error('Invalid configuration must not open the application.');
+        },
+      }),
+      {}
+    )
+  ).resolves.toBe(1);
+  expect(applicationOpenCount).toBe(0);
   expect(stderr).toEqual([
     'error [DATA_DATABASE_PATH_MISSING]: Database path is missing.\n' +
       'Cause: RADIAL_DATABASE_PATH is required.\n' +
@@ -34,23 +36,22 @@ test('rejects missing Navaid reload configuration before opening the application
 
 test('rejects missing OpenAIP credentials before opening the application', async () => {
   const stderr: string[] = [];
-  let applicationOpened = false;
-  const runtime = runtimeContext({
-    env: {RADIAL_DATABASE_PATH: ':synthetic:'},
-    writeStderr(text) {
-      stderr.push(text);
-    },
-    async withApplication() {
-      applicationOpened = true;
-      throw new Error('The application must not open without credentials.');
-    },
-  });
+  let applicationOpenCount = 0;
 
-  await expect(runReloadNavaids({}, runtime)).resolves.toEqual({
-    kind: 'expected-failure',
-    status: 1,
-  });
-  expect(applicationOpened).toBe(false);
+  await expect(
+    runReloadNavaids(
+      admittedInput({
+        env: {RADIAL_DATABASE_PATH: ':synthetic:'},
+        writeStderr: text => stderr.push(text),
+        async openApplication() {
+          applicationOpenCount += 1;
+          throw new Error('Missing credentials must not open the application.');
+        },
+      }),
+      {}
+    )
+  ).resolves.toBe(1);
+  expect(applicationOpenCount).toBe(0);
   expect(stderr).toEqual([
     'error [DATA_CREDENTIALS_MISSING]: OpenAIP credentials are missing.\n' +
       'Cause: OPENAIP_API_KEY is required for an explicit Navaid reload.\n' +
@@ -59,24 +60,15 @@ test('rejects missing OpenAIP credentials before opening the application', async
   ]);
 });
 
-test('streams progress and reports an operational failure through runtime capabilities', async () => {
+test('streams progress before reporting an operational failure', async () => {
   const writes: Array<Readonly<{channel: 'stderr' | 'stdout'; text: string}>> = [];
-  const scope = createCliRuntimeContext({
-    env: {
-      OPENAIP_API_KEY: 'secret-api-key',
-      RADIAL_DATABASE_PATH: ':synthetic:',
-    },
-    io: {
-      writeStderr(text) {
-        writes.push({channel: 'stderr', text});
-      },
-      writeStdout(text) {
-        writes.push({channel: 'stdout', text});
-      },
-    },
-    signal: new AbortController().signal,
-    async loadApplication() {
-      return async config => {
+
+  const status = await runReloadNavaids(
+    admittedInput({
+      env: configuredEnvironment(),
+      writeStderr: text => writes.push({channel: 'stderr', text}),
+      writeStdout: text => writes.push({channel: 'stdout', text}),
+      async openApplication(config) {
         expect(config).toEqual({databasePath: ':synthetic:'});
         return {
           ok: true,
@@ -98,19 +90,12 @@ test('streams progress and reports an operational failure through runtime capabi
             };
           }),
         };
-      };
-    },
-  });
+      },
+    }),
+    {}
+  );
 
-  try {
-    await expect(runReloadNavaids({}, scope.context)).resolves.toEqual({
-      kind: 'expected-failure',
-      status: 1,
-    });
-  } finally {
-    await scope[Symbol.asyncDispose]();
-  }
-
+  expect(status).toBe(1);
   expect(writes).toEqual([
     {channel: 'stderr', text: 'progress: Acquiring OpenAIP Navaids.\n'},
     {
@@ -124,158 +109,207 @@ test('streams progress and reports an operational failure through runtime capabi
   ]);
 });
 
-test('returns silent status 130 when shared cancellation prevents completion', async () => {
+test('returns silent status 130 for cancellation before publication', async () => {
   const controller = new AbortController();
   const started = Promise.withResolvers<void>();
   const writes: string[] = [];
-  const scope = createCliRuntimeContext({
-    env: {
-      OPENAIP_API_KEY: 'secret-api-key',
-      RADIAL_DATABASE_PATH: ':synthetic:',
-    },
-    io: {
-      writeStderr(text) {
-        writes.push(text);
+  const result = runReloadNavaids(
+    admittedInput({
+      env: configuredEnvironment(),
+      signal: controller.signal,
+      writeStderr: text => writes.push(text),
+      writeStdout: text => writes.push(text),
+      async openApplication() {
+        return {
+          ok: true,
+          value: syntheticApplication(
+            request =>
+              new Promise((_resolve, reject) => {
+                started.resolve();
+                request.signal?.addEventListener(
+                  'abort',
+                  () => reject(request.signal?.reason),
+                  {once: true}
+                );
+              })
+          ),
+        };
       },
-      writeStdout(text) {
-        writes.push(text);
-      },
-    },
-    signal: controller.signal,
-    async loadApplication() {
-      return async () => ({
-        ok: true,
-        value: syntheticApplication(
-          request =>
-            new Promise((_resolve, reject) => {
-              started.resolve();
-              request.signal?.addEventListener(
-                'abort',
-                () => reject(request.signal?.reason),
-                {once: true}
-              );
-            })
-        ),
-      });
-    },
-  });
+    }),
+    {}
+  );
 
-  const result = runReloadNavaids({}, scope.context);
   await started.promise;
   controller.abort();
 
-  try {
-    await expect(result).resolves.toEqual({kind: 'interrupted', status: 130});
-  } finally {
-    await scope[Symbol.asyncDispose]();
-  }
-
+  await expect(result).resolves.toBe(130);
   expect(writes).toEqual([]);
 });
 
-test('writes success only after committed publication wins over late cancellation', async () => {
+test('reports committed publication success despite late cancellation', async () => {
   const controller = new AbortController();
   const reload = Promise.withResolvers<ApplicationTypes['NavaidReloadResult']>();
   const started = Promise.withResolvers<void>();
   const writes: Array<Readonly<{channel: 'stderr' | 'stdout'; text: string}>> = [];
-  const scope = createCliRuntimeContext({
-    env: {
-      OPENAIP_API_KEY: 'secret-api-key',
-      RADIAL_DATABASE_PATH: ':synthetic:',
-    },
-    io: {
-      writeStderr(text) {
-        writes.push({channel: 'stderr', text});
+  const result = runReloadNavaids(
+    admittedInput({
+      env: configuredEnvironment(),
+      signal: controller.signal,
+      writeStderr: text => writes.push({channel: 'stderr', text}),
+      writeStdout: text => writes.push({channel: 'stdout', text}),
+      async openApplication() {
+        return {
+          ok: true,
+          value: syntheticApplication(async request => {
+            started.resolve();
+            request.onProgress?.({
+              stage: 'publish',
+              message: 'Publishing Navaid Snapshot.',
+            });
+            return reload.promise;
+          }),
+        };
       },
-      writeStdout(text) {
-        writes.push({channel: 'stdout', text});
-      },
-    },
-    signal: controller.signal,
-    async loadApplication() {
-      return async () => ({
-        ok: true,
-        value: syntheticApplication(async request => {
-          started.resolve();
-          request.onProgress?.({
-            stage: 'publish',
-            message: 'Publishing Navaid Snapshot.',
-          });
-          return reload.promise;
-        }),
-      });
-    },
-  });
+    }),
+    {}
+  );
 
-  const result = runReloadNavaids({}, scope.context);
   await started.promise;
-  expect(writes).toEqual([
-    {channel: 'stderr', text: 'progress: Publishing Navaid Snapshot.\n'},
-  ]);
-
   controller.abort();
   reload.resolve({ok: true, value: syntheticNavaidReloadSuccess()});
-  try {
-    await expect(result).resolves.toEqual({kind: 'success', status: 0});
-  } finally {
-    await scope[Symbol.asyncDispose]();
-  }
 
+  await expect(result).resolves.toBe(0);
+  expect(writes[0]).toEqual({
+    channel: 'stderr',
+    text: 'progress: Publishing Navaid Snapshot.\n',
+  });
   expect(writes[1]).toMatchObject({
     channel: 'stdout',
     text: expect.stringContaining('Navaid Snapshot replaced\n'),
   });
 });
 
-test('disposes the application before the handler result leaves its runtime scope', async () => {
-  let disposed = false;
-  const scope = createCliRuntimeContext({
-    env: {
-      OPENAIP_API_KEY: 'secret-api-key',
-      RADIAL_DATABASE_PATH: ':synthetic:',
-    },
-    io: {writeStderr() {}, writeStdout() {}},
-    signal: new AbortController().signal,
-    async loadApplication() {
-      return async () => ({
-        ok: true,
-        value: syntheticApplication(
-          async () => ({ok: true, value: syntheticNavaidReloadSuccess()}),
-          () => {
-            disposed = true;
-          }
-        ),
-      });
-    },
-  });
+test('owns metadata and disposes exactly once inside its admitted span', async () => {
+  const events: string[] = [];
 
-  try {
-    await expect(runReloadNavaids({}, scope.context)).resolves.toEqual({
-      kind: 'success',
-      status: 0,
-    });
-    expect(disposed).toBe(true);
-  } finally {
-    await scope[Symbol.asyncDispose]();
-  }
+  await expect(
+    runReloadNavaids(
+      admittedInput({
+        env: configuredEnvironment(),
+        async loadTelemetry() {
+          return recordingTelemetry(events);
+        },
+        async openApplication() {
+          events.push('application opened');
+          return {
+            ok: true,
+            value: syntheticApplication(
+              async () => ({ok: true, value: syntheticNavaidReloadSuccess()}),
+              () => events.push('application disposed')
+            ),
+          };
+        },
+      }),
+      {}
+    )
+  ).resolves.toBe(0);
+
+  expect(events).toEqual([
+    'span started reload-navaids',
+    'application opened',
+    'application disposed',
+    'result recorded 0',
+    'span ended',
+    'telemetry closed',
+  ]);
 });
 
-function runtimeContext({
-  env,
-  writeStderr,
-  withApplication,
-}: Readonly<{
-  env: Readonly<Record<string, string | undefined>>;
-  writeStderr(text: string): void;
-  withApplication: CliRuntimeTypes['Context']['withApplication'];
-}>): CliRuntimeTypes['Context'] {
+test('lets cleanup defects replace an interrupted outcome', async () => {
+  const cleanupDefect = new Error('cleanup defect');
+  const controller = new AbortController();
+
+  await expect(
+    runReloadNavaids(
+      admittedInput({
+        env: configuredEnvironment(),
+        signal: controller.signal,
+        async openApplication() {
+          return {
+            ok: true,
+            value: syntheticApplication(
+              async request => {
+                controller.abort();
+                throw request.signal?.reason;
+              },
+              () => {
+                throw cleanupDefect;
+              }
+            ),
+          };
+        },
+      }),
+      {}
+    )
+  ).rejects.toBe(cleanupDefect);
+});
+
+function admittedInput(
+  overrides: Readonly<{
+    env?: Readonly<Record<string, string | undefined>>;
+    loadTelemetry?: CliTelemetryTypes['Loader'];
+    openApplication?: NonNullable<CliInputTypes['Admitted']['openApplication']>;
+    signal?: AbortSignal;
+    writeStderr?: (text: string) => void;
+    writeStdout?: (text: string) => void;
+  }>
+): CliInputTypes['Admitted'] {
   return {
-    command: {id: 'reload-navaids'},
-    async disposeApplication() {},
-    env,
-    io: {writeStdout() {}, writeStderr},
-    signal: new AbortController().signal,
-    withApplication,
+    env: overrides.env ?? {},
+    io: {
+      writeStderr: overrides.writeStderr ?? (() => {}),
+      writeStdout: overrides.writeStdout ?? (() => {}),
+    },
+    loadTelemetry: overrides.loadTelemetry ?? inertTelemetry,
+    ...(overrides.openApplication === undefined
+      ? {}
+      : {openApplication: overrides.openApplication}),
+    ...(overrides.signal === undefined ? {} : {signal: overrides.signal}),
+  };
+}
+
+function configuredEnvironment() {
+  return {
+    OPENAIP_API_KEY: 'secret-api-key',
+    RADIAL_DATABASE_PATH: ':synthetic:',
+  };
+}
+
+async function inertTelemetry(): Promise<CliTelemetryTypes['Session']> {
+  return {
+    async execute(_metadata, operation) {
+      return operation();
+    },
+    recordOperation() {},
+    async close() {},
+  };
+}
+
+function recordingTelemetry(events: string[]): CliTelemetryTypes['Session'] {
+  return {
+    async execute(metadata, operation) {
+      events.push(`span started ${metadata.id}`);
+      try {
+        const result = await operation();
+        events.push(`result recorded ${result.status}`);
+        return result;
+      } finally {
+        events.push('span ended');
+      }
+    },
+    recordOperation() {},
+    async close() {
+      events.push('telemetry closed');
+    },
   };
 }
 

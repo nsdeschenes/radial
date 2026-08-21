@@ -158,7 +158,7 @@ test.each([
           };
         },
       })
-    ).resolves.toBe(0);
+    ).resolves.toBe(metadata.id === 'reload-navaids' ? 1 : 0);
     expect(admittedMetadata).toEqual([metadata]);
   }
 );
