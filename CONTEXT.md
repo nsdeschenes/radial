@@ -4,6 +4,18 @@ Radial plans old-school, ground-based radio-navigation routes for flight simulat
 
 ## Language
 
+**CLI Surface**:
+The observable command-line contract comprising command forms, output content and channels, exit statuses, environment-based configuration, and interruption behavior.
+_Avoid_: CLI implementation, argument parser
+
+**Public CLI**:
+The user-facing `radial` command and its command tree. Repository maintenance and acceptance commands are not part of the Public CLI.
+_Avoid_: Every executable script in the repository
+
+**Public CLI Command Surface**:
+The Public CLI's command-language contract: accepted command forms; help and rejected-input bytes, output channels, and statuses; command identities; and argument-derived admission metadata.
+_Avoid_: Public CLI Surface, argument parser
+
 **Route Plan**:
 A geometric path from a departure airport to an arrival airport through one or more ordered ground-based Navaids. A direct airport-to-airport path is not a Route Plan.
 _Avoid_: Flight plan, airway route
